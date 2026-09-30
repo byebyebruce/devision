@@ -46,7 +46,7 @@
 8. 作为调用方，我想让 `choice` 候选项的描述可以留空（null），这样简单的选项只写名字就行。
 9. 作为调用方，我想拿到 `choice` 每个候选项的概率，并且所有概率加起来等于 1，这样可以做 top-k 或者自定义决策。
 10. 作为调用方，我想拿到 `confidence`，并且它的计算方式和 Jev 相同（`(n·p_max−1)/(n−1)`），这样在 Jev 上调好的阈值能直接用。
-11. 作为调用方，我想给问题附加 `instructions`，也就是额外的判断标准，这样可以细化判断规则。
+11. 作为调用方，我想用 `criteria` 描述各选项或是/否各指什么，这样可以细化判断规则。
 12. 作为调用方，我想让问题 ID 由我自己命名，并且 ID 不影响模型的判断，这样命名不会带来副作用。
 13. 作为调用方，我想在响应里看到 `model` 版本号和 `usage`，这样方便排查问题和做统计。
 14. 作为调用方，我想在请求不合法时拿到 422 和清楚的错误信息，比如题型未知、选项少于 2 个、图片无法解码，这样能快速定位问题。
@@ -139,15 +139,15 @@ Request
   model: string
   questions: { [id]: Question }
   Question:
-    { type: "noul",   question: string, instructions?: string, criteria?: string }
-    { type: "choice", question: string, instructions?: string, criteria: { [option]: string | null } }  // 2..255 个选项
+    { type: "noul",   instructions: string | object | array, criteria?: { true?: ..., false?: ... } }
+    { type: "choice", instructions: string | object | array, criteria: { [option]: string | object | array | null } }  // 2..255 个选项
 
 Response
   model: string
   answers: { [id]: Answer }
   Answer:
-    noul:   { noul: number /* P(yes) ∈ [0,1] */ }
-    choice: { choice: string, probabilities: { [option]: number /* 和为 1 */ }, confidence: number }
+    noul:   { type: "noul", noul: number /* P(yes) ∈ [0,1] */ }
+    choice: { type: "choice", choice: string, probabilities: { [option]: number /* 和为 1 */ }, confidence: number }
   usage: { input_tokens, output_tokens }
 ```
 
@@ -204,4 +204,4 @@ Response
 - **风险 2：Laya checkpoint 与视觉 token 的兼容性。** Laya 从来没见过视觉 token，投影层要从零学习对齐。数据只有几百到 1 万条时，效果可能有限，所以 MVP 阶段只要求流程跑通。
 - **风险 3：视觉 token 压缩。** laya-vision 在 256px 下把 token 压到 16 个时，精细任务的效果崩了。我们压到 64 个，是调研建议的上限，需要用 256 个 token 的消融实验来验证。
 - Laya 的 `confidence` 用的是基于熵的算法，和 Jev 不同。我们对外采用 Jev 的公式，所以直接拿 laya-serve 的阈值来用是不成立的。
-- 本文档里的 Jev 协议细节来自 `jev-api.md`。文档中有两处没说清：请求里最多能放多少个问题；`instructions` 是否可以为 null。实现时按宽松的方式处理。
+- 本文档里的 Jev 协议细节来自 `jev-api.md`。问题文本放在 `instructions` 字段（Jev 没有单独的 `question` 字段）。文档中有两处没说清：请求里最多能放多少个问题；`instructions` 是否可以为 null。实现上不限问题数，`instructions` 必填。

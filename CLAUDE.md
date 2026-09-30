@@ -17,9 +17,25 @@
 
 - 只从两个 seam 测外部行为：`decide(state, questions) → answers` 和数据转换器（原始记录 → Jev 格式样本）。不测张量形状/层结构。
 - HTTP 层是 `decide` 的薄封装，不单测。
-- 端到端冒烟（转换几十条 → 训几十步 → decide）需要 GPU，按需跑。
+- 端到端冒烟（`tests/test_pipeline.py`）：tiny 模型 + 合成红/蓝图，转换 → 训练 → 存盘 → 加载 → 经 decide 评测，CPU 上几秒，随 `pytest` 一起跑。真实模型的同一流程用下面的 fetch → train → eval 命令（训练在 A100 上）。
 - 评测集图片按 image id 从所有训练源剔除（COCO/VG 跨数据集泄漏）。
+
+## Python 与依赖
+
+- 用 **uv** 管理 Python 与依赖（Python 版本见 `.python-version`）。加依赖用 `uv add <pkg>`（开发依赖 `uv add --dev`），不要用 pip 或手改 `uv.lock`。
+- 所有命令经 `uv run ...` 执行。
 
 ## 命令
 
-<!-- 代码骨架完成后补充：安装、测试、数据转换、训练、评测、启动服务 -->
+```bash
+uv run pytest -q                      # 全部测试（含 tiny 模型端到端冒烟，CPU 上几秒）
+uv run pyright                        # 类型检查
+uv run devision-fetch --root data     # 拉 MVP 小数据集：GQA 训练切片 / GQA testdev / POPE → data/*.jsonl
+uv run devision-convert ...           # 官方 GQA / VQAv2 / POPE 文件 → 平衡后的 JSONL（--exclude 剔除评测图）
+uv run devision-train --data data/train.jsonl --val data/val.jsonl --data-root data --out runs/x   # A100 上 --device cuda
+uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json
+uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone
+```
+
+- `data/`、`runs/` 不进 git。
+- 首次训练会从 Hub 下载 `convaiinnovations/laya` 与 `google/siglip2-base-patch16-256`。
