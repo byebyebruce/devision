@@ -34,7 +34,7 @@ uv run devision-fetch --root data     # 拉 MVP 小数据集：GQA 训练切片 
 uv run devision-convert ...           # 官方 GQA / VQAv2 / POPE 文件 → 平衡后的 JSONL（--exclude 剔除评测图）
 uv run devision-train --data data/train.jsonl --val data/val.jsonl --data-root data --out runs/x   # A100 上 --device cuda
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json
-uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone
+uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo
 ```
 
 - `data/`、`runs/` 不进 git。
