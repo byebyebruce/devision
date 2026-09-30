@@ -9,8 +9,7 @@ from PIL import Image
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import ModernBertConfig, PreTrainedTokenizerFast, SiglipVisionConfig
 
-from devision.decider import Decider
-from devision.model import ModelConfig, build_model
+from devision.model import Decider, ModelConfig, build_model
 
 _CORPUS = """
 noul choice score question is there a dog cat person in the image picture photo yes no

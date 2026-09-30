@@ -1,6 +1,6 @@
 """Converter seam: raw dataset records -> Jev-format training samples."""
 # pyright: reportOptionalSubscript=false
-from devision.data import convert_gqa, convert_pope, convert_vqav2, select
+from devision.train.data import convert_gqa, convert_pope, convert_vqav2, select
 
 GQA_VERIFY = {
     "imageId": "2354786", "question": "Is there a dog in the picture?", "answer": "yes",

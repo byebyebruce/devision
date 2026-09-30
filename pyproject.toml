@@ -21,11 +21,11 @@ dependencies = [
 dev = ["pytest>=8", "pyright>=1.1.380", "httpx>=0.27"]
 
 [project.scripts]
-devision-fetch = "devision.cli:fetch_main"
-devision-convert = "devision.cli:convert_main"
-devision-train = "devision.cli:train_main"
-devision-eval = "devision.cli:eval_main"
-devision-serve = "devision.cli:serve_main"
+devision-fetch = "devision.train.cli:fetch_main"
+devision-convert = "devision.train.cli:convert_main"
+devision-train = "devision.train.cli:train_main"
+devision-eval = "devision.train.cli:eval_main"
+devision-serve = "devision.serve.cli:serve_main"
 
 [build-system]
 requires = ["hatchling"]

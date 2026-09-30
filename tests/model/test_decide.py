@@ -2,7 +2,7 @@
 import pytest
 from conftest import image_b64
 
-from devision.decider import InvalidRequest
+from devision.model import InvalidRequest
 
 
 def test_noul_question_about_an_image_returns_probability_of_yes(decider):

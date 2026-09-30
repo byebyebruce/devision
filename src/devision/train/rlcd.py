@@ -15,8 +15,7 @@ from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
 
 from .data import Sample
-from .decider import Decider, image_tensor, question_item
-from .model import text_encoder
+from ..model import Decider, image_tensor, question_item, text_encoder
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
 

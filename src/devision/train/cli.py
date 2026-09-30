@@ -1,4 +1,4 @@
-"""Command-line entry points (see CLAUDE.md for usage)."""
+"""Training-side command-line entry points: fetch, convert, train, eval (see CLAUDE.md)."""
 import argparse
 import json
 import os
@@ -80,9 +80,8 @@ def convert_main(argv=None) -> None:
 
 def train_main(argv=None) -> None:
     """Fine-tune from Laya + SigLIP2 on a JSONL of samples and save a checkpoint."""
-    from .decider import Decider
-    from .model import ModelConfig, from_pretrained
-    from .train import TrainConfig, train
+    from ..model import Decider, ModelConfig, from_pretrained
+    from .rlcd import TrainConfig, train
 
     p = argparse.ArgumentParser(description=train_main.__doc__)
     p.add_argument("--data", required=True)
@@ -108,7 +107,7 @@ def train_main(argv=None) -> None:
 
 def eval_main(argv=None) -> None:
     """Accuracy, ECE and latency of a checkpoint on a JSONL of samples, through decide()."""
-    from .decider import Decider
+    from ..model import Decider
     from .evaluate import evaluate
 
     p = argparse.ArgumentParser(description=eval_main.__doc__)
@@ -124,19 +123,3 @@ def eval_main(argv=None) -> None:
     if a.out:
         with open(a.out, "w") as f:
             f.write(text)
-
-
-def serve_main(argv=None) -> None:
-    """Serve POST /v1/systemone on CPU."""
-    import uvicorn
-
-    from .decider import Decider
-    from .server import create_app
-
-    p = argparse.ArgumentParser(description=serve_main.__doc__)
-    p.add_argument("--checkpoint", required=True)
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8000)
-    p.add_argument("--examples", default="examples", help="directory of demo images")
-    a = p.parse_args(argv)
-    uvicorn.run(create_app(Decider.load(a.checkpoint), a.examples), host=a.host, port=a.port)

@@ -8,7 +8,7 @@ import numpy as np
 from laya.common import ece_score
 
 from .data import Sample
-from .decider import Decider
+from ..model import Decider
 
 
 def _gold_answer(q: Dict[str, Any], probs: Dict[str, float]) -> str:

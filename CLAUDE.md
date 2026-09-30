@@ -1,9 +1,18 @@
-# devision
+# deVision (Decision + Vision)
 
 视觉决策模型：图片 + 英文问题 → Jev 格式的结构化答案（带校准概率）。SigLIP2 视觉编码 + Laya 初始化的 ModernBERT-large 决策头。
 
 - 设计与范围：`docs/spec/vision-decision-mvp.md`（改设计先改 spec）
 - 调研：`docs/research/jev-api.md`（Jev 协议）、`docs/research/encoder-data.md`（编码器与数据集）
+
+## 代码结构
+
+- `src/devision/model/`：网络、预处理、checkpoint、`Decider.decide`；不依赖其他子包。
+- `src/devision/train/`：数据转换/下载、RLCD 训练、评测，依赖 model。
+- `src/devision/serve/`：`/v1/systemone` API，依赖 model。
+- `src/devision/demo/`：web demo 页面和示例图路由，只通过 HTTP 调 API，不 import model、train、serve。
+- 依赖只能单向，不要让 model 反向引用 train/serve/demo，也不要让 train、serve、demo 互相引用。
+- 测试按包放：`tests/model/`、`tests/train/`；共享的 tiny 模型在 `tests/conftest.py`。
 
 ## 不可违背的约束
 
@@ -17,7 +26,7 @@
 
 - 只从两个 seam 测外部行为：`decide(state, questions) → answers` 和数据转换器（原始记录 → Jev 格式样本）。不测张量形状/层结构。
 - HTTP 层是 `decide` 的薄封装，不单测。
-- 端到端冒烟（`tests/test_pipeline.py`）：tiny 模型 + 合成红/蓝图，转换 → 训练 → 存盘 → 加载 → 经 decide 评测，CPU 上几秒，随 `pytest` 一起跑。真实模型的同一流程用下面的 fetch → train → eval 命令（训练在 A100 上）。
+- 端到端冒烟（`tests/train/test_pipeline.py`）：tiny 模型 + 合成红/蓝图，转换 → 训练 → 存盘 → 加载 → 经 decide 评测，CPU 上几秒，随 `pytest` 一起跑。真实模型的同一流程用下面的 fetch → train → eval 命令（训练在 A100 上）。
 - 评测集图片按 image id 从所有训练源剔除（COCO/VG 跨数据集泄漏）。
 
 ## Python 与依赖
@@ -34,7 +43,7 @@ uv run devision-fetch --root data     # 拉 MVP 小数据集：GQA 训练切片 
 uv run devision-convert ...           # 官方 GQA / VQAv2 / POPE 文件 → 平衡后的 JSONL（--exclude 剔除评测图）
 uv run devision-train --data data/train.jsonl --val data/val.jsonl --data-root data --out runs/x   # A100 上 --device cuda
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json
-uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo
+uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
 ```
 
 - `data/`（数据集）、`runs/`（checkpoint）不进 git；`examples/` 里的少量示例图进 git，供 web demo 默认加载。

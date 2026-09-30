@@ -16,7 +16,7 @@ from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoTokenizer, SiglipVisionConfig
 
 from .image import to_pixel_values
-from .model import ModelConfig, VisionDecisionModel, build_model, text_encoder
+from .network import ModelConfig, VisionDecisionModel, build_model, text_encoder
 
 CONFIG_FILE = "devision_config.json"
 

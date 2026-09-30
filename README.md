@@ -1,8 +1,25 @@
-# devision
+# deVision
 
-能看图的 Jev：输入一张图片和若干英文问题，输出 Jev 格式的结构化答案（`noul` / `choice`）及校准概率。接口兼容 Jev `/v1/systemone`，`state` 里可以放 `{"type": "image", ...}`。
+**deVision = Decision + Vision**：看图做决策。名字取 **De**cision 的开头和 **Vision** 的全部，两个词共享同一个 `-sion` 结尾，拼起来正好是 “deVision”。
+- **Vision**：看图，由 SigLIP2 视觉编码器负责。
+- **Decision**：做决策，由 Laya 的 ModernBERT 和决策头负责。它不生成文字，而是直接给出每个选项的校准概率。
+
+它相当于一个能看图的 Jev：输入一张图片和若干英文问题，输出 Jev 格式的结构化答案（`noul` / `choice`）及校准概率。接口兼容 Jev `/v1/systemone`，`state` 里可以放 `{"type": "image", ...}`。
 
 设计与范围见 [`docs/spec/vision-decision-mvp.md`](docs/spec/vision-decision-mvp.md)，常用命令见 [`CLAUDE.md`](CLAUDE.md)。
+
+## 代码结构
+
+```
+src/devision/
+├── model/     模型：网络结构、图片预处理、checkpoint 读写、Decider.decide（推理入口）
+├── train/     训练：数据转换 / 下载、RLCD 训练、评测；命令 devision-fetch / convert / train / eval
+├── serve/     服务：POST /v1/systemone API（CPU）；命令 devision-serve
+└── demo/      Web demo：页面与示例图路由，由 devision-serve 挂载（--no-demo 可关）
+examples/      demo 默认加载的示例图
+```
+
+依赖只能单向：`train`、`serve`、`demo` 都建立在 `model` 之上，三者之间互不引用。`model` 不依赖其他子包；`demo` 只通过 HTTP 调用 API，不引用任何 Python 代码。
 
 ## 模型结构
 
@@ -60,4 +77,4 @@ flowchart TB
 
 - 训练目标：RLCD，沿用 Laya 官方单卡脚本。它由两部分组成：对加了噪声的 logit 做策略梯度，奖励用 log、spherical 和 RPS 三种 proper scoring rule；再加上对 gold 分布的 soft 交叉熵。
 - 训练结束后，按题型在 val 集上用 LBFGS 拟合温度 T，范围限制在 [0.5, 5]。
-- 数据由 GQA / VQAv2 / POPE 按规则转换而来，见 `src/devision/data.py`。
+- 数据由 GQA / VQAv2 / POPE 按规则转换而来，见 `src/devision/train/data.py`。

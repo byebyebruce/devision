@@ -9,10 +9,10 @@ import pytest
 from conftest import tiny_decider
 from PIL import Image
 
-from devision.data import convert_gqa, select
-from devision.decider import Decider
-from devision.evaluate import evaluate
-from devision.train import TrainConfig, train
+from devision.train.data import convert_gqa, select
+from devision.model import Decider
+from devision.train.evaluate import evaluate
+from devision.train.rlcd import TrainConfig, train
 
 COLORS = {"red": (220, 20, 20), "blue": (20, 20, 220)}
 
