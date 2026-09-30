@@ -137,6 +137,6 @@ def serve_main(argv=None) -> None:
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
-    p.add_argument("--examples", default="data/examples", help="directory of demo images")
+    p.add_argument("--examples", default="examples", help="directory of demo images")
     a = p.parse_args(argv)
     uvicorn.run(create_app(Decider.load(a.checkpoint), a.examples), host=a.host, port=a.port)

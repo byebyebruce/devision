@@ -37,5 +37,5 @@ uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo
 ```
 
-- `data/`、`runs/` 不进 git。
+- `data/`（数据集）、`runs/`（checkpoint）不进 git；`examples/` 里的少量示例图进 git，供 web demo 默认加载。
 - 首次训练会从 Hub 下载 `convaiinnovations/laya` 与 `google/siglip2-base-patch16-256`。
