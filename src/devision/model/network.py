@@ -66,18 +66,25 @@ class VisionDecisionModel(nn.Module):
         patches = self.vision(pixel_values=pixel_values).last_hidden_state
         return self.projector(patches)
 
-    def forward(self, input_ids, attention_mask, marker_pos, marker_mask, qtype,
-                visual: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """Option logits [B, K] (masked slots at -1e4). `visual` is [B, V, D] or None for text-only."""
-        dm, encoder = self.decision, text_encoder(self.decision)
+    def encode(self, input_ids, attention_mask, visual: Optional[torch.Tensor] = None):
+        """Encoder states for [CLS] <visual> <rest of input_ids>: (hidden [B, L+V, D], attention mask).
+        Text position j >= 1 of `input_ids` ends up at j + V."""
+        encoder = text_encoder(self.decision)
         embeds = encoder.get_input_embeddings()(input_ids)
         if visual is not None:
             v = visual.to(embeds.dtype)
             embeds = torch.cat([embeds[:, :1], v, embeds[:, 1:]], 1)
             attention_mask = torch.cat([attention_mask[:, :1], attention_mask.new_ones(v.shape[:2]),
                                         attention_mask[:, 1:]], 1)
-            marker_pos = marker_pos + v.size(1)
-        h = encoder(inputs_embeds=embeds, attention_mask=attention_mask).last_hidden_state
+        return encoder(inputs_embeds=embeds, attention_mask=attention_mask).last_hidden_state, attention_mask
+
+    def forward(self, input_ids, attention_mask, marker_pos, marker_mask, qtype,
+                visual: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Option logits [B, K] (masked slots at -1e4). `visual` is [B, V, D] or None for text-only."""
+        dm = self.decision
+        h, attention_mask = self.encode(input_ids, attention_mask, visual)
+        if visual is not None:
+            marker_pos = marker_pos + visual.size(1)
         # Laya's head, minus the act head we do not serve.
         h = h + dm.type_emb(qtype)[:, None, :]
         if dm.head is not None:

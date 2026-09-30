@@ -6,7 +6,10 @@ LoRA is merged before saving, so checkpoints load without peft.
 """
 import os
 import random
-from dataclasses import dataclass
+import re
+import subprocess
+import time
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
 import torch
@@ -14,7 +17,7 @@ from laya.common import QTYPES, clamp_temperature, collate_items, proper_reward
 from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
 
-from .data import Sample
+from .samples import Sample
 from ..model import Decider, image_tensor, question_item, text_encoder
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
@@ -36,6 +39,60 @@ class TrainConfig:
     seed: int = 0
     device: str = "auto"
     log_every: int = 10
+    swanlab_project: str = ""    # "" disables SwanLab; the CLI defaults to "devision"
+    run_name: str = ""
+
+
+class _Tracker:
+    """SwanLab logging when `swanlab_project` is set, otherwise a no-op."""
+
+    def __init__(self, project: str, run_name: str, config: Dict[str, Any]):
+        self.swanlab = None
+        if project:
+            import swanlab
+
+            swanlab.init(project=project, name=run_name or None, config=config)
+            self.swanlab = swanlab
+
+    def log(self, data: Dict[str, float], step: int) -> None:
+        if self.swanlab:
+            self.swanlab.log(data, step=step)
+
+    def finish(self) -> None:
+        if self.swanlab:
+            self.swanlab.finish()
+
+
+_IOREG_STATS = {"Device Utilization %": "sys/apple_gpu_util_pct",
+                "Renderer Utilization %": "sys/apple_gpu_renderer_pct",
+                "In use system memory": "sys/apple_gpu_in_use_mb"}
+
+
+def _apple_gpu_stats() -> Dict[str, float]:
+    """Apple GPU utilisation from `ioreg` (no sudo needed); {} when unavailable. Costs ~tens of ms."""
+    try:
+        out = subprocess.run(["ioreg", "-r", "-d", "1", "-c", "IOAccelerator"], capture_output=True,
+                             text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    stats = {}
+    for field, key in _IOREG_STATS.items():
+        m = re.search(r'"%s"=(\d+)' % re.escape(field), out)
+        if m:
+            stats[key] = int(m.group(1)) / (1024 ** 2 if key.endswith("_mb") else 1)
+    return stats
+
+
+def _device_memory(device: torch.device) -> Dict[str, float]:
+    """Accelerator memory in MB. SwanLab's own monitor covers CPU / RAM (and NVIDIA GPUs), not MPS."""
+    mb = 1024 ** 2
+    if device.type == "mps":
+        return {"sys/mps_allocated_mb": torch.mps.current_allocated_memory() / mb,
+                "sys/mps_driver_mb": torch.mps.driver_allocated_memory() / mb}
+    if device.type == "cuda":
+        return {"sys/cuda_allocated_mb": torch.cuda.memory_allocated(device) / mb,
+                "sys/cuda_max_allocated_mb": torch.cuda.max_memory_allocated(device) / mb}
+    return {}
 
 
 def _device(name: str) -> torch.device:
@@ -60,16 +117,15 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
 
 
 class _Images:
-    """Pixel tensors by relative path, decoded once."""
+    """Pixel tensor for a relative path. Decoded on every use: a JPEG decode + letterbox costs a few
+    ms next to a ~1 s training step, while caching float tensors costs 0.8 MB per image."""
 
     def __init__(self, root, decider: Decider):
-        self.root, self.decider, self.cache = str(root), decider, {}
+        self.root, self.decider = str(root), decider
 
     def __call__(self, rel: str) -> torch.Tensor:
-        if rel not in self.cache:
-            with Image.open(os.path.join(self.root, rel)) as img:
-                self.cache[rel] = image_tensor(img, self.decider.cfg)
-        return self.cache[rel]
+        with Image.open(os.path.join(self.root, rel)) as img:
+            return image_tensor(img, self.decider.cfg)
 
 
 def _forward(model, batch, pixels, device):
@@ -133,9 +189,9 @@ def _val_logits(model, items, images, pad_id, device):
     return out
 
 
-def _accuracy(logits, items) -> float:
+def _accuracy(logits, items, qtype: Optional[int] = None) -> float:
     hits = [max(range(len(z)), key=z.__getitem__) == max(range(len(it["target"])), key=it["target"].__getitem__)
-            for z, it in zip(logits, items)]
+            for z, it in zip(logits, items) if qtype is None or it["qtype"] == qtype]
     return sum(hits) / len(hits) if hits else float("nan")
 
 
@@ -186,10 +242,13 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
 
     losses: List[float] = []
     val_accuracy: List[float] = []
+    tracker = _Tracker(c.swanlab_project, c.run_name, {"train": asdict(c), "model": decider.cfg.to_dict(),
+                           "train_items": len(train_items), "val_items": len(calib), "steps": steps})
     for epoch in range(c.epochs):
         random.shuffle(train_items)
         sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * epoch / max(1, c.epochs - 1)
         for b in range(0, len(train_items), c.micro_batch):
+            t_step = time.perf_counter()
             chunk = train_items[b:b + c.micro_batch]
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
@@ -203,11 +262,22 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
             optimizer.step()
             scheduler.step()
-            losses.append(nll.item())
+            losses.append(nll.item())  # .item() syncs the device, so the step time below is real
+            step_s = time.perf_counter() - t_step
+            gpu = _apple_gpu_stats() if device.type == "mps" and len(losses) % c.log_every == 0 else {}
+            tracker.log({"train/loss": loss.item(), "train/nll": nll.item(), "train/sigma": sigma,
+                         "lr/projector": optimizer.param_groups[0]["lr"],
+                         "lr/lora": optimizer.param_groups[2]["lr"], "epoch": epoch + 1,
+                         "perf/step_s": step_s, "perf/samples_per_s": len(chunk) / step_s,
+                         **_device_memory(device), **gpu}, step=len(losses))
             if len(losses) % c.log_every == 0:
                 print("epoch %d step %d loss %.4f nll %.4f" % (epoch + 1, len(losses), loss.item(),
                                                               nll.item()), flush=True)
-        val_accuracy.append(_accuracy(_val_logits(model, calib, images, tok.pad_token_id, device), calib))
+        val_logits = _val_logits(model, calib, images, tok.pad_token_id, device)
+        val_accuracy.append(_accuracy(val_logits, calib))
+        tracker.log({"val/accuracy": val_accuracy[-1],
+                     "val/accuracy_noul": _accuracy(val_logits, calib, QTYPES["noul"]),
+                     "val/accuracy_choice": _accuracy(val_logits, calib, QTYPES["choice"])}, step=len(losses))
         print("epoch %d val accuracy %.3f (%d items)" % (epoch + 1, val_accuracy[-1], len(calib)), flush=True)
 
     model.decision.encoder = peft_encoder.merge_and_unload()
@@ -217,6 +287,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         rows[it["qtype"]].append((z, it["target"]))
     decider.cfg.temperature = [_fit_temperature(rows[t]) for t in range(3)]
     print("temperatures (choice, score, noul):", [round(t, 3) for t in decider.cfg.temperature])
+    tracker.log({"calib/temperature_choice": decider.cfg.temperature[QTYPES["choice"]],
+                 "calib/temperature_noul": decider.cfg.temperature[QTYPES["noul"]]}, step=len(losses))
+    tracker.finish()
 
     decider.model = model.cpu().float()
     decider.save(out_dir)

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Sequence
 import numpy as np
 from laya.common import ece_score
 
-from .data import Sample
+from .samples import Sample
 from ..model import Decider
 
 

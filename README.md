@@ -13,7 +13,7 @@
 ```
 src/devision/
 ├── model/     模型：网络结构、图片预处理、checkpoint 读写、Decider.decide（推理入口）
-├── train/     训练：数据转换 / 下载、RLCD 训练、评测；命令 devision-fetch / convert / train / eval
+├── train/     训练：样本格式、对齐（阶段 1）、RLCD 训练（阶段 2，SwanLab 可视化）、评测；命令 devision-align / train / eval
 ├── serve/     服务：POST /v1/systemone API（CPU）；命令 devision-serve
 └── demo/      Web demo：页面与示例图路由，由 devision-serve 挂载（--no-demo 可关）
 examples/      demo 默认加载的示例图
@@ -77,4 +77,4 @@ flowchart TB
 
 - 训练目标：RLCD，沿用 Laya 官方单卡脚本。它由两部分组成：对加了噪声的 logit 做策略梯度，奖励用 log、spherical 和 RPS 三种 proper scoring rule；再加上对 gold 分布的 soft 交叉熵。
 - 训练结束后，按题型在 val 集上用 LBFGS 拟合温度 T，范围限制在 [0.5, 5]。
-- 数据由 GQA / VQAv2 / POPE 按规则转换而来，见 `src/devision/train/data.py`。
+- 训练数据是 JSONL 样本，格式见 `src/devision/train/samples.py`。生成数据的代码（GQA / VQAv2 / POPE 的下载与规则转换）不在仓库里。

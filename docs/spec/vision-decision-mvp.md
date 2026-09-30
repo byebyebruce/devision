@@ -66,6 +66,7 @@
 25. 作为训练者，我想用 Laya 官方的 checkpoint 初始化 ModernBERT-large，这样模型一开始就懂 `noul` 和 `choice` 的决策格式。
 26. 作为训练者，我想冻结 SigLIP2，只训练投影层和决策头，并给 ModernBERT 加 LoRA，这样在 1 张 A100 上能快速迭代。
 27. 作为训练者，我想让训练目标沿用 Laya 官方的 RLCD，这样和 Laya 的概率语义一致。
+27a. 作为训练者，我想在 RLCD 之前先用图文描述单独对齐投影层，并让 RLCD 从对齐好的 checkpoint 接着训，这样决策头才读得到视觉信息（见 `../experiments/2026-09-30-rlcd-plateau.md`）。
 28. 作为训练者，我想在训练结束后做温度校准，这样输出的概率不会过度自信。
 29. 作为训练者，我想用一个配置切换视觉 token 的数量（64 个，或者 256 个即不压缩），这样可以做消融实验。
 30. 作为训练者，我想通过配置替换视觉编码器，比如以后换成 So400m，这样后续做编码器对比时不用改代码。
@@ -117,10 +118,12 @@
     - 按图片 id 剔除评测集用到的图片；
     - VQAv2 成对取样，保证"是"和"否"的数量平衡；
     - 用固定的随机种子。
-- **训练脚本**
-  - 以 Laya 官方的 RLCD 训练脚本（Apache-2.0）为骨架，在上面加入视觉分支和图片数据加载。
-  - 在 1 张 A100 上本地运行，不依赖 Modal。
-  - 训练结束后在 val 集上拟合一个温度参数，和 checkpoint 一起保存。
+- **训练脚本**：分两个阶段，都在本地运行（1 张 A100，或 Mac 的 MPS），不依赖 Modal。
+  - **阶段 1：对齐。** 带图完形填空：输入是 `[CLS] <视觉 token> <遮掉一部分词的图片描述> [SEP]`，用 ModernBERT-large 原版的 MLM 预测头（Apache-2.0，只在训练时用，不进 checkpoint）预测被遮的词。只训投影层，其余参数全部冻结。数据是 COCO train2014 的 caption。评测时比较 val 图片配真实 caption 和配错 caption 的补词准确率，前者更高说明投影层在传递图像信息。
+    - 为什么需要这一步：直接用决策题训练时，每题只有一个是/否信号，经过冻结的 ModernBERT 反传，教不会随机初始化的投影层，nll 会停在 ln2。
+  - **阶段 2：决策微调。** 以 Laya 官方的 RLCD 训练脚本（Apache-2.0）为骨架，加入视觉分支和图片数据加载。可以从阶段 1 的 checkpoint 开始；从对齐好的投影层开始时，投影层用较小的学习率。
+  - 训练结束后在 val 集上拟合温度参数，和 checkpoint 一起保存。
+  - 两个阶段的 checkpoint 格式相同，都能被 `decide` 直接加载。
 - **HTTP 服务**
   - 对 `decide` 的薄封装，路由是 `POST /v1/systemone`。
   - 进程启动时加载模型，只跑在 CPU 上。
@@ -201,7 +204,7 @@ Response
 ## Further Notes
 
 - **风险 1：延迟。** ModernBERT-large 的输入是 64 个视觉 token 加上文本，在服务器 CPU 上能否做到 P50 < 300ms 还没有实测过。子代理在 M4 上测了结构相同的 ViT-B@256，编码大约 50–60ms。如果最后不达标，按以下顺序处理：先量化，再换 ModernBERT-base。
-- **风险 2：Laya checkpoint 与视觉 token 的兼容性。** Laya 从来没见过视觉 token，投影层要从零学习对齐。数据只有几百到 1 万条时，效果可能有限，所以 MVP 阶段只要求流程跑通。
+- **风险 2：Laya checkpoint 与视觉 token 的兼容性。** Laya 从来没见过视觉 token，投影层要从零学习对齐。已经证实：不做对齐直接训决策题，nll 停在 ln2；加了阶段 1 对齐后，图文匹配题 val 准确率到 0.875（见 `../experiments/2026-09-30-rlcd-plateau.md`）。GQA/VQAv2 这类细节问题需要多长的对齐还是未知数。
 - **风险 3：视觉 token 压缩。** laya-vision 在 256px 下把 token 压到 16 个时，精细任务的效果崩了。我们压到 64 个，是调研建议的上限，需要用 256 个 token 的消融实验来验证。
 - Laya 的 `confidence` 用的是基于熵的算法，和 Jev 不同。我们对外采用 Jev 的公式，所以直接拿 laya-serve 的阈值来用是不成立的。
 - 本文档里的 Jev 协议细节来自 `jev-api.md`。问题文本放在 `instructions` 字段（Jev 没有单独的 `question` 字段）。文档中有两处没说清：请求里最多能放多少个问题；`instructions` 是否可以为 null。实现上不限问题数，`instructions` 必填。
