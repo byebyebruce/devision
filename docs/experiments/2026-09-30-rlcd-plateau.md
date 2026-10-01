@@ -244,3 +244,25 @@ GQA 空间题：to the left of / to the right of 0.50 → 0.62（71% 答 right�
 - 有没有某物学得最好（exist 0.92，POPE 0.773）。
 - **左右完全没学会**，即使标签干净：absolute 左右 0.49、relative 左右 0.39。上下和大小的提升大部分是类别先验（插座在下、时钟在上；冰箱比杯子大），比先验只高约 6 个点。
 - 合成图上一个圆的左右 200 步就能学会，COCO 上却学不会：差别在于 COCO 题要先在多个物体里找到文字说的那个（"the dog"），再读它的位置。模型知道图里**有什么**，但不知道**文字说的那个东西在哪**——缺的是文字到图像区域的绑定。
+
+## 追加：文字到区域的绑定（2026-10-02）
+
+合成双物体图（`runs/analysis/binding_learnable.py`）：灰色噪声底上两个不同颜色的圆或方块，一个在左半边、一个在右半边，问 "Is the red square on the left or on the right?"。和单物体题不同，答案要靠题里的颜色和形状挑出物体。抽 4 张对图核对，标签无误（`runs/analysis/binding_check.jpg`）。
+
+从 `stage2-cocoqa` 继续训练，留出 500 张评测（`runs/analysis/binding_learnable.txt`）：
+
+| 设置 | 训练图 / 步数 | 准确率 |
+|---|---|---|
+| LoRA r=16（默认） | 2,500 / 626 | 0.54（从第 300 步起恒定） |
+| LoRA r=64，lr_lora 4e-4 | 2,500 / 626 | 0.54 |
+| 放开 ModernBERT 全部 28 层，lr 2e-5 | 2,500 / 626 | 0.54 |
+| 放开全部 28 层，lr 5e-5，head 2e-4 | 2,500 / 626 | 0.50 |
+| LoRA r=16 | 10,000 / 2,500 | 0.48–0.52，始终在随机水平 |
+
+探针（`runs/analysis/binding_probe.py`）：视觉 token 上 "红色物体在哪边" / "蓝色物体在哪边" 线性可读 1.000 / 1.000；ModernBERT 在选项标记位的输出上，题目所问物体的方向只有 0.584。
+
+结论：视觉侧有完整的 "什么颜色的东西在哪边"，但阶段 2 的决策训练学不会用题里的词去挑出对应的物体；放开 ModernBERT 全部参数、样本加到 4 倍都不行，所以不是 LoRA 容量问题。单物体题 200 步就能学会，说明卡在 "按文字选物体" 这一步。新增 `--unfreeze-top` / `--lr-encoder`（commit `f2da143`）。
+
+带方位的完形填空（`runs/analysis/binding_captions.py`）：给同一批双物体图配描述（"a red square on the left and a yellow circle on the right"、"the red square is to the left of the yellow circle" 等 5 种），从 `stage2-cocoqa` 起用 `devision-align` 只训投影层 2 个 epoch（1,250 步）。补词准确率 0.35 → 0.915（错配图片 0.777，差 0.14）。但专门测方位词——"the X is to the [MASK] of the Y"（训练用过的句式）里 left/right 的打分——只有 0.473（`stage2-cocoqa` 0.500）。之后再训双物体决策题 2,500 步，仍为 0.48。
+
+结论：补词准确率高来自颜色、形状和句式这些不需要绑定的词；"文字说的那个物体在哪边" 在完形填空里同样学不会。目前在这个结构上，投影层单训（阶段 1）、LoRA 或全量放开 ModernBERT（阶段 2）、4 倍样本，都没能学会按文字挑物体。
