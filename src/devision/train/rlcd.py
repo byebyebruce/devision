@@ -4,6 +4,7 @@
 Frozen: the SigLIP vision tower. Trained: projector, Laya's decision head, LoRA on ModernBERT.
 LoRA is merged before saving, so checkpoints load without peft.
 """
+import math
 import os
 import random
 import re
@@ -34,6 +35,7 @@ class TrainConfig:
     lr_new: float = 1e-3         # projector (randomly initialised)
     lr_head: float = 1e-4        # Laya decision head
     lr_lora: float = 2e-4
+    warmup: int = 200            # linear warm-up steps, then cosine decay to 0 over the run
     lora_r: int = 16
     lora_alpha: int = 32
     calib_fraction: float = 0.1  # held out to fit temperatures when no val set is given
@@ -274,7 +276,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     ]
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
     steps = c.epochs * max(1, -(-len(train_items) // c.micro_batch))
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=steps, eta_min=1e-6)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
+                                                  * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
     use_amp = device.type == "cuda"
 
     losses: List[float] = []
@@ -298,9 +301,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     run_eval()
     for epoch in range(c.epochs):
         random.shuffle(train_items)
-        sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * epoch / max(1, c.epochs - 1)
         for b in range(0, len(train_items), c.micro_batch):
             t_step = time.perf_counter()
+            sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * len(losses) / max(1, steps - 1)
             chunk = train_items[b:b + c.micro_batch]
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None

@@ -50,7 +50,7 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
                    val_samples=val_set,
                    eval_sets={"held": [dict(s, source="other") for s in val_set[:4]] + val_set[4:8]},
                    config=TrainConfig(epochs=40, micro_batch=8, lr_new=3e-3, lr_head=3e-3, lr_lora=3e-3,
-                                      lora_r=32, lora_alpha=128, eval_every=25, seed=0, device="cpu"))
+                                      lora_r=32, lora_alpha=128, warmup=10, eval_every=25, seed=0, device="cpu"))
 
     first, last = report["losses"][:10], report["losses"][-10:]
     assert sum(last) / len(last) < sum(first) / len(first)
@@ -106,6 +106,6 @@ def test_training_continues_from_an_aligned_checkpoint(tmp_path):
     train(Decider.load(tmp_path / "aligned"), samples[:48], data_root=root, out_dir=tmp_path / "ckpt",
           val_samples=samples[48:],
           config=TrainConfig(epochs=40, micro_batch=8, lr_new=3e-3, lr_head=3e-3, lr_lora=3e-3,
-                             lora_r=32, lora_alpha=128, seed=0, device="cpu"))
+                             lora_r=32, lora_alpha=128, warmup=10, seed=0, device="cpu"))
     result = evaluate(Decider.load(tmp_path / "ckpt"), samples, data_root=root)
     assert result["accuracy"]["noul"] > 0.8
