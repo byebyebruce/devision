@@ -204,3 +204,43 @@ GQA 按题型（`runs/analysis/gqa_by_type-stage2-100k-lowlr.txt`）：left/righ
 - 对照（检索于 2026-10-01）：唯一公开的视觉 System One 模型 laya-vision。201M 版（SmolVLM-256M 骨干，512 px）POPE adversarial 0.777、VQAv2 yes/no 0.715、VSR 0.875（160 题），ECE 0.041；ModernVBERT-250M 版（双向，`[MASK]` 读出，结构与本项目一致）VQAv2 yes/no 0.718，在 A100 上训 68 分钟。它们与本项目的主要差别是语言模型预训练时已看过图、连接层是预训练的且全量训练，而不是随机投影层加冻结的纯文本 ModernBERT。
 
 下一步：把骨干换成 ModernVBERT（MIT，transformers 原生支持，本机 CPU 前向 255 ms，现模型 186 ms），去掉阶段 1；需要先改 spec，并把输入从 256 px 改为 512 px。
+
+## 追加：空间信息丢在哪，以及 COCO 物体框出题（2026-10-01～02）
+
+**探针**（`runs/analysis/spatial_probe.py`，结果 `spatial_probe.txt`）：合成图（随机底色 + 一个圆，明确在左/右半边、上/下半边），对三处表示做线性探针。`stage2-100k-lowlr` 上左右 / 上下的留出准确率：SigLIP2 特征 1.000 / 1.000，投影层输出 1.000 / 1.000，ModernBERT 在选项标记位的输出 0.976 / 0.998；`decide` 实际回答 0.498（100% 答 left）。位置信息一路到达决策头的输入，没有丢。
+
+**可学性**（`runs/analysis/spatial_learnable.py`）：同样的合成题 2,000 张图 × 左右/上下各一问，从 `stage2-100k-lowlr` 训 1 epoch（500 步）：准确率 0.495 → 0.85（100 步）→ 0.97（200 步）→ 0.99。结构和训练流程能学会绝对位置；但 val_gqa 不变（0.607 → 0.607）。
+
+**COCO 物体框出题**（`scripts/data/cocoqa.py`，仓库外，带测试）：从 `instances_*2014.json` 生成四类题，只问图中唯一实例的类别，位置只在间隔明确时出题：exist（noul；负例一半取共现最多的缺席类别，即 POPE adversarial 的做法）、absolute（左右或上下）、relative（choice 或 noul，左右或上下）、size（面积比 ≥ 2）。训练集 57,197 题（train2014，剔除全部评测图），评测集 `val_cocoqa` 1,000 题（val2014，四类各 250）。抽 8 题对图核对无误。
+
+`stage2-cocoqa`：从 `stage2-100k-lowlr` 继续，数据 57k COCO 题 + 从 `train_100k` 回放 23k，1 epoch（10,000 步，约 3 小时 40 分），学习率同 lowlr，预热 500。没有塌缩，旧集合没有遗忘。
+
+| 步数 | val_gqa（noul / choice） | val_vqav2 | POPE | val_cocoqa（noul / choice） |
+|---|---|---|---|---|
+| 0 | 0.607（0.621 / 0.580） | 0.634 | 0.713 | 0.626（0.698 / 0.575） |
+| 1000 | 0.606（0.612 / 0.595） | 0.628 | 0.753 | 0.725 |
+| 3000 | 0.627（0.643 / 0.595） | 0.627 | 0.773 | 0.700 |
+| 6000 | 0.622（0.634 / 0.598） | 0.630 | 0.760 | 0.773 |
+| 8000 | 0.638（0.642 / 0.631） | 0.639 | 0.777 | 0.766 |
+| 10000 | 0.635（0.639 / 0.628） | 0.648 | 0.773 | 0.761 |
+
+拟合温度 choice 2.72、noul 1.46。最终经 `decide`：val_gqa **0.635**（noul 0.639，choice 0.628），val_vqav2 **0.648**，POPE **0.773**，val_cocoqa 0.761；ECE 0.042 / 0.025 / 0.098 / 0.054。POPE 首次超过 `two-stage-mac`（0.763），和 laya-vision 201M（0.777，3,000 题）持平；GQA choice 第一次明显离开随机水平。POPE 的 ECE 变差（0.098），温度只在 val_mix 上拟合。
+
+val_cocoqa 分题型（`runs/analysis/cocoqa_by_kind.py`），以及只看类别、不看图的先验基线（用训练集里每个类别的多数答案）：
+
+| 题型 | `stage2-100k-lowlr` | `stage2-cocoqa` | 类别先验 |
+|---|---|---|---|
+| exist | 0.828 | **0.920** | — |
+| absolute 左右（n=110） | 0.491 | 0.491 | 0.445 |
+| absolute 上下（n=140） | 0.671 | 0.814 | 0.757 |
+| relative 左右（n=49） | 0.469 | 0.388 | — |
+| relative 上下（n=34） | 0.588 | 0.765 | — |
+| size | 0.576 | 0.908 | 0.844 |
+
+GQA 空间题：to the left of / to the right of 0.50 → 0.62（71% 答 right），left/right 0.40 → 0.47，bottom/top 0.50 → 0.67，positionChoose 0.45 → 0.57，relChooser 0.51 → 0.60。
+
+结论：
+
+- 有没有某物学得最好（exist 0.92，POPE 0.773）。
+- **左右完全没学会**，即使标签干净：absolute 左右 0.49、relative 左右 0.39。上下和大小的提升大部分是类别先验（插座在下、时钟在上；冰箱比杯子大），比先验只高约 6 个点。
+- 合成图上一个圆的左右 200 步就能学会，COCO 上却学不会：差别在于 COCO 题要先在多个物体里找到文字说的那个（"the dog"），再读它的位置。模型知道图里**有什么**，但不知道**文字说的那个东西在哪**——缺的是文字到图像区域的绑定。
