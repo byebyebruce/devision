@@ -24,8 +24,10 @@ def _predicted(answer: Dict[str, Any]):
 
 
 def evaluate(decider: Decider, samples: Sequence[Sample], data_root) -> Dict[str, Any]:
-    """Accuracy per question type, ECE on max-probability confidence, decide() latency."""
+    """Accuracy per question type and per sample source, ECE on max-probability confidence,
+    decide() latency."""
     correct: Dict[str, List[bool]] = {"noul": [], "choice": []}
+    by_source: Dict[str, List[bool]] = {}
     conf: List[float] = []
     hits: List[bool] = []
     latency: List[float] = []
@@ -39,6 +41,7 @@ def evaluate(decider: Decider, samples: Sequence[Sample], data_root) -> Dict[str
             pred, p = _predicted(res["answers"][qid])
             ok = pred == _gold_answer(q, s["gold"][qid]["probabilities"])
             correct[q["type"]].append(ok)
+            by_source.setdefault(s.get("source", ""), []).append(ok)
             conf.append(p)
             hits.append(ok)
     lat = np.array(latency) if latency else np.zeros(1)
@@ -46,6 +49,7 @@ def evaluate(decider: Decider, samples: Sequence[Sample], data_root) -> Dict[str
         "n": len(samples),
         "accuracy": {t: (float(np.mean(v)) if v else None) for t, v in correct.items()},
         "accuracy_all": float(np.mean(hits)) if hits else None,
+        "accuracy_by_source": {src: float(np.mean(v)) for src, v in sorted(by_source.items())},
         "ece": ece_score(np.array(conf), np.array(hits, dtype=float)),
         "latency_ms": {"p50": float(np.percentile(lat, 50)), "p95": float(np.percentile(lat, 95))},
         "model": decider.cfg.model_name,

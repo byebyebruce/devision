@@ -144,3 +144,24 @@ val 上被遮词的准确率 / nll。"错配"指每张图配上另一张图的 c
 - 第 1 个 epoch 的训练 nll 相当于没见过的题上的 nll，两轮都在 0.68–0.70，接近 ln2：GQA/VQAv2 题几乎没有学到可泛化的东西。第 2 个 epoch 起训练 nll 下降而 val 不动，是在记题；`two-stage-mac` 第 3、4 个 epoch 降到 0.40 也是这样。
 - POPE（有没有某物）能学会，仍在上升（第 4,500 步 0.753），阶段 2 可能还没训够。
 - 温度在 val（全是 GQA）上拟合，套到 POPE 上 ECE 从 0.075 变差到 0.110：val 和 POPE 的分布不同。
+
+## 追加：更大的评测集与按题型诊断（2026-10-01）
+
+- 发现 COCO/VG 跨数据集泄漏：`train.jsonl` 有 10 题在评测图上（5 张，GQA 训练图里的 COCO val2014 图与 POPE 重合）。原因是剔除只比 `vg:`/`coco:` 原 id；现按 VG `image_data.json` 两边对齐，已从 train 剔除。
+- 新评测集：`val_gqa`（GQA testdev 1000 题，346 张图，yes/no/choice 各约 1/3）、`val_vqav2`（VQAv2 val2014 yes/no 1000 题，980 张图，正负各半）。1000 题标准误约 1.6%。
+
+| checkpoint | val_gqa（noul / choice） | val_vqav2 | ECE（gqa / vqav2） |
+|---|---|---|---|
+| `two-stage-mac` | 0.590（0.612 / 0.547） | **0.688** | 0.051 / 0.042 |
+| `two-stage-full-mac` | 0.602（0.606 / 0.595） | 0.608 | 0.032 / 0.039 |
+
+VQAv2 上 `two-stage-mac` 明显更好（+8 个点，约 5 个标准误），它的阶段 2 跑了 4 个 epoch，是本轮的两倍；GQA 上两者持平。
+
+按 GQA 题型（`runs/analysis/gqa_by_type.py`，结果在 `runs/analysis/gqa_by_type.txt`）：
+
+- **空间位置题在随机水平且塌缩到一个答案**：left/right 0.53（`two-stage-full-mac` 70% 答 right），top/bottom 0.47（77% 答 bottom），relChooser 0.53，positionChoose 0.50。训练 choice 题里 64% 是这类题。
+- 属性选择（chooseAttr）0.53–0.60，类别选择 0.70–0.74。
+- noul 上偏高的子类（twoSameMaterialC 0.90、relVerifyCo 0.80）几乎都是同一答案占 70–90%，是先验，不是看图。
+- 推测：视觉 token 按光栅顺序排成 1D 交给 ModernBERT（1D RoPE），投影层没有显式 2D 位置；caption 对齐也很少要求左右/上下，所以空间信息没被训练出来。
+
+阶段 2 扩大到 10 万题（`data/train_100k.jsonl`：GQA 6 万、VQAv2 4 万，同样剔除全部评测图），1 个 epoch，SwanLab run `stage2-100k`。

@@ -28,7 +28,8 @@
 - 只从 seam 测外部行为：仓库内是 `decide(state, questions) → answers`；数据转换器的测试在 `scripts/data/`（`uv run pytest scripts/data`）。不测张量形状/层结构。
 - HTTP 层是 `decide` 的薄封装，不单测。
 - 端到端冒烟（`tests/train/test_pipeline.py`）：tiny 模型 + 合成红/蓝图样本 → 训练 → 存盘 → 加载 → 经 decide 评测，CPU 上几秒，随 `pytest` 一起跑。真实模型的同一流程用下面的 train → eval 命令（训练在 Mac 上，`--device mps`）。
-- 评测集图片按 image id 从所有训练源剔除（COCO/VG 跨数据集泄漏）。
+- 评测集图片按 image id 从所有训练源剔除；VG（GQA）里约一半是 COCO 图，剔除时两套 id 都要对上（`convert.same_images`，映射来自 VG 的 `image_data.json`）。
+- 评测集：`val_mix`（GQA testdev 1000 + VQAv2 val 1000，用于 `--val` 与拟合温度，指标按来源拆分）、`pope`（300，只评不拟合）。旧的 `val.jsonl`（200 题）只为和早期实验对比而保留。
 
 ## Python 与依赖
 
@@ -42,8 +43,10 @@ uv run pytest -q                      # 全部测试（含 tiny 模型端到端�
 uv run pyright                        # 类型检查
 uv run python scripts/data/prepare.py fetch --root data ...   # 仓库外：生成 data/{train,val,pope}.jsonl
 uv run python scripts/data/captions.py --root data --exclude data/val.jsonl data/pope.jsonl   # 仓库外：生成 data/align_{train,val}.jsonl（COCO caption）
+uv run python scripts/data/evalsets.py --root data --gqa 1000 --vqav2 1000   # 仓库外：生成 data/val_{gqa,vqav2,mix}.jsonl，并从 train.jsonl 剔除评测图
+uv run python scripts/data/bigtrain.py --root data --gqa 60000 --vqav2 40000 --out data/train_100k.jsonl   # 仓库外：更大的阶段 2 训练集
 uv run devision-align --data data/align_train.jsonl --val data/align_val.jsonl --data-root data --out runs/align --run-name align   # 阶段 1
-uv run devision-train --init runs/align --lr-new 1e-4 --data data/train.jsonl --val data/val.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
+uv run devision-train --init runs/align --lr-new 1e-4 --data data/train_100k.jsonl --val data/val_mix.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
 ```

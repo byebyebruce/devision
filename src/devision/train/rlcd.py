@@ -114,6 +114,7 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             total = sum(target)
             it["target"] = [t / total for t in target] if total > 0 else [1 / len(keys)] * len(keys)
             it["image"] = s["image"]
+            it["source"] = s.get("source", "")
             items.append(it)
     return items
 
@@ -197,6 +198,18 @@ def _accuracy(logits, items, qtype: Optional[int] = None) -> float:
     return sum(hits) / len(hits) if hits else float("nan")
 
 
+def _set_metrics(name: str, logits, items, temperature: Optional[Sequence[float]] = None) -> Dict[str, float]:
+    """`_metrics` as "<name>/<metric>", plus "<name>/<source>/<metric>" when the set mixes sources."""
+    out = {"%s/%s" % (name, k): v for k, v in _metrics(logits, items, temperature).items()}
+    sources = sorted({it["source"] for it in items})
+    if len(sources) > 1:
+        for src in sources:
+            idx = [i for i, it in enumerate(items) if it["source"] == src]
+            out.update({"%s/%s/%s" % (name, src, k): v for k, v in
+                        _metrics([logits[i] for i in idx], [items[i] for i in idx], temperature).items()})
+    return out
+
+
 def _metrics(logits, items, temperature: Optional[Sequence[float]] = None) -> Dict[str, float]:
     """Accuracy (all / noul / choice), NLL against the gold distribution and ECE on max
     probability, with logits divided by the per-type temperature as decide() does (1 if none)."""
@@ -276,8 +289,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             return evals[-1]
         row: Dict[str, float] = {}
         for name, its in sets.items():
-            row.update({"%s/%s" % (name, k): v for k, v in
-                        _metrics(_val_logits(model, its, images, tok.pad_token_id, device), its).items()})
+            row.update(_set_metrics(name, _val_logits(model, its, images, tok.pad_token_id, device), its))
         tracker.log(row, step=len(losses))
         print("step %d %s" % (len(losses), {k: round(v, 4) for k, v in row.items()}), flush=True)
         evals.append(dict(row, step=len(losses)))
@@ -329,8 +341,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     decider.cfg.temperature = [_fit_temperature(rows[t]) for t in range(3)]
     print("temperatures (choice, score, noul):", [round(t, 3) for t in decider.cfg.temperature])
     # With the fitted temperatures, i.e. what decide() will return. val is also the fitting set.
-    final = {"%s/%s" % (name, k): v for name, its in sets.items()
-             for k, v in _metrics(set_logits[name], its, decider.cfg.temperature).items()}
+    final = {k: v for name, its in sets.items()
+             for k, v in _set_metrics(name, set_logits[name], its, decider.cfg.temperature).items()}
     print("final %s" % {k: round(v, 4) for k, v in final.items()}, flush=True)
     tracker.log({"calib/temperature_choice": decider.cfg.temperature[QTYPES["choice"]],
                  "calib/temperature_noul": decider.cfg.temperature[QTYPES["noul"]],

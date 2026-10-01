@@ -47,7 +47,8 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
     train_set, val_set = samples[:48], samples[48:]
 
     report = train(tiny_decider(seed=1), train_set, data_root=root, out_dir=tmp_path / "ckpt",
-                   val_samples=val_set, eval_sets={"held": val_set[:8]},
+                   val_samples=val_set,
+                   eval_sets={"held": [dict(s, source="other") for s in val_set[:4]] + val_set[4:8]},
                    config=TrainConfig(epochs=40, micro_batch=8, lr_new=3e-3, lr_head=3e-3, lr_lora=3e-3,
                                       lora_r=32, lora_alpha=128, eval_every=25, seed=0, device="cpu"))
 
@@ -61,6 +62,7 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
     assert evals[0]["step"] == 0 and 25 in [e["step"] for e in evals]
     assert evals[-1]["val/nll"] < evals[0]["val/nll"]
     assert {"held/accuracy", "held/ece"} <= set(evals[-1])
+    assert {"held/other/accuracy", "held/synthetic/accuracy"} <= set(evals[-1])  # a mixed set, per source
     assert {"val/accuracy_noul", "val/accuracy_choice", "held/accuracy"} <= set(report["final"])
 
     decider = Decider.load(tmp_path / "ckpt")
@@ -73,6 +75,7 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
     assert 0.0 <= result["ece"] <= 1.0
     assert result["latency_ms"]["p50"] > 0
     assert result["n"] == len(samples)
+    assert set(result["accuracy_by_source"]) == {"synthetic"}
     json.dumps(result)  # evaluation output is a structured, serialisable file
 
 

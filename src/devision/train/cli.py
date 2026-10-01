@@ -97,5 +97,7 @@ def eval_main(argv=None) -> None:
         metrics = {"accuracy": result["accuracy_all"], "ece": result["ece"],
                    "latency_p50_ms": result["latency_ms"]["p50"], "latency_p95_ms": result["latency_ms"]["p95"],
                    **{"accuracy_" + t: v for t, v in result["accuracy"].items()}}
+        if len(result["accuracy_by_source"]) > 1:
+            metrics.update({src + "/accuracy": v for src, v in result["accuracy_by_source"].items()})
         tracker.log({"%s/%s" % (name, k): v for k, v in metrics.items() if v is not None}, step=0)
         tracker.finish()
