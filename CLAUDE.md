@@ -19,7 +19,7 @@
 
 - **API 与 Jev `/v1/systemone` 兼容**：唯一扩展是 `state` 数组可含 `{type:"image", base64|url}`。响应结构不得偏离 Jev。
 - **`confidence = (n·p_max−1)/(n−1)`**（Jev 口径），不用 Laya 的熵式定义。
-- 推理只跑 **CPU**；训练 1×A100。
+- 推理只跑 **CPU**；训练在本地 Mac（MPS）。
 - 当前仅：英文、单图、letterbox 到 256×256、题型 `noul`/`choice`（`score` 返回 422）。
 - **非商用项目**：可用 laya-vision（CC BY-NC-SA）做 baseline；许可相关改动需先确认。
 
@@ -27,7 +27,7 @@
 
 - 只从 seam 测外部行为：仓库内是 `decide(state, questions) → answers`；数据转换器的测试在 `scripts/data/`（`uv run pytest scripts/data`）。不测张量形状/层结构。
 - HTTP 层是 `decide` 的薄封装，不单测。
-- 端到端冒烟（`tests/train/test_pipeline.py`）：tiny 模型 + 合成红/蓝图样本 → 训练 → 存盘 → 加载 → 经 decide 评测，CPU 上几秒，随 `pytest` 一起跑。真实模型的同一流程用下面的 train → eval 命令（训练在 A100 上）。
+- 端到端冒烟（`tests/train/test_pipeline.py`）：tiny 模型 + 合成红/蓝图样本 → 训练 → 存盘 → 加载 → 经 decide 评测，CPU 上几秒，随 `pytest` 一起跑。真实模型的同一流程用下面的 train → eval 命令（训练在 Mac 上，`--device mps`）。
 - 评测集图片按 image id 从所有训练源剔除（COCO/VG 跨数据集泄漏）。
 
 ## Python 与依赖
@@ -43,12 +43,12 @@ uv run pyright                        # 类型检查
 uv run python scripts/data/prepare.py fetch --root data ...   # 仓库外：生成 data/{train,val,pope}.jsonl
 uv run python scripts/data/captions.py --root data --exclude data/val.jsonl data/pope.jsonl   # 仓库外：生成 data/align_{train,val}.jsonl（COCO caption）
 uv run devision-align --data data/align_train.jsonl --val data/align_val.jsonl --data-root data --out runs/align --run-name align   # 阶段 1
-uv run devision-train --init runs/align --lr-new 1e-4 --data data/train.jsonl --val data/val.jsonl --data-root data --out runs/x --run-name x   # 阶段 2；A100 上 --device cuda，Mac 上 --device mps
+uv run devision-train --init runs/align --lr-new 1e-4 --data data/train.jsonl --val data/val.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
 ```
 
 - `data/`（数据集）、`runs/`（checkpoint）不进 git；`examples/` 里的少量示例图进 git，供 web demo 默认加载。
-- 训练默认上报 SwanLab（项目 `devision`）：loss / nll / 学习率 / 每 epoch 的 val 准确率 / 拟合温度。先 `uv run swanlab login` 登录（API key 只存在本机用户目录，**不要写进仓库**）；`--swanlab-project ""` 关闭。本地缓存 `swanlog/` 不进 git。
+- 训练默认上报 SwanLab（项目 `devision`）。阶段 1：loss、batch 补词准确率、梯度范数、学习率，每 `--eval-every` 步记录 val 上真实/错配图片的补词准确率与 nll 及两者之差（`val/mlm_acc_gap`）。阶段 2：loss、nll、batch 准确率、梯度范数、学习率；从第 0 步起每 `--eval-every` 步（默认 500）和每个 epoch 末，在 val 和每个 `--eval` 集上记录准确率（总体/noul/choice）、nll、ECE；结束时记录拟合温度，以及套用温度后各集合的指标（`final/...`，即 decide 会给出的结果）。先 `uv run swanlab login` 登录（API key 只存在本机用户目录，**不要写进仓库**）；`--swanlab-project ""` 关闭。本地缓存 `swanlog/` 不进 git。
 - 首次训练会从 Hub 下载 `convaiinnovations/laya` 与 `google/siglip2-base-patch16-256`；对齐阶段还会下载 `answerdotai/ModernBERT-large`（只取 MLM 头）。
 - 不做阶段 1 直接训决策题，nll 会停在 ln2（见 `docs/experiments/2026-09-30-rlcd-plateau.md`）。

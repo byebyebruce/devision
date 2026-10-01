@@ -117,6 +117,7 @@ def _evaluate(model, head, tok, samples, images, c: AlignConfig, device) -> Dict
                 total += int(m.sum().item())
         out["val/mlm_acc_" + mode] = hits / max(1, total)
         out["val/mlm_nll_" + mode] = nll / max(1, total)
+    out["val/mlm_acc_gap"] = out["val/mlm_acc_real"] - out["val/mlm_acc_shuffled"]  # what the image adds
     model.train(was_training)
     return out
 
@@ -184,13 +185,14 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             loss = F.cross_entropy(logits[m], y[m])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(params, 1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(params, 1.0)
             optimizer.step()
             scheduler.step()
             losses.append(loss.item())
             step_s = time.perf_counter() - t_step
             gpu = _apple_gpu_stats() if device.type == "mps" and len(losses) % c.log_every == 0 else {}
-            tracker.log({"align/loss": losses[-1], "lr/projector": optimizer.param_groups[0]["lr"],
+            tracker.log({"align/loss": losses[-1], "align/mlm_acc": (logits[m].argmax(-1) == y[m]).float().mean().item(),
+                         "align/grad_norm": grad_norm.item(), "lr/projector": optimizer.param_groups[0]["lr"],
                          "epoch": epoch + 1, "perf/step_s": step_s, "perf/samples_per_s": len(chunk) / step_s,
                          **_device_memory(device), **gpu}, step=len(losses))
             if len(losses) % c.log_every == 0:

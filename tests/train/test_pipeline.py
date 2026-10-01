@@ -1,7 +1,7 @@
 """End-to-end smoke: samples -> train -> save -> load -> evaluate through `decide`.
 
 Uses the tiny model and synthetic red/blue images so it runs on a laptop CPU. The same code
-path trains the real model on the A100 (see CLAUDE.md for the command).
+path trains the real model on the Mac with --device mps (see CLAUDE.md for the command).
 """
 import json
 import random
@@ -47,15 +47,21 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
     train_set, val_set = samples[:48], samples[48:]
 
     report = train(tiny_decider(seed=1), train_set, data_root=root, out_dir=tmp_path / "ckpt",
-                   val_samples=val_set,
+                   val_samples=val_set, eval_sets={"held": val_set[:8]},
                    config=TrainConfig(epochs=40, micro_batch=8, lr_new=3e-3, lr_head=3e-3, lr_lora=3e-3,
-                                      lora_r=32, lora_alpha=128, seed=0, device="cpu"))
+                                      lora_r=32, lora_alpha=128, eval_every=25, seed=0, device="cpu"))
 
     first, last = report["losses"][:10], report["losses"][-10:]
     assert sum(last) / len(last) < sum(first) / len(first)
     assert len(report["val_accuracy"]) == 40  # one reading per epoch
     assert report["val_accuracy"][-1] > report["val_accuracy"][0]
     assert report["calib_items"] == len(val_set)  # temperatures are fitted on the val set
+    # Every eval set is tracked from step 0, so progress shows as a curve, not just an end point.
+    evals = report["evals"]
+    assert evals[0]["step"] == 0 and 25 in [e["step"] for e in evals]
+    assert evals[-1]["val/nll"] < evals[0]["val/nll"]
+    assert {"held/accuracy", "held/ece"} <= set(evals[-1])
+    assert {"val/accuracy_noul", "val/accuracy_choice", "held/accuracy"} <= set(report["final"])
 
     decider = Decider.load(tmp_path / "ckpt")
     result = evaluate(decider, samples, data_root=root)

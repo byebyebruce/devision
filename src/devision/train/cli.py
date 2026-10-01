@@ -53,13 +53,17 @@ def align_main(argv=None) -> None:
 
 def train_main(argv=None) -> None:
     """Stage 2: RLCD fine-tuning on a JSONL of decision samples; saves a checkpoint.
-    --val is used for per-epoch accuracy and temperature fitting."""
+    --val (and each --eval set) is evaluated every --eval-every steps; --val also fits the temperatures."""
     from .rlcd import TrainConfig, train
 
-    a = _parser(train_main.__doc__ or "", TrainConfig()).parse_args(argv)
+    p = _parser(train_main.__doc__ or "", TrainConfig())
+    p.add_argument("--eval", action="append", default=[], metavar="NAME=JSONL",
+                   help="extra set evaluated alongside val and logged as NAME/..., e.g. pope=data/pope.jsonl")
+    a = p.parse_args(argv)
     config = TrainConfig(**{k: getattr(a, k) for k in vars(TrainConfig())})
     report = train(_decider(a), read_jsonl(a.data), a.data_root, a.out, config,
-                   val_samples=read_jsonl(a.val) if a.val else None)
+                   val_samples=read_jsonl(a.val) if a.val else None,
+                   eval_sets={name: read_jsonl(path) for name, path in (e.split("=", 1) for e in a.eval)})
     _write_report(a.out, "train_report.json", report)
 
 
@@ -73,6 +77,9 @@ def eval_main(argv=None) -> None:
     p.add_argument("--data", required=True)
     p.add_argument("--data-root", default="data")
     p.add_argument("--out")
+    p.add_argument("--name", help="set name, metrics are logged as NAME/... (default: file name of --data)")
+    p.add_argument("--swanlab-project", default="devision", help='"" turns SwanLab off')
+    p.add_argument("--run-name", help="default: eval-<checkpoint dir>-<NAME>")
     a = p.parse_args(argv)
 
     result = evaluate(Decider.load(a.checkpoint), read_jsonl(a.data), a.data_root)
@@ -81,3 +88,14 @@ def eval_main(argv=None) -> None:
     if a.out:
         with open(a.out, "w") as f:
             f.write(text)
+    if a.swanlab_project:
+        from .rlcd import _Tracker
+
+        name = a.name or os.path.splitext(os.path.basename(a.data))[0]
+        run = a.run_name or "eval-%s-%s" % (os.path.basename(os.path.normpath(a.checkpoint)), name)
+        tracker = _Tracker(a.swanlab_project, run, {"checkpoint": a.checkpoint, "data": a.data, "n": result["n"]})
+        metrics = {"accuracy": result["accuracy_all"], "ece": result["ece"],
+                   "latency_p50_ms": result["latency_ms"]["p50"], "latency_p95_ms": result["latency_ms"]["p95"],
+                   **{"accuracy_" + t: v for t, v in result["accuracy"].items()}}
+        tracker.log({"%s/%s" % (name, k): v for k, v in metrics.items() if v is not None}, step=0)
+        tracker.finish()

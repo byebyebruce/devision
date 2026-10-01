@@ -12,8 +12,9 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
+import numpy as np
 import torch
-from laya.common import QTYPES, clamp_temperature, collate_items, proper_reward
+from laya.common import QTYPES, clamp_temperature, collate_items, ece_score, proper_reward
 from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
 
@@ -39,6 +40,7 @@ class TrainConfig:
     seed: int = 0
     device: str = "auto"
     log_every: int = 10
+    eval_every: int = 500        # steps between evaluations (plus step 0 and each epoch end); 0: epoch ends only
     swanlab_project: str = ""    # "" disables SwanLab; the CLI defaults to "devision"
     run_name: str = ""
 
@@ -195,14 +197,34 @@ def _accuracy(logits, items, qtype: Optional[int] = None) -> float:
     return sum(hits) / len(hits) if hits else float("nan")
 
 
+def _metrics(logits, items, temperature: Optional[Sequence[float]] = None) -> Dict[str, float]:
+    """Accuracy (all / noul / choice), NLL against the gold distribution and ECE on max
+    probability, with logits divided by the per-type temperature as decide() does (1 if none)."""
+    nll, conf, hits = [], [], []
+    for z, it in zip(logits, items):
+        t = temperature[it["qtype"]] if temperature else 1.0
+        logp = torch.log_softmax(torch.tensor(z) / t, -1)
+        nll.append(-(torch.tensor(it["target"]) * logp).sum().item())
+        conf.append(logp.max().exp().item())
+        hits.append(float(logp.argmax().item() == max(range(len(it["target"])), key=it["target"].__getitem__)))
+    out = {"accuracy": _accuracy(logits, items), "accuracy_noul": _accuracy(logits, items, QTYPES["noul"]),
+           "accuracy_choice": _accuracy(logits, items, QTYPES["choice"]),
+           "nll": sum(nll) / len(nll) if nll else float("nan"), "ece": ece_score(np.array(conf), np.array(hits))}
+    return {k: v for k, v in out.items() if v == v}  # drop NaN (a type the set has no questions of)
+
+
 def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
           config: Optional[TrainConfig] = None,
-          val_samples: Optional[Sequence[Sample]] = None) -> Dict[str, Any]:
+          val_samples: Optional[Sequence[Sample]] = None,
+          eval_sets: Optional[Dict[str, Sequence[Sample]]] = None) -> Dict[str, Any]:
     """Fine-tune `decider` in place on `samples`, fit temperatures on `val_samples`, save to `out_dir`.
 
     Without `val_samples`, `calib_fraction` of the training items are held out instead.
+    The val items and each of `eval_sets` (e.g. {"pope": ...}) are evaluated at step 0, every
+    `eval_every` steps and at each epoch end, then once more with the fitted temperatures.
     Returns {"losses": per-step NLL against the gold distribution (the RLCD policy term is too
-    noisy to monitor), "val_accuracy": per epoch, "temperature": [choice, score, noul],
+    noisy to monitor), "val_accuracy": per epoch, "evals": [{"step", "<set>/<metric>": ...}],
+    "final": {"<set>/<metric>": ...} with temperatures applied, "temperature": [choice, score, noul],
     "train_items", "calib_items"}.
     """
     c = config or TrainConfig()
@@ -229,6 +251,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         calib = [items[i] for i in order[:n_calib]]
         train_items = [items[i] for i in order[n_calib:]]
 
+    sets = {"val": calib, **{name: _items(decider, ss) for name, ss in (eval_sets or {}).items()}}
+
     groups = [
         {"params": list(model.projector.parameters()), "lr": c.lr_new},
         {"params": [p for n, p in model.decision.named_parameters()
@@ -242,8 +266,24 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
 
     losses: List[float] = []
     val_accuracy: List[float] = []
+    evals: List[Dict[str, float]] = []
     tracker = _Tracker(c.swanlab_project, c.run_name, {"train": asdict(c), "model": decider.cfg.to_dict(),
-                           "train_items": len(train_items), "val_items": len(calib), "steps": steps})
+                           "train_items": len(train_items), "val_items": len(calib), "steps": steps,
+                           "eval_items": {name: len(its) for name, its in sets.items()}})
+
+    def run_eval() -> Dict[str, float]:
+        if evals and evals[-1]["step"] == len(losses):
+            return evals[-1]
+        row: Dict[str, float] = {}
+        for name, its in sets.items():
+            row.update({"%s/%s" % (name, k): v for k, v in
+                        _metrics(_val_logits(model, its, images, tok.pad_token_id, device), its).items()})
+        tracker.log(row, step=len(losses))
+        print("step %d %s" % (len(losses), {k: round(v, 4) for k, v in row.items()}), flush=True)
+        evals.append(dict(row, step=len(losses)))
+        return evals[-1]
+
+    run_eval()
     for epoch in range(c.epochs):
         random.shuffle(train_items)
         sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * epoch / max(1, c.epochs - 1)
@@ -259,39 +299,46 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                               batch["qtype"].to(device), sigma, c.group_size)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
             optimizer.step()
             scheduler.step()
             losses.append(nll.item())  # .item() syncs the device, so the step time below is real
             step_s = time.perf_counter() - t_step
             gpu = _apple_gpu_stats() if device.type == "mps" and len(losses) % c.log_every == 0 else {}
-            tracker.log({"train/loss": loss.item(), "train/nll": nll.item(), "train/sigma": sigma,
+            hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
+                   == batch["target"].to(device).argmax(-1)).float().mean()
+            tracker.log({"train/loss": loss.item(), "train/nll": nll.item(), "train/accuracy": hit.item(),
+                         "train/grad_norm": grad_norm.item(), "train/sigma": sigma,
                          "lr/projector": optimizer.param_groups[0]["lr"],
                          "lr/lora": optimizer.param_groups[2]["lr"], "epoch": epoch + 1,
                          "perf/step_s": step_s, "perf/samples_per_s": len(chunk) / step_s,
                          **_device_memory(device), **gpu}, step=len(losses))
             if len(losses) % c.log_every == 0:
-                print("epoch %d step %d loss %.4f nll %.4f" % (epoch + 1, len(losses), loss.item(),
-                                                              nll.item()), flush=True)
-        val_logits = _val_logits(model, calib, images, tok.pad_token_id, device)
-        val_accuracy.append(_accuracy(val_logits, calib))
-        tracker.log({"val/accuracy": val_accuracy[-1],
-                     "val/accuracy_noul": _accuracy(val_logits, calib, QTYPES["noul"]),
-                     "val/accuracy_choice": _accuracy(val_logits, calib, QTYPES["choice"])}, step=len(losses))
-        print("epoch %d val accuracy %.3f (%d items)" % (epoch + 1, val_accuracy[-1], len(calib)), flush=True)
+                print("epoch %d step %d/%d loss %.4f nll %.4f" % (epoch + 1, len(losses), steps, loss.item(),
+                                                                 nll.item()), flush=True)
+            if c.eval_every and len(losses) % c.eval_every == 0:
+                run_eval()
+        val_accuracy.append(run_eval()["val/accuracy"])
 
     model.decision.encoder = peft_encoder.merge_and_unload()
     model.eval()
+    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device) for name, its in sets.items()}
     rows: Dict[int, list] = {t: [] for t in QTYPES.values()}
-    for z, it in zip(_val_logits(model, calib, images, tok.pad_token_id, device), calib):
+    for z, it in zip(set_logits["val"], calib):
         rows[it["qtype"]].append((z, it["target"]))
     decider.cfg.temperature = [_fit_temperature(rows[t]) for t in range(3)]
     print("temperatures (choice, score, noul):", [round(t, 3) for t in decider.cfg.temperature])
+    # With the fitted temperatures, i.e. what decide() will return. val is also the fitting set.
+    final = {"%s/%s" % (name, k): v for name, its in sets.items()
+             for k, v in _metrics(set_logits[name], its, decider.cfg.temperature).items()}
+    print("final %s" % {k: round(v, 4) for k, v in final.items()}, flush=True)
     tracker.log({"calib/temperature_choice": decider.cfg.temperature[QTYPES["choice"]],
-                 "calib/temperature_noul": decider.cfg.temperature[QTYPES["noul"]]}, step=len(losses))
+                 "calib/temperature_noul": decider.cfg.temperature[QTYPES["noul"]],
+                 **{"final/" + k: v for k, v in final.items()}}, step=len(losses))
     tracker.finish()
 
     decider.model = model.cpu().float()
     decider.save(out_dir)
-    return {"losses": losses, "val_accuracy": val_accuracy, "temperature": decider.cfg.temperature,
+    return {"losses": losses, "val_accuracy": val_accuracy, "evals": evals, "final": final,
+            "temperature": decider.cfg.temperature,
             "train_items": len(train_items), "calib_items": len(calib)}
