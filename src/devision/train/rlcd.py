@@ -38,6 +38,8 @@ class TrainConfig:
     warmup: int = 200            # linear warm-up steps, then cosine decay to 0 over the run
     lora_r: int = 16
     lora_alpha: int = 32
+    unfreeze_top: int = 0        # also train the original weights of ModernBERT's top N layers
+    lr_encoder: float = 2e-5     # learning rate for those weights
     calib_fraction: float = 0.1  # held out to fit temperatures when no val set is given
     seed: int = 0
     device: str = "auto"
@@ -252,6 +254,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     peft_encoder = get_peft_model(text_encoder(model.decision), LoraConfig(
         r=c.lora_r, lora_alpha=c.lora_alpha, lora_dropout=0.0, target_modules=LORA_TARGETS))
     model.decision.encoder = peft_encoder
+    n_layers = text_encoder(model.decision).config.num_hidden_layers
+    top = tuple("layers.%d." % i for i in range(n_layers - c.unfreeze_top, n_layers))
+    unfrozen = [p for n, p in peft_encoder.named_parameters() if "lora_" not in n and any(t in n for t in top)]
+    for p in unfrozen:
+        p.requires_grad_(True)
     model.to(device).train()
     model.vision.eval()
 
@@ -272,8 +279,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         {"params": list(model.projector.parameters()), "lr": c.lr_new},
         {"params": [p for n, p in model.decision.named_parameters()
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
-        {"params": [p for p in peft_encoder.parameters() if p.requires_grad], "lr": c.lr_lora},
-    ]
+        {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},
+    ] + ([{"params": unfrozen, "lr": c.lr_encoder}] if unfrozen else [])
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
     steps = c.epochs * max(1, -(-len(train_items) // c.micro_batch))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))

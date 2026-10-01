@@ -106,6 +106,7 @@ def test_training_continues_from_an_aligned_checkpoint(tmp_path):
     train(Decider.load(tmp_path / "aligned"), samples[:48], data_root=root, out_dir=tmp_path / "ckpt",
           val_samples=samples[48:],
           config=TrainConfig(epochs=40, micro_batch=8, lr_new=3e-3, lr_head=3e-3, lr_lora=3e-3,
-                             lora_r=32, lora_alpha=128, warmup=10, seed=0, device="cpu"))
+                             lora_r=32, lora_alpha=128, warmup=10, unfreeze_top=1, lr_encoder=3e-3,
+                             seed=0, device="cpu"))
     result = evaluate(Decider.load(tmp_path / "ckpt"), samples, data_root=root)
     assert result["accuracy"]["noul"] > 0.8
