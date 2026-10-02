@@ -40,8 +40,16 @@ def _write_report(out: str, name: str, report) -> None:
         json.dump(report, f)
 
 
+def _need_train_extra() -> None:
+    try:
+        import peft  # noqa: F401
+    except ImportError:
+        raise SystemExit("training needs the train extra: pip install 'devision[train]'") from None
+
+
 def align_main(argv=None) -> None:
     """Stage 1: align the projector with image-conditioned masked captions (JSONL of caption samples)."""
+    _need_train_extra()
     from .align import AlignConfig, align
 
     a = _parser(align_main.__doc__ or "", AlignConfig()).parse_args(argv)
@@ -54,6 +62,7 @@ def align_main(argv=None) -> None:
 def train_main(argv=None) -> None:
     """Stage 2: RLCD fine-tuning on a JSONL of decision samples; saves a checkpoint.
     --val (and each --eval set) is evaluated every --eval-every steps; --val also fits the temperatures."""
+    _need_train_extra()
     from .rlcd import TrainConfig, train
 
     p = _parser(train_main.__doc__ or "", TrainConfig())

@@ -7,7 +7,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, NoReturn
+from typing import Any, Dict, List, NoReturn, Optional
 
 import torch
 from laya.common import QTYPES, build_sequence, collate_items, serialize_state
@@ -133,13 +133,15 @@ class Decider:
             json.dump(self.cfg.to_dict(), f, indent=2)
 
     @classmethod
-    def load(cls, path, device: str = "cpu") -> "Decider":
-        """`path` is a checkpoint directory (as written by `save`) or a Hugging Face model repo id."""
+    def load(cls, path, device: str = "cpu", revision: Optional[str] = None,
+             token: Optional[str] = None) -> "Decider":
+        """`path` is a checkpoint directory (as written by `save`) or a Hugging Face model repo id;
+        `revision` and `token` apply to the latter."""
         path = str(path)
         if not os.path.isdir(path):
             from huggingface_hub import snapshot_download
 
-            path = snapshot_download(path)
+            path = snapshot_download(path, revision=revision, token=token)
         with open(os.path.join(path, CONFIG_FILE)) as f:
             cfg = ModelConfig.from_dict(json.load(f))
         model = build_model(AutoConfig.from_pretrained(os.path.join(path, "encoder")),
@@ -147,6 +149,10 @@ class Decider:
         model.load_state_dict(load_file(os.path.join(path, "model.safetensors")), strict=True)
         tok = AutoTokenizer.from_pretrained(os.path.join(path, "tokenizer"))
         return cls(model.to(device).float(), tok, cfg)
+
+    def predict(self, state: Any, questions: Any) -> Dict[str, Any]:
+        """Same as `decide`, under Laya's name."""
+        return self.decide(state, questions)
 
     @torch.no_grad()
     def decide(self, state: Any, questions: Any) -> Dict[str, Any]:

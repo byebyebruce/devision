@@ -87,15 +87,15 @@ flowchart TB
 ## 使用
 
 ```bash
-uv sync
-uv run devision-serve --checkpoint HF_REPO_ID --port 8000   # 也可以是本地 checkpoint 目录；浏览器打开 / 是 web demo
+pip install "devision[serve] @ git+https://github.com/byebyebruce/devision"
+devision-serve --checkpoint HF_REPO_ID --port 8000   # 也可以是本地 checkpoint 目录；浏览器打开 / 是 web demo
 ```
 
 ```python
-from devision.model import Decider
+import devision
 
-decider = Decider.load("HF_REPO_ID")          # 或本地目录
-decider.decide(
+decider = devision.load("HF_REPO_ID")          # 或本地目录
+decider.predict(                               # 同 decide()
     state=[{"type": "image", "url": "https://example.com/kitchen.jpg"}],
     questions={
         "fork": {"type": "noul", "instructions": "Is there a fork in the image?"},
@@ -103,8 +103,9 @@ decider.decide(
                  "criteria": {"kitchen": None, "bathroom": None, "bedroom": None}},
     },
 )
-# → {"model": "devision-0.1", "answers": {"fork": {"type": "noul", "noul": 0.83}, "room": {...}}, "usage": {...}}
 ```
+
+请求和响应格式、HTTP 参数、怎么设阈值、适合问什么，见 [`docs/usage.md`](docs/usage.md)。
 
 ## 结果
 

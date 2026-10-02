@@ -35,6 +35,8 @@
 
 - 用 **uv** 管理 Python 与依赖（Python 版本见 `.python-version`）。加依赖用 `uv add <pkg>`（开发依赖 `uv add --dev`），不要用 pip 或手改 `uv.lock`。
 - 所有命令经 `uv run ...` 执行。
+- 依赖分层（参照 Laya）：核心依赖只够推理；`serve`（fastapi、uvicorn）和 `train`（peft、swanlab）是 extras，`model` 包不能 import 它们。开发依赖组也包含这些 extras，所以 `uv run` 下全部可用；新增服务或训练依赖时，`uv add --optional <extra>` 之外再 `uv add --dev` 一次。
+- 对外入口：`devision.load(...)` → `Decider.predict` / `decide`；`import devision` 不加载 torch。
 
 ## 命令
 

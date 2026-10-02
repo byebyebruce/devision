@@ -157,3 +157,15 @@ def test_decompression_bomb_is_rejected(decider):
 
     with pytest.raises(InvalidRequest):
         decider.decide(state=[{"type": "image", "base64": bomb}], questions={"a": NOUL})
+
+
+def test_a_saved_checkpoint_loads_through_the_package_and_answers_the_same(decider, tmp_path):
+    import devision
+
+    request = dict(state=[{"type": "image", "base64": image_b64()}],
+                   questions={"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}})
+    decider.save(tmp_path / "ckpt")
+
+    loaded = devision.load(str(tmp_path / "ckpt"))
+
+    assert loaded.predict(**request) == decider.decide(**request)

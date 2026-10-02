@@ -2,19 +2,23 @@
 name = "devision"
 version = "0.1.0"
 description = "Vision decision model: image + questions -> Jev-format calibrated answers"
+readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["decision-model", "calibration", "vision", "jev", "system-one", "laya", "rlcd"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "laya==0.3.22",
     "torch>=2.4",
     "transformers>=5.0",
-    "peft>=0.13",
     "safetensors>=0.4",
     "huggingface_hub>=0.30",
     "pillow>=10.0",
     "numpy>=1.26",
-    "fastapi>=0.110",
-    "uvicorn>=0.27",
-    "swanlab>=0.10.1",
 ]
 
 [dependency-groups]
@@ -23,13 +27,30 @@ dev = [
     "pyright>=1.1.380",
     "httpx>=0.27",
     "pyarrow>=25.0.1",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "peft>=0.13",
+    "swanlab>=0.10.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/byebyebruce/devision"
 
 [project.scripts]
 devision-align = "devision.train.cli:align_main"
 devision-train = "devision.train.cli:train_main"
 devision-eval = "devision.train.cli:eval_main"
 devision-serve = "devision.serve.cli:serve_main"
+
+[project.optional-dependencies]
+serve = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+train = [
+    "peft>=0.13",
+    "swanlab>=0.10.1",
+]
 
 [build-system]
 requires = ["hatchling"]
