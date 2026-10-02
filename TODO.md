@@ -27,6 +27,12 @@
 - 结果写进 `docs/experiments/2026-09-30-rlcd-plateau.md` 和 `docs/research/laya-vision-gap.md`；README 的 Benchmark 等确认后再改。
 - **注意**：ScienceQA（教科书插图）和 A-OKVQA（常识推理）我们没训练过，低分是预期，不是评测错误。
 
+### 3a. 今晚评测汇总之后（不在评测进行中改代码）
+- **训练按轮编号**：`runs/v<N>-<描述>/`，各阶段为子目录，SwanLab run 名同轮名；旧的两轮整理成 `v1-*`（0.1，`stage2-cocoqa`）和 `v2-*`（align-lora），下一轮从 `v3-` 开始。失败实验进 `runs/archive/`（只留报告、评测、日志；删权重前列清单给用户确认）。同步改文档和 YAML 里的路径。轮次编号与数据版本 `data-v1` / `data-v2` 无关。
+- **评测进度**：`devision-eval` 每几百题打印一行进度和预计剩余时间。
+- **评测提速**：即第 9 项（同图多题合并成一次请求），提前做。
+- **评测汇总写回该轮训练的 SwanLab run**（`test/<集合>/accuracy|nll|ece`、对照结果），不新建 run；先确认 SwanLab 能续写已结束的 run。逐题明细仍只在文件里。
+
 ### 4. 回复 critic MC1–MC6
 - 按 CLAUDE.md 的格式追加到 `critic/critic.md`：事实 / 影响 / 决定（现在做 MC1、MC4-1；推迟 MC2、MC3、MC4-2、MC5、RLCD 消融；暂不采纳 MC6）。
 
