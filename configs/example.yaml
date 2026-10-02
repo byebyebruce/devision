@@ -1,0 +1,25 @@
+# A tiny end-to-end run on the example data in the repo (examples/train/), to see the data format
+# and the whole pipeline work. It downloads the base models (~2.5 GB) on first use and trains a few
+# steps on CPU; the result is not a useful model.
+#   uv run devision-pipeline configs/example.yaml
+name: example
+data_root: examples          # image paths in the JSONL files are relative to this
+device: cpu
+swanlab_project: ""          # don't log this run
+
+stages:
+  - name: align              # stage 1: image-conditioned masked captions, trains the projector
+    kind: align
+    data: examples/train/align.jsonl
+    params: {epochs: 2, batch: 2, warmup: 1, eval_every: 0, log_every: 1}
+
+  - name: train              # stage 2: decision questions (noul / choice) with RLCD
+    kind: train
+    init: align
+    data: examples/train/train.jsonl
+    val: examples/train/val.jsonl     # also used to fit the per-type temperatures
+    params: {epochs: 1, micro_batch: 4, warmup: 1, eval_every: 0, log_every: 1}
+
+evaluate:
+  sets:
+    val: examples/train/val.jsonl
