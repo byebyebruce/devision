@@ -158,7 +158,7 @@ else:
 | GQA testdev（是非 + 二选一） | 1,000 | 0.635（是非 0.639，选择 0.628） | 0.042 |
 | COCO 实例框出题（val2014） | 1,000 | 0.761 | 0.054 |
 
-- 对照：laya-vision 201M（SmolVLM-256M 骨干，512 px，182 万训练样本）POPE adversarial 0.777、VQAv2 yes/no 0.715。
+- 对照：laya-vision 201M（SmolVLM-256M 骨干，512 px，182 万训练样本）POPE adversarial 0.777、VQAv2 yes/no 0.715。指标、结构和训练的逐项对比见 [`docs/research/laya-vision-gap.md`](docs/research/laya-vision-gap.md)。
 - Mac CPU 上单题延迟 P50 约 160–190 ms。
 
 ## 已知限制
