@@ -71,15 +71,17 @@ Every evaluation image is excluded from every training source, under both its CO
 
 Through `decide()` on CPU, with the fitted temperatures:
 
-| Set | Questions | Accuracy | ECE |
-|---|---|---|---|
-| POPE adversarial | 300 | 0.773 | 0.098 |
-| VQAv2 val yes/no (re-split by image, balanced) | 1,000 | 0.648 | 0.025 |
-| GQA testdev (yes/no + 2-way choice) | 1,000 | 0.635 | 0.042 |
-| COCO val2014 box questions | 1,000 | 0.761 | 0.054 |
+| Set | Role | Questions | Accuracy | ECE |
+|---|---|---|---|---|
+| POPE adversarial | held out | 300 | 0.773 | 0.098 |
+| VQAv2 val yes/no (re-split by image, balanced) | **temperature fit** | 1,000 | 0.648 | 0.025 |
+| GQA testdev (yes/no + 2-way choice) | **temperature fit** | 1,000 | 0.635 | 0.042 |
+| COCO val2014 box questions | held out | 1,000 | 0.761 | 0.054 |
+
+The temperatures were fitted on the VQAv2 + GQA rows, so their ECE is not a held-out result; on the held-out POPE and COCO questions the probabilities are less well calibrated. Validate any decision threshold on your own data.
 
 The VQAv2 and GQA sets are subsets drawn by this project and are not comparable to published leaderboard numbers.
-Latency on a Mac CPU: P50 about 160–190 ms per question.
+Latency on a Mac CPU: P50 about 160–190 ms per question (an older measurement without warm-up separation or thread count; not a server benchmark).
 
 ## Limitations
 

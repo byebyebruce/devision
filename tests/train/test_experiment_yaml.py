@@ -42,11 +42,29 @@ def test_params_and_common_params_reach_the_trainer_as_flags():
     assert "pope=pope.jsonl" in decide.argv
 
 
-def test_controls_add_a_mismatched_image_run_per_set():
+def test_controls_add_mismatched_and_reversed_runs_per_set():
     p = plan(config(evaluate={"sets": {"pope": "pope.jsonl"}, "controls": True}))
-    control = [s for s in p.steps if s.name == "control:pope"]
-    assert control and "--shuffle-images" in control[0].argv
-    assert p.control_outputs == {"pope": "runs/exp-decide/pope.mismatched.json"}
+    names = [s.name for s in p.steps]
+    assert "mismatched:pope" in names and "reversed:pope" in names
+    step = next(s for s in p.steps if s.name == "mismatched:pope")
+    assert step.argv[step.argv.index("--control") + 1] == "mismatched"
+    assert p.control_outputs["pope"]["reversed"] == "runs/exp-decide/pope.reversed.json"
+
+
+def test_an_existing_checkpoint_can_be_evaluated_without_training():
+    cfg = config(stages=[], evaluate={"checkpoint": "runs/old-model", "calibration_fit": "q_val.jsonl",
+                                      "prefix": "v2_", "sets": {"old": "q_val.jsonl", "new": "x.jsonl"}})
+    p = plan(cfg)
+    assert [s.name for s in p.steps] == ["eval:old", "eval:new"]
+    assert p.roles == {"old": "calibration_fit", "new": "heldout"}
+    assert p.eval_outputs["new"] == "runs/old-model/v2_new.json"
+
+
+def test_sets_are_labelled_by_what_they_were_used_for():
+    p = plan(config(evaluate={"sets": {"fit": "q_val.jsonl", "watched": "pope.jsonl", "fresh": "new.jsonl"}}))
+    assert p.roles == {"fit": "calibration_fit", "watched": "monitoring", "fresh": "heldout"}
+    step = next(s for s in p.steps if s.name == "eval:fit")
+    assert step.argv[step.argv.index("--role") + 1] == "calibration_fit"
 
 
 def test_evaluation_runs_on_the_last_stage_and_fills_in_commands():

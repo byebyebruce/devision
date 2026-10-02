@@ -76,23 +76,74 @@ def train_main(argv=None) -> None:
     _write_report(a.out, "train_report.json", report)
 
 
+def _code_version() -> str:
+    import subprocess
+
+    try:
+        rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], capture_output=True,
+                               text=True, timeout=5).stdout.strip()
+        return rev + ("+dirty" if dirty else "") if rev else "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def _sha256(path: str) -> str:
+    import hashlib
+
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
 def eval_main(argv=None) -> None:
-    """Accuracy, ECE and latency of a checkpoint on a JSONL of samples, through decide()."""
+    """Evaluate a checkpoint on a JSONL of samples through decide(): a summary JSON (--out) and one record
+    per question (--details, default <out without .json>.details.jsonl), from which every number of the
+    summary can be recomputed."""
     from ..model import Decider
-    from .evaluate import evaluate
+    from .evaluate import CONTROLS, evaluate
 
     p = argparse.ArgumentParser(description=eval_main.__doc__)
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--data", required=True)
     p.add_argument("--data-root", default="data")
     p.add_argument("--out")
-    p.add_argument("--shuffle-images", action="store_true",
-                   help="control: ask every question about another sample's image")
+    p.add_argument("--details", help="per-question records (JSONL)")
+    p.add_argument("--control", choices=CONTROLS, default="none",
+                   help="mismatched: each picture's questions about another picture; reversed: choice options reversed")
+    p.add_argument("--shuffle-images", action="store_true", help="same as --control mismatched")
+    p.add_argument("--seed", type=int, default=0, help="seed of the mismatched-picture pairing")
+    p.add_argument("--role", choices=["heldout", "calibration_fit", "monitoring"], default="heldout",
+                   help="what this set was used for: heldout = never used to fit temperatures or choose")
     a = p.parse_args(argv)
+    control = "mismatched" if a.shuffle_images else a.control
 
-    result = evaluate(Decider.load(a.checkpoint), read_jsonl(a.data), a.data_root, shuffle_images=a.shuffle_images)
+    records: list = []
+    result = evaluate(Decider.load(a.checkpoint), read_jsonl(a.data), a.data_root, control=control, seed=a.seed,
+                      records_out=records)
+    result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
+                     "control": control, "seed": a.seed, "code": _code_version()}
     text = json.dumps(result, indent=2)
     print(text)
     if a.out:
         with open(a.out, "w") as f:
             f.write(text)
+    details = a.details or (a.out[:-5] if a.out and a.out.endswith(".json") else a.out or "eval") + ".details.jsonl"
+    if a.out or a.details:
+        with open(details, "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+
+
+def compare_main(argv=None) -> None:
+    """Paired comparison of two evaluations of the same questions (their --details files): accuracy
+    difference of B minus A with a bootstrap interval that resamples whole pictures."""
+    from .compare import compare, load_records
+
+    p = argparse.ArgumentParser(description=compare_main.__doc__)
+    p.add_argument("a")
+    p.add_argument("b")
+    p.add_argument("--by", default="source", help="record field to report per group (source, kind, axis, type)")
+    p.add_argument("--resamples", type=int, default=2000)
+    p.add_argument("--seed", type=int, default=0)
+    a = p.parse_args(argv)
+    print(json.dumps(compare(load_records(a.a), load_records(a.b), a.by, a.resamples, a.seed), indent=2))

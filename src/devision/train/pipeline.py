@@ -10,9 +10,11 @@ SwanLab run is called E-N. `params:` are the trainer's own options (AlignConfig 
 plus laya / vision / visual_shuffle / model_name), checked before anything runs. See configs/*.yaml.
 
 After the stages, `evaluate:` runs devision-eval on each set (JSON next to the checkpoint) and any
-extra shell commands, with {checkpoint} and {name} substituted, then prints a summary. With
-`controls: true` every set is also evaluated with mismatched images (<set>.mismatched.json); a
-model that reads the picture should drop to about chance there.
+extra shell commands, with {checkpoint} and {name} substituted, then prints a summary. Every set is
+labelled: calibration_fit (the evaluated stage's --val, which its temperatures were fitted on),
+monitoring (watched during some stage's training) or heldout. With `controls: true` every set is
+also evaluated with mismatched pictures (<set>.mismatched.json) and with choice options reversed
+(<set>.reversed.json); the summary shows the mismatched accuracy and the share of flipped answers.
 """
 import argparse
 import json
@@ -51,7 +53,8 @@ class Plan:
     steps: List[Step] = field(default_factory=list)
     checkpoint: Optional[str] = None
     eval_outputs: Dict[str, str] = field(default_factory=dict)
-    control_outputs: Dict[str, str] = field(default_factory=dict)
+    control_outputs: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    roles: Dict[str, str] = field(default_factory=dict)
 
 
 def _flags(params: Dict[str, Any]) -> List[str]:
@@ -93,8 +96,10 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
     device, project = cfg.get("device", "auto"), cfg.get("swanlab_project", "devision")
     common = cfg.get("common") or {}
     stages = cfg.get("stages") or []
-    if not stages:
-        raise PlanError("`stages` is empty")
+    ev_ck = (cfg.get("evaluate") or {}).get("checkpoint")
+    eval_only = not stages and ev_ck and ("/" in ev_ck or os.path.exists(ev_ck))
+    if not stages and not eval_only:
+        raise PlanError("`stages` is empty (an evaluation-only config needs evaluate.checkpoint as a path)")
     plan = Plan(name)
     outs: Dict[str, str] = {}
 
@@ -145,23 +150,35 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
     ev = cfg.get("evaluate") or {}
     if ev:
         ck = ev.get("checkpoint") or stages[-1]["name"]
-        if ck not in outs:
+        by_name = {st["name"]: st for st in stages}
+        if ck in outs:
+            ckpt: str = outs[ck]
+            fit = by_name[ck].get("val") if by_name[ck].get("kind") == "train" else None
+        elif eval_only:
+            ckpt = str(ck)
+            fit = ev.get("calibration_fit")   # the val file the checkpoint's temperatures were fitted on
+        else:
             raise PlanError("evaluate: checkpoint %r is not a stage" % ck)
-        plan.checkpoint = outs[ck]
+        plan.checkpoint = ckpt
         log = os.path.join(runs, "logs", "%s-eval.log" % name)
         entry = "import sys; from devision.train.cli import eval_main; eval_main(sys.argv[1:])"
+        watched = {p for st in stages for p in [st.get("val")] + list((st.get("eval") or {}).values()) if p}
         for set_name, path in (ev.get("sets") or {}).items():
             exists(path, "evaluate")
-            out_json = os.path.join(plan.checkpoint, "%s.json" % set_name)
+            role = "calibration_fit" if path == fit else "monitoring" if path in watched else "heldout"
+            plan.roles[set_name] = role
+            out_json = os.path.join(ckpt, "%s%s.json" % (ev.get("prefix", ""), set_name))
             plan.eval_outputs[set_name] = out_json
-            plan.steps.append(Step("eval:" + set_name, [python, "-c", entry, "--checkpoint", plan.checkpoint,
-                                   "--data", path, "--data-root", data_root, "--out", out_json], log))
+            base = [python, "-c", entry, "--checkpoint", plan.checkpoint, "--data", path, "--data-root", data_root,
+                    "--role", role]
+            plan.steps.append(Step("eval:" + set_name, base + ["--out", out_json], log))
             if ev.get("controls"):
-                ctl_json = os.path.join(plan.checkpoint, "%s.mismatched.json" % set_name)
-                plan.control_outputs[set_name] = ctl_json
-                plan.steps.append(Step("control:" + set_name, [python, "-c", entry, "--checkpoint", plan.checkpoint,
-                                       "--data", path, "--data-root", data_root, "--out", ctl_json,
-                                       "--shuffle-images"], log))
+                plan.control_outputs[set_name] = {}
+                for control in ("mismatched", "reversed"):
+                    ctl_json = os.path.join(ckpt, "%s%s.%s.json" % (ev.get("prefix", ""), set_name, control))
+                    plan.control_outputs[set_name][control] = ctl_json
+                    plan.steps.append(Step("%s:%s" % (control, set_name),
+                                           base + ["--out", ctl_json, "--control", control], log))
         for j, cmd in enumerate(ev.get("commands") or []):
             plan.steps.append(Step("cmd:%d" % (j + 1), [cmd.format(checkpoint=plan.checkpoint, name=name)],
                                    log, shell=True))
@@ -169,16 +186,26 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
 
 
 def _summary(plan: Plan) -> str:
-    lines = ["%-18s %8s %8s %8s %7s %11s" % ("set", "all", "noul", "choice", "ECE", "mismatched")]
+    from .compare import load_records
+    from .evaluate import order_sensitivity
+
+    f = lambda v: "%.3f" % v if isinstance(v, (int, float)) else "-"
+    lines = ["%-18s %-15s %7s %7s %7s %7s %7s %10s %8s" % ("set", "role", "all", "noul", "choice", "NLL", "ECE",
+                                                           "mismatch", "flips")]
     for set_name, path in plan.eval_outputs.items():
         if not os.path.exists(path):
             continue
         r = json.load(open(path))
-        f = lambda v: "%.3f" % v if isinstance(v, (int, float)) else "-"
-        ctl = plan.control_outputs.get(set_name)
-        mism = json.load(open(ctl)).get("accuracy_all") if ctl and os.path.exists(ctl) else None
-        lines.append("%-18s %8s %8s %8s %7s %11s" % (set_name, f(r.get("accuracy_all")), f(r["accuracy"].get("noul")),
-                                                     f(r["accuracy"].get("choice")), f(r.get("ece")), f(mism)))
+        ctl = plan.control_outputs.get(set_name, {})
+        mism = json.load(open(ctl["mismatched"])).get("accuracy_all") if os.path.exists(ctl.get("mismatched", "")) else None
+        flips = None
+        rev = ctl.get("reversed", "")[:-5] + ".details.jsonl"
+        plain = path[:-5] + ".details.jsonl"
+        if os.path.exists(rev) and os.path.exists(plain):
+            flips = order_sensitivity(load_records(plain), load_records(rev)).get("answer_flip_rate")
+        lines.append("%-18s %-15s %7s %7s %7s %7s %7s %10s %8s" % (
+            set_name, plan.roles.get(set_name, "-"), f(r.get("accuracy_all")), f(r["accuracy"].get("noul")),
+            f(r["accuracy"].get("choice")), f(r.get("nll")), f(r.get("ece")), f(mism), f(flips)))
     return "\n".join(lines)
 
 

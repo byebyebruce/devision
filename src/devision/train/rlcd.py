@@ -148,6 +148,20 @@ def _accuracy(logits, items, qtype: Optional[int] = None) -> float:
     return sum(hits) / len(hits) if hits else float("nan")
 
 
+def holdout_by_image(items: List[Dict[str, Any]], n: int):
+    """(held-out, rest): whole images, about `n` items, so no picture is both trained on and used to fit
+    temperatures. Uses the global `random` state (seeded by `train`)."""
+    images = sorted({it["image"] for it in items})
+    random.shuffle(images)
+    held, count = set(), 0
+    for img in images:
+        if count >= n:
+            break
+        held.add(img)
+        count += sum(it["image"] == img for it in items)
+    return [it for it in items if it["image"] in held], [it for it in items if it["image"] not in held]
+
+
 def _set_metrics(name: str, logits, items, temperature: Optional[Sequence[float]] = None) -> Dict[str, float]:
     """`_metrics` as "<name>/<metric>", plus "<name>/<source>/<metric>" when the set mixes sources."""
     out = {"%s/%s" % (name, k): v for k, v in _metrics(logits, items, temperature).items()}
@@ -157,6 +171,8 @@ def _set_metrics(name: str, logits, items, temperature: Optional[Sequence[float]
             idx = [i for i, it in enumerate(items) if it["source"] == src]
             out.update({"%s/%s/%s" % (name, src, k): v for k, v in
                         _metrics([logits[i] for i in idx], [items[i] for i in idx], temperature).items()})
+        # every source weighs the same: a big source must not decide which checkpoint looks best
+        out["%s/macro_accuracy" % name] = sum(out["%s/%s/accuracy" % (name, src)] for src in sources) / len(sources)
     return out
 
 
@@ -213,11 +229,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if val_samples:
         calib, train_items = _items(decider, val_samples), items
     else:
-        order = list(range(len(items)))
-        random.shuffle(order)
-        n_calib = min(400, int(len(items) * c.calib_fraction))
-        calib = [items[i] for i in order[:n_calib]]
-        train_items = [items[i] for i in order[n_calib:]]
+        calib, train_items = holdout_by_image(items, min(400, int(len(items) * c.calib_fraction)))
 
     sets = {"val": calib, **{name: _items(decider, ss) for name, ss in (eval_sets or {}).items()}}
 
@@ -307,6 +319,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
 
     decider.model = model.cpu().float()
     decider.save(out_dir)
+    # "final" on the val set is measured on the data the temperatures were fitted on: not held out
     return {"losses": losses, "val_accuracy": val_accuracy, "evals": evals, "final": final,
+            "calibration_fit_set": "val",
             "temperature": decider.cfg.temperature,
             "train_items": len(train_items), "calib_items": len(calib)}

@@ -1,0 +1,29 @@
+# Stage 2 on the v2 data mix, from the LoRA-aligned stage 1 (runs/align-lora). Compare with
+# configs/eval-v1-align-lora.yaml: the same stage 1 + v1 data, on the same test sets and controls.
+#   uv run devision-pipeline configs/v2-align-lora.yaml
+# Data: scripts/data/v2_build.py then scripts/data/v2_mix.py (out of the repo); see docs/research/data-quality.md.
+name: v2-align-lora
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/align-lora
+    data: data/v2/train_mix.jsonl          # 134,556 questions, left/right 4.1%, <= 6 per picture
+    val: data/v2/dev_mix.jsonl             # monitoring, checkpoint choice, temperature fit (calibration_fit)
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 1000}
+
+evaluate:
+  controls: true                           # + mismatched pictures and reversed options for every set
+  sets:
+    dev_mix: data/v2/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    eval_pope: data/v2/eval_pope.jsonl
+    eval_vqa_yesno: data/v2/eval_vqa_yesno.jsonl
+    eval_vqa_choice: data/v2/eval_vqa_choice.jsonl
+    eval_gqa: data/v2/eval_gqa.jsonl
+    eval_coco_exist: data/v2/eval_coco_exist.jsonl
+    eval_coco_position: data/v2/eval_coco_position.jsonl
+    eval_coco_relation: data/v2/eval_coco_relation.jsonl
+    eval_coco_size: data/v2/eval_coco_size.jsonl

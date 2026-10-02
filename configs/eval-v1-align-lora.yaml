@@ -1,0 +1,23 @@
+# Evaluation only: the v1-data model of the same stage 1 (runs/align-lora-cocoqa, trained by
+# runs/logs/pipeline-align-lora.sh), on the v2 test sets with the same controls as configs/v2-align-lora.yaml.
+# The v2 eval_* sets hold no picture any v1 training file used. Its temperatures were fitted on
+# data/val_mix.jsonl, so that set is labelled calibration_fit.
+#   uv run devision-pipeline configs/eval-v1-align-lora.yaml
+name: eval-v1-align-lora
+stages: []
+
+evaluate:
+  checkpoint: runs/align-lora-cocoqa
+  calibration_fit: data/val_mix.jsonl
+  prefix: v2eval_                          # results as runs/align-lora-cocoqa/v2eval_<set>.json
+  controls: true
+  sets:
+    val_mix: data/val_mix.jsonl
+    eval_pope: data/v2/eval_pope.jsonl
+    eval_vqa_yesno: data/v2/eval_vqa_yesno.jsonl
+    eval_vqa_choice: data/v2/eval_vqa_choice.jsonl
+    eval_gqa: data/v2/eval_gqa.jsonl
+    eval_coco_exist: data/v2/eval_coco_exist.jsonl
+    eval_coco_position: data/v2/eval_coco_position.jsonl
+    eval_coco_relation: data/v2/eval_coco_relation.jsonl
+    eval_coco_size: data/v2/eval_coco_size.jsonl
