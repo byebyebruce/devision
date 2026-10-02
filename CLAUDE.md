@@ -45,8 +45,9 @@ uv run python scripts/data/prepare.py fetch --root data ...   # 仓库外：生�
 uv run python scripts/data/captions.py --root data --exclude data/val.jsonl data/pope.jsonl   # 仓库外：生成 data/align_{train,val}.jsonl（COCO caption）
 uv run python scripts/data/evalsets.py --root data --gqa 1000 --vqav2 1000   # 仓库外：生成 data/val_{gqa,vqav2,mix}.jsonl，并从 train.jsonl 剔除评测图
 uv run python scripts/data/bigtrain.py --root data --gqa 60000 --vqav2 40000 --out data/train_100k.jsonl   # 仓库外：更大的阶段 2 训练集
+uv run python scripts/data/cocoqa.py --root data --split train2014 --limit 60000 --out data/cocoqa_train.jsonl   # 仓库外：从 COCO 实例框出题（val2014 + --out data/val_cocoqa.jsonl 是评测集）
 uv run devision-align --data data/align_train.jsonl --val data/align_val.jsonl --data-root data --out runs/align --run-name align   # 阶段 1
-uv run devision-train --init runs/align --lr-new 1e-4 --data data/train_100k.jsonl --val data/val_mix.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
+uv run devision-train --init runs/align --lr-new 5e-5 --lr-head 5e-5 --lr-lora 1e-4 --warmup 500 --data data/train_100k.jsonl --val data/val_mix.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
 ```
@@ -55,3 +56,5 @@ uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；�
 - 训练默认上报 SwanLab（项目 `devision`）。阶段 1：loss、batch 补词准确率、梯度范数、学习率，每 `--eval-every` 步记录 val 上真实/错配图片的补词准确率与 nll 及两者之差（`val/mlm_acc_gap`）。阶段 2：loss、nll、batch 准确率、梯度范数、学习率；从第 0 步起每 `--eval-every` 步（默认 500）和每个 epoch 末，在 val 和每个 `--eval` 集上记录准确率（总体/noul/choice）、nll、ECE；结束时记录拟合温度，以及套用温度后各集合的指标（`final/...`，即 decide 会给出的结果）。先 `uv run swanlab login` 登录（API key 只存在本机用户目录，**不要写进仓库**）；`--swanlab-project ""` 关闭。本地缓存 `swanlog/` 不进 git。
 - 首次训练会从 Hub 下载 `convaiinnovations/laya` 与 `google/siglip2-base-patch16-256`；对齐阶段还会下载 `answerdotai/ModernBERT-large`（只取 MLM 头）。
 - 不做阶段 1 直接训决策题，nll 会停在 ln2（见 `docs/experiments/2026-09-30-rlcd-plateau.md`）。
+- 阶段 2 用默认学习率长训练（上万步）会塌缩成 50/50 输出；用上面命令里的低学习率加预热。发布的 checkpoint 怎么训出来的见 `scripts/recipe.sh`。
+- `--checkpoint` / `--init` / `Decider.load` 都接受本地目录或 Hugging Face 模型仓库 id。

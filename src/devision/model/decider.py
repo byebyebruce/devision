@@ -134,7 +134,12 @@ class Decider:
 
     @classmethod
     def load(cls, path, device: str = "cpu") -> "Decider":
+        """`path` is a checkpoint directory (as written by `save`) or a Hugging Face model repo id."""
         path = str(path)
+        if not os.path.isdir(path):
+            from huggingface_hub import snapshot_download
+
+            path = snapshot_download(path)
         with open(os.path.join(path, CONFIG_FILE)) as f:
             cfg = ModelConfig.from_dict(json.load(f))
         model = build_model(AutoConfig.from_pretrained(os.path.join(path, "encoder")),

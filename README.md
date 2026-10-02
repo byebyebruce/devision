@@ -77,4 +77,51 @@ flowchart TB
 
 - 训练目标：RLCD，沿用 Laya 官方单卡脚本。它由两部分组成：对加了噪声的 logit 做策略梯度，奖励用 log、spherical 和 RPS 三种 proper scoring rule；再加上对 gold 分布的 soft 交叉熵。
 - 训练结束后，按题型在 val 集上用 LBFGS 拟合温度 T，范围限制在 [0.5, 5]。
-- 训练数据是 JSONL 样本，格式见 `src/devision/train/samples.py`。生成数据的代码（GQA / VQAv2 / POPE 的下载与规则转换）不在仓库里。
+- 训练分两个阶段：
+  - **阶段 1 对齐**（`devision-align`）：带图完形填空，只训投影层。数据是 COCO train2014 全部 caption。
+  - **阶段 2 决策**（`devision-train`）：RLCD，训投影层、决策头和 ModernBERT 的 LoRA。先在 6 万 GQA + 4 万 VQAv2 是非题上训，再在从 COCO 实例框自动出的题（有没有某物、位置、大小）上接着训。
+  - 发布的 checkpoint 的完整步骤见 [`scripts/recipe.sh`](scripts/recipe.sh)，在 Mac（MPS）上共约 16 小时。
+- 训练数据是 JSONL 样本，格式见 `src/devision/train/samples.py`。生成数据的代码（GQA / VQAv2 / POPE / COCO 的下载与规则转换）不在仓库里。所有评测图片按 COCO 和 VG 两套 id 从训练数据中剔除。
+- 实验过程和结论见 [`docs/experiments/2026-09-30-rlcd-plateau.md`](docs/experiments/2026-09-30-rlcd-plateau.md)。
+
+## 使用
+
+```bash
+uv sync
+uv run devision-serve --checkpoint HF_REPO_ID --port 8000   # 也可以是本地 checkpoint 目录；浏览器打开 / 是 web demo
+```
+
+```python
+from devision.model import Decider
+
+decider = Decider.load("HF_REPO_ID")          # 或本地目录
+decider.decide(
+    state=[{"type": "image", "url": "https://example.com/kitchen.jpg"}],
+    questions={
+        "fork": {"type": "noul", "instructions": "Is there a fork in the image?"},
+        "room": {"type": "choice", "instructions": "Which room is this?",
+                 "criteria": {"kitchen": None, "bathroom": None, "bedroom": None}},
+    },
+)
+# → {"model": "devision-0.1", "answers": {"fork": {"type": "noul", "noul": 0.83}, "room": {...}}, "usage": {...}}
+```
+
+## 结果
+
+发布的 checkpoint（`stage2-cocoqa`），全部经 `decide` 在 CPU 上评测，已套用拟合温度：
+
+| 评测集 | 题数 | 准确率 | ECE |
+|---|---|---|---|
+| POPE adversarial（"有没有 X"） | 300 | 0.773 | 0.098 |
+| VQAv2 val yes/no（按图重切，正负各半） | 1,000 | 0.648 | 0.025 |
+| GQA testdev（是非 + 二选一） | 1,000 | 0.635（是非 0.639，选择 0.628） | 0.042 |
+| COCO 实例框出题（val2014） | 1,000 | 0.761 | 0.054 |
+
+- 对照：laya-vision 201M（SmolVLM-256M 骨干，512 px，182 万训练样本）POPE adversarial 0.777、VQAv2 yes/no 0.715。
+- Mac CPU 上单题延迟 P50 约 160–190 ms。
+
+## 已知限制
+
+- **分不清 "文字说的那个东西在哪"**：左右类问题（"Is the cup to the left of the laptop?"）在随机水平。上下、大小题的成绩大部分来自类别先验。诊断见实验记录。
+- 只支持英文、单张图、`noul` / `choice`（`score` 返回 422）。
+- 输入 letterbox 到 256×256，图中小字和细节会丢失。

@@ -112,19 +112,22 @@
   - HTTP 服务和评测都只调用它。
 - **数据转换器**
   - 纯函数：输入一条原始数据集记录，输出零条或多条 Jev 格式的样本，并附带标准答案。
-  - MVP 阶段只实现 GQA（verify 转 `noul`，choose 转 `choice`）和 VQAv2（yes/no 转 `noul`）。
+  - 实现了 GQA（verify 转 `noul`，choose 转 `choice`）、VQAv2（yes/no 转 `noul`），以及从 COCO 实例框自动出的题（有没有某物，负例按共现挑选；单个实例的左右/上下、两物体的相对位置、大小比较）。
   - 可以借鉴 laya-vision 里 `cauldron.py` 的思路。
   - 规则如下：
-    - 按图片 id 剔除评测集用到的图片；
+    - 按图片 id 剔除评测集用到的图片；Visual Genome（GQA）约一半是 COCO 图，剔除时用 VG 的 `image_data.json` 把两套 id 对齐；
     - VQAv2 成对取样，保证"是"和"否"的数量平衡；
     - 用固定的随机种子。
 - **训练脚本**：分两个阶段，都在本地 Mac 上运行（MPS），不依赖 Modal。
   - **阶段 1：对齐。** 带图完形填空：输入是 `[CLS] <视觉 token> <遮掉一部分词的图片描述> [SEP]`，用 ModernBERT-large 原版的 MLM 预测头（Apache-2.0，只在训练时用，不进 checkpoint）预测被遮的词。只训投影层，其余参数全部冻结。数据是 COCO train2014 的 caption。评测时比较 val 图片配真实 caption 和配错 caption 的补词准确率，前者更高说明投影层在传递图像信息。
     - 为什么需要这一步：直接用决策题训练时，每题只有一个是/否信号，经过冻结的 ModernBERT 反传，教不会随机初始化的投影层，nll 会停在 ln2。
   - **阶段 2：决策微调。** 以 Laya 官方的 RLCD 训练脚本（Apache-2.0）为骨架，加入视觉分支和图片数据加载。可以从阶段 1 的 checkpoint 开始；从对齐好的投影层开始时，投影层用较小的学习率。
+    - 学习率先线性预热，再余弦衰减到 0；噪声 σ 按步数从 0.4 退火到 0.1。长训练（上万步）要用较低的学习率，否则会塌缩成对每题输出 50/50。
+    - ModernBERT 默认只训 LoRA；`--unfreeze-top N` 可以同时训最上面 N 层的原始权重，用于实验。
+    - 发布的 checkpoint 的完整训练步骤见 `scripts/recipe.sh`。
   - 训练结束后在 val 集上拟合温度参数，和 checkpoint 一起保存。
   - 训练中从第 0 步起定期在 val 和额外评测集（如 POPE）上记录准确率、nll、ECE，并上报 SwanLab，这样能看到每个实验的曲线，也能在实验之间对比。
-  - 两个阶段的 checkpoint 格式相同，都能被 `decide` 直接加载。
+  - 两个阶段的 checkpoint 格式相同，都能被 `decide` 直接加载；`Decider.load` 也接受 Hugging Face 模型仓库 id。
 - **HTTP 服务**
   - 对 `decide` 的薄封装，路由是 `POST /v1/systemone`。
   - 进程启动时加载模型，只跑在 CPU 上。
@@ -196,16 +199,17 @@ Response
 - 视频、多帧、一个请求里带多张图。
 - 中文和其他语言。
 - 用 LLM（如 Sonnet）生成干扰选项或改写问题。
-- 其他数据集的转换，包括 Open Images、TallyQA、VSR；把数据扩到 1 万条及以上属于下一阶段。
-- 全量微调 ModernBERT、解冻 SigLIP2、换用 So400m 或其他编码器做对比。
+- 其他数据集的转换，包括 Open Images、TallyQA、VSR、The Cauldron。
+- 解冻 SigLIP2、换用 So400m、ModernVBERT 或其他骨干做对比。
 - 商业化授权相关工作。
 - 鉴权、限流、批量接口、`/v1/models` 接口。
 - int8 量化和 ONNX/OpenVINO 导出。只有当 CPU 延迟不达标时才考虑。
 
 ## Further Notes
 
-- **风险 1：延迟。** ModernBERT-large 的输入是 64 个视觉 token 加上文本，在服务器 CPU 上能否做到 P50 < 300ms 还没有实测过。子代理在 M4 上测了结构相同的 ViT-B@256，编码大约 50–60ms。如果最后不达标，按以下顺序处理：先量化，再换 ModernBERT-base。
+- **风险 1：延迟。** 实测 Mac CPU 上 `decide` 单题 P50 约 160–190ms、P95 约 180ms，满足 P50 < 300ms。服务器 CPU 还没测；如果不达标，按以下顺序处理：先量化，再换 ModernBERT-base。
 - **风险 2：Laya checkpoint 与视觉 token 的兼容性。** Laya 从来没见过视觉 token，投影层要从零学习对齐。已经证实：不做对齐直接训决策题，nll 停在 ln2；加了阶段 1 对齐后，图文匹配题 val 准确率到 0.875（见 `../experiments/2026-09-30-rlcd-plateau.md`）。GQA/VQAv2 这类细节问题需要多长的对齐还是未知数。
-- **风险 3：视觉 token 压缩。** laya-vision 在 256px 下把 token 压到 16 个时，精细任务的效果崩了。我们压到 64 个，是调研建议的上限，需要用 256 个 token 的消融实验来验证。
+- **风险 3：视觉 token 压缩。** laya-vision 在 256px 下把 token 压到 16 个时，精细任务的效果崩了。我们压到 64 个。线性探针显示 64 个 token 里位置信息完整（左右/上下可读出 1.000），所以压缩不是目前的瓶颈。
+- **已知限制：按文字找物体。** 模型学不会 "文字说的那个物体在哪边" 这类需要把词和图中区域对应起来的问题：COCO 题和合成双物体题的左右都在随机水平。视觉 token 里每个颜色的物体在哪边是线性可读的，但用题里的词挑出对应物体这一步，在阶段 1 只训投影层、阶段 2 用 LoRA 或全量放开 ModernBERT、加 4 倍样本时都没学会（见实验记录）。上下、大小题的成绩大部分来自类别先验。
 - Laya 的 `confidence` 用的是基于熵的算法，和 Jev 不同。我们对外采用 Jev 的公式，所以直接拿 laya-serve 的阈值来用是不成立的。
 - 本文档里的 Jev 协议细节来自 `jev-api.md`。问题文本放在 `instructions` 字段（Jev 没有单独的 `question` 字段）。文档中有两处没说清：请求里最多能放多少个问题；`instructions` 是否可以为 null。实现上不限问题数，`instructions` 必填。
