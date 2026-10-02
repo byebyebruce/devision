@@ -1,5 +1,6 @@
 """Evaluation records and controls: every number is recomputable, controls change only what they say."""
 import json
+import math
 import random
 
 from conftest import tiny_decider
@@ -35,7 +36,12 @@ def test_the_summary_is_recomputable_from_the_records(tmp_path):
         assert again[key] == result[key], key
     assert len(records) == 2 * len(rows)
     soft = next(r for r in records if r["qid"] == "p")
-    assert soft["gold"] == {"false": 0.3, "true": 0.7} and soft["nll"] > 0  # NLL is against the soft label
+    p_true = soft["probabilities"]["true"]
+    # by hand: NLL against the soft label, Brier over both options, accuracy against the majority answer
+    assert abs(soft["nll"] - -(0.3 * math.log(1 - p_true) + 0.7 * math.log(p_true))) < 1e-9
+    assert abs(soft["brier"] - ((1 - p_true - 0.3) ** 2 + (p_true - 0.7) ** 2)) < 1e-9
+    assert soft["gold_answer"] == "true" and soft["correct"] == (p_true >= 0.5)
+    assert set(result["by_options"]["3"]) >= {"accuracy", "nll", "ece"}
     assert set(result["pope"]["pope-random"]) >= {"precision", "recall", "f1", "yes_ratio"}
     assert sum(b["n"] for b in result["reliability"]) == len(records)
     assert result["thresholds"]["0.6"]["coverage"] >= result["thresholds"]["0.9"]["coverage"]

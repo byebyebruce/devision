@@ -112,15 +112,20 @@ def eval_main(argv=None) -> None:
                    help="mismatched: each picture's questions about another picture; reversed: choice options reversed")
     p.add_argument("--shuffle-images", action="store_true", help="same as --control mismatched")
     p.add_argument("--seed", type=int, default=0, help="seed of the mismatched-picture pairing")
+    p.add_argument("--no-temperature", action="store_true",
+                   help="evaluate the raw probabilities (all temperatures 1), to compare before / after calibration")
     p.add_argument("--role", choices=["heldout", "calibration_fit", "monitoring"], default="heldout",
                    help="what this set was used for: heldout = never used to fit temperatures or choose")
     a = p.parse_args(argv)
     control = "mismatched" if a.shuffle_images else a.control
 
     records: list = []
-    result = evaluate(Decider.load(a.checkpoint), read_jsonl(a.data), a.data_root, control=control, seed=a.seed,
-                      records_out=records)
+    decider = Decider.load(a.checkpoint)
+    if a.no_temperature:
+        decider.cfg.temperature = [1.0, 1.0, 1.0]
+    result = evaluate(decider, read_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records)
     result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
+                     "temperature": "none (raw)" if a.no_temperature else "fitted",
                      "control": control, "seed": a.seed, "code": _code_version()}
     text = json.dumps(result, indent=2)
     print(text)

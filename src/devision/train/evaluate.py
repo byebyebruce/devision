@@ -89,8 +89,12 @@ def evaluate_records(decider: Decider, samples: Sequence[Sample], data_root, con
 
 
 def _acc(rs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not rs:
+        return {"n": 0, "images": 0, "accuracy": None}
     return {"n": len(rs), "images": len({r["image_id"] for r in rs}),
-            "accuracy": float(np.mean([r["correct"] for r in rs])) if rs else None}
+            "accuracy": float(np.mean([r["correct"] for r in rs])),
+            "nll": float(np.mean([r["nll"] for r in rs])),
+            "ece": ece_score(np.array([r["p_prediction"] for r in rs]), np.array([r["correct"] for r in rs], dtype=float))}
 
 
 def _pope(rs: List[Dict[str, Any]]) -> Dict[str, float]:
