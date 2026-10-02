@@ -10,7 +10,9 @@ SwanLab run is called E-N. `params:` are the trainer's own options (AlignConfig 
 plus laya / vision / visual_shuffle / model_name), checked before anything runs. See configs/*.yaml.
 
 After the stages, `evaluate:` runs devision-eval on each set (JSON next to the checkpoint) and any
-extra shell commands, with {checkpoint} and {name} substituted, then prints a summary.
+extra shell commands, with {checkpoint} and {name} substituted, then prints a summary. With
+`controls: true` every set is also evaluated with mismatched images (<set>.mismatched.json); a
+model that reads the picture should drop to about chance there.
 """
 import argparse
 import json
@@ -49,6 +51,7 @@ class Plan:
     steps: List[Step] = field(default_factory=list)
     checkpoint: Optional[str] = None
     eval_outputs: Dict[str, str] = field(default_factory=dict)
+    control_outputs: Dict[str, str] = field(default_factory=dict)
 
 
 def _flags(params: Dict[str, Any]) -> List[str]:
@@ -153,6 +156,12 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
             plan.eval_outputs[set_name] = out_json
             plan.steps.append(Step("eval:" + set_name, [python, "-c", entry, "--checkpoint", plan.checkpoint,
                                    "--data", path, "--data-root", data_root, "--out", out_json], log))
+            if ev.get("controls"):
+                ctl_json = os.path.join(plan.checkpoint, "%s.mismatched.json" % set_name)
+                plan.control_outputs[set_name] = ctl_json
+                plan.steps.append(Step("control:" + set_name, [python, "-c", entry, "--checkpoint", plan.checkpoint,
+                                       "--data", path, "--data-root", data_root, "--out", ctl_json,
+                                       "--shuffle-images"], log))
         for j, cmd in enumerate(ev.get("commands") or []):
             plan.steps.append(Step("cmd:%d" % (j + 1), [cmd.format(checkpoint=plan.checkpoint, name=name)],
                                    log, shell=True))
@@ -160,14 +169,16 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
 
 
 def _summary(plan: Plan) -> str:
-    lines = ["%-14s %8s %8s %8s %7s" % ("set", "all", "noul", "choice", "ECE")]
+    lines = ["%-18s %8s %8s %8s %7s %11s" % ("set", "all", "noul", "choice", "ECE", "mismatched")]
     for set_name, path in plan.eval_outputs.items():
         if not os.path.exists(path):
             continue
         r = json.load(open(path))
         f = lambda v: "%.3f" % v if isinstance(v, (int, float)) else "-"
-        lines.append("%-14s %8s %8s %8s %7s" % (set_name, f(r.get("accuracy_all")), f(r["accuracy"].get("noul")),
-                                               f(r["accuracy"].get("choice")), f(r.get("ece"))))
+        ctl = plan.control_outputs.get(set_name)
+        mism = json.load(open(ctl)).get("accuracy_all") if ctl and os.path.exists(ctl) else None
+        lines.append("%-18s %8s %8s %8s %7s %11s" % (set_name, f(r.get("accuracy_all")), f(r["accuracy"].get("noul")),
+                                                     f(r["accuracy"].get("choice")), f(r.get("ece")), f(mism)))
     return "\n".join(lines)
 
 

@@ -42,6 +42,13 @@ def test_params_and_common_params_reach_the_trainer_as_flags():
     assert "pope=pope.jsonl" in decide.argv
 
 
+def test_controls_add_a_mismatched_image_run_per_set():
+    p = plan(config(evaluate={"sets": {"pope": "pope.jsonl"}, "controls": True}))
+    control = [s for s in p.steps if s.name == "control:pope"]
+    assert control and "--shuffle-images" in control[0].argv
+    assert p.control_outputs == {"pope": "runs/exp-decide/pope.mismatched.json"}
+
+
 def test_evaluation_runs_on_the_last_stage_and_fills_in_commands():
     p = plan(config())
 

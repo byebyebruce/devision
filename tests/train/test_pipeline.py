@@ -76,6 +76,10 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
     assert result["latency_ms"]["p50"] > 0
     assert result["n"] == len(samples)
     assert set(result["accuracy_by_source"]) == {"synthetic"}
+    # control: the same questions about other images -- a model that looks at the picture falls apart
+    control = evaluate(decider, samples, data_root=root, shuffle_images=True)
+    assert control["images"] == "mismatched"
+    assert control["accuracy"]["noul"] < result["accuracy"]["noul"] - 0.2
     json.dumps(result)  # evaluation output is a structured, serialisable file
 
 

@@ -86,9 +86,11 @@ def eval_main(argv=None) -> None:
     p.add_argument("--data", required=True)
     p.add_argument("--data-root", default="data")
     p.add_argument("--out")
+    p.add_argument("--shuffle-images", action="store_true",
+                   help="control: ask every question about another sample's image")
     a = p.parse_args(argv)
 
-    result = evaluate(Decider.load(a.checkpoint), read_jsonl(a.data), a.data_root)
+    result = evaluate(Decider.load(a.checkpoint), read_jsonl(a.data), a.data_root, shuffle_images=a.shuffle_images)
     text = json.dumps(result, indent=2)
     print(text)
     if a.out:

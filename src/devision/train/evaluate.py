@@ -23,16 +23,28 @@ def _predicted(answer: Dict[str, Any]):
     return answer["choice"], answer["probabilities"][answer["choice"]]
 
 
-def evaluate(decider: Decider, samples: Sequence[Sample], data_root) -> Dict[str, Any]:
+def mismatched_images(samples: Sequence[Sample]) -> List[str]:
+    """For each sample, the image of another sample with a different image (deterministic)."""
+    images = [s["image"] for s in samples]
+    out = []
+    for i, img in enumerate(images):
+        j = next((k for k in range(1, len(images)) if images[(i + k) % len(images)] != img), 0)
+        out.append(images[(i + j) % len(images)])
+    return out
+
+
+def evaluate(decider: Decider, samples: Sequence[Sample], data_root, shuffle_images: bool = False) -> Dict[str, Any]:
     """Accuracy per question type and per sample source, ECE on max-probability confidence,
-    decide() latency."""
+    decide() latency. With `shuffle_images`, every question is asked about another sample's image:
+    the control for "is it looking at the picture" (a model that reads the image drops to chance)."""
     correct: Dict[str, List[bool]] = {"noul": [], "choice": []}
     by_source: Dict[str, List[bool]] = {}
     conf: List[float] = []
     hits: List[bool] = []
     latency: List[float] = []
-    for s in samples:
-        with open(os.path.join(str(data_root), s["image"]), "rb") as f:
+    images = mismatched_images(samples) if shuffle_images else [s["image"] for s in samples]
+    for s, image in zip(samples, images):
+        with open(os.path.join(str(data_root), image), "rb") as f:
             state = [{"type": "image", "base64": base64.b64encode(f.read()).decode()}]
         t0 = time.perf_counter()
         res = decider.decide(state=state, questions=s["questions"])
@@ -53,4 +65,5 @@ def evaluate(decider: Decider, samples: Sequence[Sample], data_root) -> Dict[str
         "ece": ece_score(np.array(conf), np.array(hits, dtype=float)),
         "latency_ms": {"p50": float(np.percentile(lat, 50)), "p95": float(np.percentile(lat, 95))},
         "model": decider.cfg.model_name,
+        "images": "mismatched" if shuffle_images else "own",
     }
