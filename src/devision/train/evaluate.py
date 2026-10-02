@@ -9,7 +9,8 @@ Controls (same questions, one thing changed):
               pictures; the pairing is in the records) -- a model that reads the image drops towards
               its no-image level;
   reversed    choice options in reverse order (the option keys and gold are unchanged); compared with
-              the plain run by `order_sensitivity` -- answer flips mean the order matters.
+              the plain run by `order_sensitivity` -- answer flips mean the order matters. Only choice
+              questions are asked: a noul question has no option order to change.
 """
 import base64
 import math
@@ -61,7 +62,9 @@ def evaluate_records(decider: Decider, samples: Sequence[Sample], data_root, con
         questions = s["questions"]
         if control == "reversed":
             questions = {qid: dict(q, criteria=dict(reversed(list(q["criteria"].items()))))
-                         if q["type"] == "choice" else q for qid, q in questions.items()}
+                         for qid, q in questions.items() if q["type"] == "choice"}
+            if not questions:
+                continue
         with open(os.path.join(str(data_root), image), "rb") as f:
             state: List[Any] = [{"type": "image", "base64": base64.b64encode(f.read()).decode()}]
         if s.get("state_text"):  # text that comes with the image (e.g. a ScienceQA hint)

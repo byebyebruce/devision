@@ -64,6 +64,17 @@ def _identity(path: str, aliases: Dict[str, str]):
     return ids, pics
 
 
+def _has_choice(path: str) -> bool:
+    """Whether a set has any choice question (reversing options means nothing for noul); True if unknown."""
+    if not os.path.exists(path):
+        return True
+    with open(path) as f:
+        for line in f:
+            if '"choice"' in line and any(q.get("type") == "choice" for q in json.loads(line)["questions"].values()):
+                return True
+    return False
+
+
 def _role(path: str, fit: Optional[str], watched: Set[str], aliases: Dict[str, str]):
     """(role, overlap counts) from what the set shares with the fit set and the watched sets."""
     if not os.path.exists(path):  # plan-only checks without data: fall back to the path
@@ -235,7 +246,7 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
             plan.steps.append(Step("eval:" + set_name, base + ["--out", out_json], log))
             if ev.get("controls"):
                 plan.control_outputs[set_name] = {}
-                for control in ("mismatched", "reversed"):
+                for control in ("mismatched", "reversed") if _has_choice(path) else ("mismatched",):
                     ctl_json = os.path.join(ckpt, "%s%s.%s.json" % (ev.get("prefix", ""), set_name, control))
                     plan.control_outputs[set_name][control] = ctl_json
                     plan.steps.append(Step("%s:%s" % (control, set_name),

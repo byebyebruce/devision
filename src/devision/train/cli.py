@@ -25,6 +25,17 @@ def _parser(doc: str, config) -> argparse.ArgumentParser:
     return p
 
 
+def seed_all(seed: int) -> None:
+    """Seed `random` and torch before anything is built: a fresh projector is initialised when the model
+    is constructed, which happens before align() / train() seed their own sampling."""
+    import random
+
+    import torch
+
+    random.seed(seed)
+    torch.manual_seed(seed)
+
+
 def _decider(a):
     from ..model import Decider, ModelConfig, from_pretrained
 
@@ -54,6 +65,7 @@ def align_main(argv=None) -> None:
 
     a = _parser(align_main.__doc__ or "", AlignConfig()).parse_args(argv)
     config = AlignConfig(**{k: getattr(a, k) for k in vars(AlignConfig())})
+    seed_all(config.seed)
     report = align(_decider(a), read_jsonl(a.data), a.data_root, a.out, config,
                    val_samples=read_jsonl(a.val) if a.val else None)
     _write_report(a.out, "align_report.json", report)
@@ -70,6 +82,7 @@ def train_main(argv=None) -> None:
                    help="extra set evaluated alongside val and logged as NAME/..., e.g. pope=data/pope.jsonl")
     a = p.parse_args(argv)
     config = TrainConfig(**{k: getattr(a, k) for k in vars(TrainConfig())})
+    seed_all(config.seed)
     report = train(_decider(a), read_jsonl(a.data), a.data_root, a.out, config,
                    val_samples=read_jsonl(a.val) if a.val else None,
                    eval_sets={name: read_jsonl(path) for name, path in (e.split("=", 1) for e in a.eval)})

@@ -62,6 +62,18 @@ def test_an_existing_checkpoint_can_be_evaluated_without_training():
     assert p.eval_outputs["new"] == "runs/old-model/v2_new.json"
 
 
+def test_a_set_without_choice_questions_gets_no_reversed_run(tmp_path):
+    noul = _jsonl(tmp_path / "pope.jsonl", [{"id": "p", "image_id": "coco:1",
+                                              "questions": {"q": {"type": "noul", "instructions": "?"}}}])
+    choice = _jsonl(tmp_path / "mc.jsonl", [{"id": "c", "image_id": "coco:2",
+                                              "questions": {"q": {"type": "choice", "instructions": "?",
+                                                                  "criteria": {"a": None, "b": None}}}}])
+    p = plan(config(evaluate={"sets": {"pope": noul, "mc": choice}, "controls": True}))
+    names = [s.name for s in p.steps]
+    assert "mismatched:pope" in names and "reversed:pope" not in names
+    assert "reversed:mc" in names and "reversed" not in p.control_outputs["pope"]
+
+
 def test_sets_are_labelled_by_what_they_were_used_for():
     p = plan(config(evaluate={"sets": {"fit": "q_val.jsonl", "watched": "pope.jsonl", "fresh": "new.jsonl"}}))
     assert p.roles == {"fit": "calibration_fit", "watched": "monitoring", "fresh": "heldout"}

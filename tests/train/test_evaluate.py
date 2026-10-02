@@ -61,6 +61,7 @@ def test_reversing_options_keeps_keys_and_gold_and_reports_flips(tmp_path):
     evaluate(tiny_decider(), rows, tmp_path, control="reversed", records_out=rev)
     r = next(x for x in rev if x["type"] == "choice")
     assert r["options"] == ["green", "blue", "red"] and r["gold_answer"] == "blue"
+    assert {x["type"] for x in rev} == {"choice"}  # noul questions have no order to reverse: not asked
     sens = order_sensitivity(plain, rev)
     assert sens["n"] == len(rows) and 0.0 <= sens["answer_flip_rate"] <= 1.0
 
