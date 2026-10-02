@@ -7,7 +7,7 @@ data cannot tell the two apart -- not that they are equal.
 import json
 import random
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 Record = Dict[str, Any]
 
@@ -45,8 +45,14 @@ def _interval(pairs: List[Tuple[Record, Record]], resamples: int, rng: random.Ra
             "difference": diff, "ci95": [lo, hi], "covers_zero": lo <= 0 <= hi}
 
 
-def compare(a: List[Record], b: List[Record], by: str = "source", resamples: int = 2000, seed: int = 0) -> Dict[str, Any]:
+def compare(a: List[Record], b: List[Record], by: str = "source", resamples: int = 2000, seed: int = 0,
+            only: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """`only`: restrict to these sample ids (e.g. the questions neither model's training saw)."""
     pairs = _paired(a, b)
+    if only is not None:
+        pairs = [(x, y) for x, y in pairs if x["sample_id"] in only]
+        if not pairs:
+            raise ValueError("no shared question is in `only`")
     rng = random.Random(seed)
     out: Dict[str, Any] = {"all": _interval(pairs, resamples, rng), "by": by, "groups": {}}
     groups: Dict[str, List[Tuple[Record, Record]]] = defaultdict(list)

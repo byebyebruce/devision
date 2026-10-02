@@ -151,5 +151,7 @@ def compare_main(argv=None) -> None:
     p.add_argument("--by", default="source", help="record field to report per group (source, kind, axis, type)")
     p.add_argument("--resamples", type=int, default=2000)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--only", help="JSONL of samples: compare only on their ids (e.g. a subset neither model saw)")
     a = p.parse_args(argv)
-    print(json.dumps(compare(load_records(a.a), load_records(a.b), a.by, a.resamples, a.seed), indent=2))
+    only = {s["id"] for s in read_jsonl(a.only)} if a.only else None
+    print(json.dumps(compare(load_records(a.a), load_records(a.b), a.by, a.resamples, a.seed, only), indent=2))

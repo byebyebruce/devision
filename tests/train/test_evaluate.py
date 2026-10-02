@@ -75,6 +75,8 @@ def test_comparison_resamples_whole_pictures(tmp_path):
     assert out["all"]["pictures"] == 10 and abs(out["all"]["difference"] - 0.5) < 1e-9
     assert not out["all"]["covers_zero"]
     assert compare(a, a, resamples=200)["all"]["covers_zero"]
+    sub = compare(a, b, resamples=200, only={"s%d" % i for i in range(25, 50)})
+    assert sub["all"]["questions"] == 25 and sub["all"]["difference"] == 0.0
 
 
 def test_fallback_holdout_never_splits_an_image():

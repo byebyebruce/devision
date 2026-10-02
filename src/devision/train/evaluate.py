@@ -63,7 +63,9 @@ def evaluate_records(decider: Decider, samples: Sequence[Sample], data_root, con
             questions = {qid: dict(q, criteria=dict(reversed(list(q["criteria"].items()))))
                          if q["type"] == "choice" else q for qid, q in questions.items()}
         with open(os.path.join(str(data_root), image), "rb") as f:
-            state = [{"type": "image", "base64": base64.b64encode(f.read()).decode()}]
+            state: List[Any] = [{"type": "image", "base64": base64.b64encode(f.read()).decode()}]
+        if s.get("state_text"):  # text that comes with the image (e.g. a ScienceQA hint)
+            state.append(s["state_text"])
         while warm < WARMUP:  # first calls pay one-off costs; keep them out of the latency
             decider.decide(state=state, questions=questions)
             warm += 1

@@ -59,6 +59,7 @@ uv run python scripts/data/bigtrain.py --root data --gqa 60000 --vqav2 40000 --o
 uv run python scripts/data/cocoqa.py --root data --split train2014 --limit 60000 --out data/cocoqa_train.jsonl   # 仓库外：从 COCO 实例框出题（val2014 + --out data/val_cocoqa.jsonl 是评测集）
 uv run python scripts/data/v2_build.py --root data   # 仓库外：一条命令重建 v2 数据集（data/v2/：训练、dev_*、dev_mix、eval_*、MANIFEST.json），任何验收失败即中止；见 docs/research/data-quality.md
 uv run python scripts/data/v2_mix.py --root data     # 仓库外：按能力配额混合成 data/v2/train_mix.jsonl（左右类 ≤5%，每图 ≤6 题，混合后重新配平验收）
+uv run python scripts/data/lv_bench.py --root data   # 仓库外：按 laya-vision 公开的逐题预测重建他们的评测集到 data/lv_bench/（VQAv2 是非 / A-OKVQA / ScienceQA / POPE，含我们训练没见过的 *.unseen 子集），并把他们的逐题预测转成我们的明细格式；不安装、不运行他们的模型。用 configs/lv-bench-*.yaml 评测我们的模型，再用 devision-compare [--only *.unseen.jsonl] 逐题配对比较
 uv run devision-align --data data/align_train.jsonl --val data/align_val.jsonl --data-root data --out runs/align --run-name align   # 阶段 1
 uv run devision-train --init runs/align --lr-new 5e-5 --lr-head 5e-5 --lr-lora 1e-4 --warmup 500 --data data/train_100k.jsonl --val data/val_mix.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json --role heldout   # 另写 pope.details.jsonl（逐题明细）；--control mismatched|reversed 为对照
