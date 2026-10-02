@@ -53,7 +53,7 @@ uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；�
 ```
 
 - `data/`（数据集）、`runs/`（checkpoint）不进 git；`examples/` 里的少量示例图进 git，供 web demo 默认加载。
-- 训练默认上报 SwanLab（项目 `devision`）。阶段 1：loss、batch 补词准确率、梯度范数、学习率，每 `--eval-every` 步记录 val 上真实/错配图片的补词准确率与 nll 及两者之差（`val/mlm_acc_gap`）。阶段 2：loss、nll、batch 准确率、梯度范数、学习率；从第 0 步起每 `--eval-every` 步（默认 500）和每个 epoch 末，在 val 和每个 `--eval` 集上记录准确率（总体/noul/choice）、nll、ECE；结束时记录拟合温度，以及套用温度后各集合的指标（`final/...`，即 decide 会给出的结果）。先 `uv run swanlab login` 登录（API key 只存在本机用户目录，**不要写进仓库**）；`--swanlab-project ""` 关闭。本地缓存 `swanlog/` 不进 git。
+- 训练默认上报 SwanLab（项目 `devision`）。阶段 1：loss、batch 补词准确率、梯度范数、学习率，每 `--eval-every` 步记录 val 上真实/错配图片的补词准确率与 nll 及两者之差（`val/mlm_acc_gap`）。阶段 2：loss、nll、batch 准确率、梯度范数、学习率；从第 0 步起每 `--eval-every` 步（默认 500）和每个 epoch 末，在 val 和每个 `--eval` 集上记录准确率（总体/noul/choice）、nll、ECE；结束时记录拟合温度，以及套用温度后各集合的指标（`final/...`，即 decide 会给出的结果）。只有训练（`devision-align` / `devision-train`）上报；`devision-eval`、分析脚本和测试都不上报，结果写成 JSON / 文本文件。先 `uv run swanlab login` 登录（API key 只存在本机用户目录，**不要写进仓库**）；`--swanlab-project ""` 关闭。本地缓存 `swanlog/` 不进 git。
 - 首次训练会从 Hub 下载 `convaiinnovations/laya` 与 `google/siglip2-base-patch16-256`；对齐阶段还会下载 `answerdotai/ModernBERT-large`（只取 MLM 头）。
 - 不做阶段 1 直接训决策题，nll 会停在 ln2（见 `docs/experiments/2026-09-30-rlcd-plateau.md`）。
 - 阶段 2 用默认学习率长训练（上万步）会塌缩成 50/50 输出；用上面命令里的低学习率加预热。发布的 checkpoint 怎么训出来的见 `scripts/recipe.sh`。

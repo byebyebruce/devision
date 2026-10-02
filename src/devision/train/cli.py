@@ -77,9 +77,6 @@ def eval_main(argv=None) -> None:
     p.add_argument("--data", required=True)
     p.add_argument("--data-root", default="data")
     p.add_argument("--out")
-    p.add_argument("--name", help="set name, metrics are logged as NAME/... (default: file name of --data)")
-    p.add_argument("--swanlab-project", default="devision", help='"" turns SwanLab off')
-    p.add_argument("--run-name", help="default: eval-<checkpoint dir>-<NAME>")
     a = p.parse_args(argv)
 
     result = evaluate(Decider.load(a.checkpoint), read_jsonl(a.data), a.data_root)
@@ -88,16 +85,3 @@ def eval_main(argv=None) -> None:
     if a.out:
         with open(a.out, "w") as f:
             f.write(text)
-    if a.swanlab_project:
-        from .rlcd import _Tracker
-
-        name = a.name or os.path.splitext(os.path.basename(a.data))[0]
-        run = a.run_name or "eval-%s-%s" % (os.path.basename(os.path.normpath(a.checkpoint)), name)
-        tracker = _Tracker(a.swanlab_project, run, {"checkpoint": a.checkpoint, "data": a.data, "n": result["n"]})
-        metrics = {"accuracy": result["accuracy_all"], "ece": result["ece"],
-                   "latency_p50_ms": result["latency_ms"]["p50"], "latency_p95_ms": result["latency_ms"]["p95"],
-                   **{"accuracy_" + t: v for t, v in result["accuracy"].items()}}
-        if len(result["accuracy_by_source"]) > 1:
-            metrics.update({src + "/accuracy": v for src, v in result["accuracy_by_source"].items()})
-        tracker.log({"%s/%s" % (name, k): v for k, v in metrics.items() if v is not None}, step=0)
-        tracker.finish()
