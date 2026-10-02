@@ -1,14 +1,19 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # deVision (Decision + Vision)
 
 视觉决策模型：图片 + 英文问题 → Jev 格式的结构化答案（带校准概率）。SigLIP2 视觉编码 + Laya 初始化的 ModernBERT-large 决策头。
 
 - 设计与范围：`docs/spec/vision-decision-mvp.md`（改设计先改 spec）
-- 调研：`docs/research/jev-api.md`（Jev 协议）、`docs/research/encoder-data.md`（编码器与数据集）
+- 调研：`docs/research/jev-api.md`（Jev 协议）、`docs/research/encoder-data.md`（编码器与数据集）、`docs/research/data-quality.md`（训练数据质量与 v2）、`docs/research/laya-vision-gap.md`（与 laya-vision 的差距）
+- 实验过程与结论：`docs/experiments/2026-09-30-rlcd-plateau.md`（按时间追加；提新实验前先看，避免重复已失败的做法）
 
 ## 代码结构
 
-- `src/devision/model/`：网络、预处理、checkpoint、`Decider.decide`；不依赖其他子包。
-- `src/devision/train/`：样本格式（`samples.py`）、阶段 1 对齐（`align.py`，带图完形填空，只训投影层）、阶段 2 RLCD 训练（`rlcd.py`）、评测，依赖 model。
+- `src/devision/model/`：网络、预处理、checkpoint、`Decider.decide`；不依赖其他子包。数据流：图片 letterbox 256 → 冻结的 SigLIP2 → 2×2 pixel shuffle + MLP 投影层 → 64 个视觉 token 插在 `[CLS]` 之后 → ModernBERT-large（Laya 权重）→ Laya 决策头在每个选项的 `[MASK]` 上打分 → 按题型温度 softmax。训练和推理共用 `question_item` / `image_tensor`，序列构造不要另写一份。
+- `src/devision/train/`：样本格式（`samples.py`）、阶段 1 对齐（`align.py`，带图完形填空，训投影层，`--lora-r` 时 ModernBERT 也加 LoRA）、阶段 2 RLCD 训练（`rlcd.py`）、评测（`evaluate.py`，走 `decide`）、SwanLab 上报（`tracking.py`）、YAML 实验编排（`pipeline.py`），依赖 model。
 - 准备训练数据的代码（下载、转换、转换器测试）**不进仓库**：放在 `scripts/data/`（已 gitignore）。仓库只认 `samples.py` 里约定的 JSONL 格式。
 - `src/devision/serve/`：`/v1/systemone` API，依赖 model。
 - `src/devision/demo/`：web demo 页面和示例图路由，只通过 HTTP 调 API，不 import model、train、serve。
@@ -44,6 +49,8 @@
 ```bash
 uv run pytest -q                      # 全部测试（含 tiny 模型端到端冒烟，CPU 上几秒）
 uv run pyright                        # 类型检查
+uv run pytest tests/train/test_pipeline.py -k aligned -q   # 只跑一个测试（-k 按名字筛）
+uv run pytest scripts/data -q          # 仓库外数据生成脚本的测试
 uv run python scripts/data/prepare.py fetch --root data ...   # 仓库外：生成 data/{train,val,pope}.jsonl
 uv run python scripts/data/captions.py --root data --exclude data/val.jsonl data/pope.jsonl   # 仓库外：生成 data/align_{train,val}.jsonl（COCO caption）
 uv run python scripts/data/evalsets.py --root data --gqa 1000 --vqav2 1000   # 仓库外：生成 data/val_{gqa,vqav2,mix}.jsonl，并从 train.jsonl 剔除评测图
@@ -65,3 +72,26 @@ uv run devision-pipeline configs/x.yaml [--dry-run] [--from STAGE] [--force]   #
 - 不做阶段 1 直接训决策题，nll 会停在 ln2（见 `docs/experiments/2026-09-30-rlcd-plateau.md`）。
 - 阶段 2 用默认学习率长训练（上万步）会塌缩成 50/50 输出；用上面命令里的低学习率加预热。发布的 checkpoint 怎么训出来的见 `configs/release-0.1.yaml`。
 - `--checkpoint` / `--init` / `Decider.load` 都接受本地目录或 Hugging Face 模型仓库 id。
+
+## 评论（`critic/`）
+
+`critic/critic.md` 是另一位评审（按 `AGENTS.md` 工作，只读审查）对最近改动写的评论；`critic/` 已 gitignore。用户说「看评论」时：
+
+1. 先读 `critic/critic.md`，只处理尚未回复的内容（文件末尾最后一条回复之后的部分）。
+2. 逐项核实对不对：用只读检查、复算或查代码给出证据，不凭印象判断。
+3. 合理的：直接修复（照常写测试、提交，不自动 push），并在回复里写明改了什么、验证结果。
+4. 不合理或只部分合理的：说明理由和证据。
+5. 回复**追加**到 `critic/critic.md` 末尾，不改动原评论。格式：
+
+```
+====================================================================
+回复 · <YYYY-MM-DD HH:MM> · 作者：Claude Code
+====================================================================
+1. <原评论要点>
+   结论：正确 / 部分正确 / 不正确
+   证据：...
+   处理：已修复（commit / 文件）/ 不采纳，理由 ...
+2. ...
+====================================================================
+```
+
