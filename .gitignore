@@ -7,3 +7,4 @@ __pycache__/
 /checkpoints/
 /scripts/data/
 /swanlog/
+/critic/
