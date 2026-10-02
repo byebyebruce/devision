@@ -48,6 +48,7 @@ uv run python scripts/data/captions.py --root data --exclude data/val.jsonl data
 uv run python scripts/data/evalsets.py --root data --gqa 1000 --vqav2 1000   # 仓库外：生成 data/val_{gqa,vqav2,mix}.jsonl，并从 train.jsonl 剔除评测图
 uv run python scripts/data/bigtrain.py --root data --gqa 60000 --vqav2 40000 --out data/train_100k.jsonl   # 仓库外：更大的阶段 2 训练集
 uv run python scripts/data/cocoqa.py --root data --split train2014 --limit 60000 --out data/cocoqa_train.jsonl   # 仓库外：从 COCO 实例框出题（val2014 + --out data/val_cocoqa.jsonl 是评测集）
+uv run python scripts/data/v2_coco_exist.py / v2_coco_spatial.py / v2_vqa_yesno.py / v2_vqa_choice.py / v2_gqa.py / v2_evalsets.py ...   # 仓库外：v2 数据集，写到 data/v2/（见 docs/research/data-quality.md）
 uv run devision-align --data data/align_train.jsonl --val data/align_val.jsonl --data-root data --out runs/align --run-name align   # 阶段 1
 uv run devision-train --init runs/align --lr-new 5e-5 --lr-head 5e-5 --lr-lora 1e-4 --warmup 500 --data data/train_100k.jsonl --val data/val_mix.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json
