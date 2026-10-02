@@ -147,19 +147,42 @@ else:
 
 **题目写清楚，选项互不重叠。** 选项意思接近时在 `criteria` 里加一句说明。
 
-## 结果
+## Benchmark
 
-发布的 checkpoint（`stage2-cocoqa`），全部经 `decide` 在 CPU 上评测，已套用拟合温度：
+deVision 的数字来自发布的 checkpoint（`stage2-cocoqa`），全部经 `decide` 在 CPU 上评测，已套用拟合温度。laya-vision 的数字取自其公开评测页和模型卡（检索于 2026-10-01）；它是目前唯一公开的、能看图的 System One 模型。
+
+### 与 laya-vision 对比
+
+| 评测集 | deVision 0.1 | laya-vision 201M | laya-vision ModernVBERT-250M |
+|---|---|---|---|
+| POPE adversarial（"有没有 X"） | **0.773**（300 题） | **0.777**（3,000 题） | — |
+| POPE popular / random | 未测 | 0.819 / 0.836 | — |
+| VQAv2 yes/no（val 按图重切） | 0.648（1,000 题） | **0.715**（5,000 题） | **0.718**（5,000 题） |
+| VSR（空间关系） | 未测；左右类题在随机水平 | **0.875**（160 题） | — |
+| A-OKVQA（四选一） | 未测 | 0.598 | 0.652 |
+| ScienceQA（图片子集） | 未测 | 0.822 | 0.790 |
+| ECE | 0.025–0.054；POPE 0.098 | 0.041（34 个集合）；POPE 0.048 | 0.022（22 个集合） |
+| 参数 | 518M | 201M | 267M |
+| 输入分辨率 | 256 px | 512 px | 512 px |
+| 延迟（单题） | 160–190 ms，Mac **CPU** | 40.8 ms，L4 **GPU** | 32 ms，L4 GPU |
+| 训练数据 | 约 18 万题 + 8.3 万张图的 caption | 182 万条 | 27 万题 |
+| 训练硬件 | Mac（MPS），约 16 小时 | 1×H100，2 小时 | 1×A100，68 分钟 |
+| 权重许可 | 待定 | CC BY-NC-SA 4.0 | CC BY-NC-SA 4.0 |
+
+- **"有没有某物"追平**（POPE 0.773 对 0.777，差别在噪声内）；**日常是非题差约 7 个点**；**空间关系差距最大**；校准水平相当，POPE 上我们偏差（温度没在这类题上拟合）。
+- 不能逐点直接比：POPE 我们只测了 300 题（标准误约 2.4%）；两边的 VQAv2 都从官方 val 按图重切，但抽到的题不同；差 3 个点以内不算显著。延迟一边是 CPU、一边是 GPU。
+- 差距主要来自：我们的 ModernBERT 只在纯文本上预训练过、连接层从零训练、只训 LoRA，而 laya-vision 的骨干在预训练时已经学过看图；以及训练数据少一个数量级、题型窄。逐项分析见 [`docs/research/laya-vision-gap.md`](docs/research/laya-vision-gap.md)。
+
+### 本项目的评测集
 
 | 评测集 | 题数 | 准确率 | ECE |
 |---|---|---|---|
-| POPE adversarial（"有没有 X"） | 300 | 0.773 | 0.098 |
-| VQAv2 val yes/no（按图重切，正负各半） | 1,000 | 0.648 | 0.025 |
+| POPE adversarial | 300 | 0.773 | 0.098 |
+| VQAv2 val yes/no（正负各半） | 1,000 | 0.648 | 0.025 |
 | GQA testdev（是非 + 二选一） | 1,000 | 0.635（是非 0.639，选择 0.628） | 0.042 |
 | COCO 实例框出题（val2014） | 1,000 | 0.761 | 0.054 |
 
-- 对照：laya-vision 201M（SmolVLM-256M 骨干，512 px，182 万训练样本）POPE adversarial 0.777、VQAv2 yes/no 0.715。指标、结构和训练的逐项对比见 [`docs/research/laya-vision-gap.md`](docs/research/laya-vision-gap.md)。
-- Mac CPU 上单题延迟 P50 约 160–190 ms。
+COCO 出题按题型：有没有某物 0.920，大小 0.908，上下 0.814，左右 0.491（随机水平）。上下和大小的成绩大部分来自类别先验（只看类别不看图分别能到 0.757 和 0.844）。
 
 ## 已知限制
 
