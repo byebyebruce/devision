@@ -20,7 +20,8 @@
 - **完成标准**：纯 noul 集合不出现 `reversed:` 步骤；混合集合的倒序明细只含 choice；`order_sensitivity` 结果不变。有测试。
 - 出处：critic MC4 第 1 点。
 
-### 3. 今晚 v1 流水线结束后（约 00:15）的评测
+### 3. ~~今晚 v1 流水线结束后（约 00:15）的评测~~（已完成 2026-10-03，结果见实验记录末节和 `docs/research/laya-vision-gap.md`；README Benchmark 未改，待确认）
+- 后续：发布的 `stage2-cocoqa` 没有逐题明细，和新一轮只能比点估计；需要配对区间时，用同一批集合补评它（只评测，不训练）。
 - `configs/eval-v1-align-lora.yaml`：v1 数据模型（`runs/align-lora-cocoqa`）在 v2 测试集上，带配错图 / 倒序对照，用途按实际重叠自动标注（`eval_pope` 对这个模型是 monitoring）。
 - `configs/lv-bench-align-lora.yaml`：同一模型在 laya-vision 公开评测集上（VQAv2 是非 4,887 / A-OKVQA 1,138 / ScienceQA 2,097 / POPE 9,000）。
 - 然后 `devision-compare data/lv_bench/laya-vision-201m.<set>.details.jsonl runs/align-lora-cocoqa/lv_<set>.details.jsonl`，全部题和 `--only data/lv_bench/<set>.unseen.jsonl` 各一次；POPE 他们只公开总分，只比总分。
