@@ -11,8 +11,12 @@ plus laya / vision / visual_shuffle / model_name), checked before anything runs.
 
 After the stages, `evaluate:` runs devision-eval on each set (JSON next to the checkpoint) and any
 extra shell commands, with {checkpoint} and {name} substituted, then prints a summary. Every set is
-labelled: calibration_fit (the evaluated stage's --val, which its temperatures were fitted on),
-monitoring (watched during some stage's training) or heldout. With `controls: true` every set is
+labelled by what it shares -- sample ids or pictures, not file paths -- with the data the checkpoint
+was tuned on: calibration_fit (at least half of it is in the temperature-fit set: the evaluated stage's
+--val, or `calibration_fit:` for an existing checkpoint), monitoring (any overlap with the fit set or
+with a set watched during training: the stages' --val / --eval and `history:`) or heldout (no
+overlap). `image_identity:` names a JSON {id: picture} so COCO and Visual Genome ids of one picture
+match. A set may also be given as {path: ..., role: ...} to state its role outright. With `controls: true` every set is
 also evaluated with mismatched pictures (<set>.mismatched.json) and with choice options reversed
 (<set>.reversed.json); the summary shows the mismatched accuracy and the share of flipped answers.
 """
@@ -24,7 +28,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 KINDS = {"align": "align_main", "train": "train_main"}
 REPORTS = {"align": "align_report.json", "train": "train_report.json"}
@@ -35,6 +39,52 @@ TOP_KEYS = {"name", "description", "runs_dir", "data_root", "device", "swanlab_p
 
 class PlanError(ValueError):
     pass
+
+
+ROLES = ("calibration_fit", "monitoring", "heldout")
+FIT_SHARE = 0.5
+
+
+def _load_aliases(path: Optional[str]) -> Dict[str, str]:
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def _identity(path: str, aliases: Dict[str, str]):
+    """(sample ids, pictures) of a JSONL set; pictures are image ids mapped through `aliases`."""
+    ids, pics = [], []
+    with open(path) as f:
+        for line in f:
+            if line.strip():
+                s = json.loads(line)
+                ids.append(s.get("id"))
+                pics.append(aliases.get(s.get("image_id", ""), s.get("image_id", "")))
+    return ids, pics
+
+
+def _role(path: str, fit: Optional[str], watched: Set[str], aliases: Dict[str, str]):
+    """(role, overlap counts) from what the set shares with the fit set and the watched sets."""
+    if not os.path.exists(path):  # plan-only checks without data: fall back to the path
+        return ("calibration_fit" if path == fit else "monitoring" if path in watched else "heldout"), {}
+    ids, pics = _identity(path, aliases)
+
+    def shared(other: Optional[str]) -> int:
+        if not other or not os.path.exists(other):
+            return 0
+        oid, opic = _identity(other, aliases)
+        oid_set, opic_set = set(oid), set(opic)
+        return sum(1 for i, p in zip(ids, pics) if i in oid_set or p in opic_set)
+
+    in_fit = shared(fit)
+    in_watched = max([shared(w) for w in watched] or [0])
+    overlap = {"questions": len(ids), "shared_with_fit": in_fit, "shared_with_watched": in_watched}
+    if ids and in_fit / len(ids) >= FIT_SHARE:
+        return "calibration_fit", overlap
+    if in_fit or in_watched:
+        return "monitoring", overlap
+    return "heldout", overlap
 
 
 @dataclass
@@ -55,6 +105,7 @@ class Plan:
     eval_outputs: Dict[str, str] = field(default_factory=dict)
     control_outputs: Dict[str, Dict[str, str]] = field(default_factory=dict)
     roles: Dict[str, str] = field(default_factory=dict)
+    overlaps: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
 
 def _flags(params: Dict[str, Any]) -> List[str]:
@@ -163,10 +214,20 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
         log = os.path.join(runs, "logs", "%s-eval.log" % name)
         entry = "import sys; from devision.train.cli import eval_main; eval_main(sys.argv[1:])"
         watched = {p for st in stages for p in [st.get("val")] + list((st.get("eval") or {}).values()) if p}
-        for set_name, path in (ev.get("sets") or {}).items():
+        watched |= set(ev.get("history") or [])
+        watched.discard(fit)
+        aliases = _load_aliases(ev.get("image_identity"))
+        for set_name, spec in (ev.get("sets") or {}).items():
+            path, stated = (spec.get("path"), spec.get("role")) if isinstance(spec, dict) else (spec, None)
+            if not isinstance(path, str):
+                raise PlanError("evaluate: set %r needs a path" % set_name)
+            if stated and stated not in ROLES:
+                raise PlanError("evaluate: set %r role must be one of %s" % (set_name, ROLES))
             exists(path, "evaluate")
-            role = "calibration_fit" if path == fit else "monitoring" if path in watched else "heldout"
-            plan.roles[set_name] = role
+            role, overlap = _role(path, fit, watched, aliases)
+            plan.roles[set_name] = stated or role
+            plan.overlaps[set_name] = overlap
+            role = plan.roles[set_name]
             out_json = os.path.join(ckpt, "%s%s.json" % (ev.get("prefix", ""), set_name))
             plan.eval_outputs[set_name] = out_json
             base = [python, "-c", entry, "--checkpoint", plan.checkpoint, "--data", path, "--data-root", data_root,
@@ -224,6 +285,8 @@ def run_plan(plan: Plan, start_from: Optional[str] = None, force: bool = False, 
         shown = step.argv[0] if step.shell else " ".join(shlex.quote(a) for a in step.argv)
         print("== %s %s\n   %s\n   log: %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), step.name, shown, step.log),
               flush=True)
+        if step.name.startswith("eval:") and plan.overlaps.get(step.name[5:]):
+            print("   role %s, overlap %s" % (plan.roles[step.name[5:]], plan.overlaps[step.name[5:]]), flush=True)
         if dry_run:
             continue
         os.makedirs(os.path.dirname(step.log), exist_ok=True)

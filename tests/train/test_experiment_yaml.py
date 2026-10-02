@@ -1,4 +1,6 @@
 """devision-pipeline: an experiment YAML becomes a checked, resumable sequence of trainer runs."""
+import json
+
 import pytest
 
 from devision.train.pipeline import PlanError, build_plan, run_plan
@@ -110,3 +112,28 @@ def test_finished_stages_are_skipped_and_everything_after_a_rerun_stage_reruns(t
     run_plan(p, start_from="decide", dry_run=True)
     out = capsys.readouterr().out
     assert "align: already done" in out and "decide: already done" not in out
+
+
+def _jsonl(path, rows):
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return str(path)
+
+
+def test_roles_follow_shared_questions_and_pictures_not_file_names(tmp_path):
+    fit = _jsonl(tmp_path / "mix.jsonl", [{"id": "g%d" % i, "image_id": "vg:%d" % i} for i in range(10)])
+    subset = _jsonl(tmp_path / "gqa_part.jsonl", [{"id": "g%d" % i, "image_id": "vg:%d" % i} for i in range(6)])
+    # one picture of the fit set under its COCO id
+    pope = _jsonl(tmp_path / "pope.jsonl", [{"id": "p%d" % i, "image_id": "coco:%d" % (7 + i)} for i in range(3)])
+    watched_old = _jsonl(tmp_path / "old.jsonl", [{"id": "o1", "image_id": "coco:99"}])
+    fresh = _jsonl(tmp_path / "fresh.jsonl", [{"id": "f1", "image_id": "coco:50"}])
+    aliases = tmp_path / "ids.json"
+    aliases.write_text(json.dumps({"vg:3": "coco:7"}))
+    cfg = config(stages=[], evaluate={"checkpoint": "runs/old", "calibration_fit": fit, "history": [watched_old],
+                                      "image_identity": str(aliases),
+                                      "sets": {"part": subset, "pope": pope, "fresh": fresh,
+                                               "stated": {"path": fresh, "role": "monitoring"}}})
+    p = build_plan(cfg, python="python", check_files=False)
+    assert p.roles == {"part": "calibration_fit", "pope": "monitoring", "fresh": "heldout", "stated": "monitoring"}
+    assert p.overlaps["pope"]["shared_with_fit"] == 1
+    step = next(s for s in p.steps if s.name == "eval:part")
+    assert step.argv[step.argv.index("--role") + 1] == "calibration_fit"

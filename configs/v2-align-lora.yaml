@@ -16,6 +16,7 @@ stages:
     params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 1000}
 
 evaluate:
+  image_identity: data/v2/image_identity.json
   controls: true                           # + mismatched pictures and reversed options for every set
   sets:
     dev_mix: data/v2/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result

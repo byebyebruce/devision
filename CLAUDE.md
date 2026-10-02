@@ -35,7 +35,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 端到端冒烟（`tests/train/test_pipeline.py`）：tiny 模型 + 合成红/蓝图样本 → 训练 → 存盘 → 加载 → 经 decide 评测，CPU 上几秒，随 `pytest` 一起跑。真实模型的同一流程用下面的 train → eval 命令（训练在 Mac 上，`--device mps`）。
 - 评测集图片按 image id 从所有训练源剔除；VG（GQA）里约一半是 COCO 图，剔除时两套 id 都要对上（`convert.same_images`，映射来自 VG 的 `image_data.json`）。
 - v2 数据的图片用途互不重叠：训练文件、`dev_*` / `dev_mix`（训练中监测、选 checkpoint、拟合温度，按图片哈希约 3% 加稀疏切片补充）、`eval_*`（最终测试：COCO val2014、VQAv2 val、GQA val、POPE，同时避开 v1 和 v2 的训练图片；不要放进训练中的周期性 `--eval`）。
-- 评测报告：每个集合标明用途（`--role` / YAML 自动标：`calibration_fit` 是温度拟合集，不算未见数据上的结果）；`devision-eval` 输出逐题明细，汇总（准确率按题型 / 来源 / kind / 轴 / 选项数、NLL、Brier、ECE、可靠性分箱、阈值覆盖率、POPE 的 precision / recall / F1 / yes ratio）都能从明细重算；同时给出 MANIFEST 里的「只看题目」基线、配错图和选项倒序两个对照（YAML `evaluate.controls: true`）。模型之间的差值用 `devision-compare`，不要用固定的「几个点以内不显著」。
+- 评测报告：每个集合标明用途（`--role`）。YAML 按集合与被评模型调过的数据之间**实际共享的题目和图片**判定（不看文件名）：≥ 一半在温度拟合集里为 `calibration_fit`，与拟合集或训练中监测过的集合（各阶段 `--val` / `--eval`、只评测配置的 `history:`）有任何重叠为 `monitoring`，否则 `heldout`；`image_identity:` 让同一张图的 COCO / VG id 对上；也可写 `{path, role}` 直接指定。同一个文件对不同模型的用途可以不同（如 `eval_pope` 对 v1 模型是 monitoring，对 v2 模型是 heldout）；`devision-eval` 输出逐题明细，汇总（准确率按题型 / 来源 / kind / 轴 / 选项数、NLL、Brier、ECE、可靠性分箱、阈值覆盖率、POPE 的 precision / recall / F1 / yes ratio）都能从明细重算；同时给出 MANIFEST 里的「只看题目」基线、配错图和选项倒序两个对照（YAML `evaluate.controls: true`）。模型之间的差值用 `devision-compare`，不要用固定的「几个点以内不显著」。
 - 评测集：`val_mix`（GQA testdev 1000 + VQAv2 val 1000，用于 `--val` 与拟合温度，指标按来源拆分）、`pope`（300，只评不拟合）。旧的 `val.jsonl`（200 题）只为和早期实验对比而保留。
 
 ## Python 与依赖
