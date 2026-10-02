@@ -1,0 +1,40 @@
+# release-0.1 with one change: stage 1 also adapts ModernBERT through a LoRA (r=16).
+# Started 2026-10-02 as runs/logs/pipeline-align-lora.sh (outputs runs/align-lora*); this file is the
+# same experiment for reruns.
+name: align-lora
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: align
+    kind: align
+    data: data/align_full_train.jsonl
+    val: data/align_val.jsonl
+    params: {epochs: 2, eval_every: 500, lora_r: 16, lr_lora: 1.0e-4}
+
+  - name: stage2a
+    kind: train
+    init: align
+    data: data/train_100k.jsonl
+    val: data/val_mix.jsonl
+    eval: {pope: data/pope.jsonl}
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 1000}
+
+  - name: stage2b
+    kind: train
+    init: stage2a
+    data: data/train_cocoqa_mix.jsonl
+    val: data/val_mix.jsonl
+    eval: {pope: data/pope.jsonl, cocoqa: data/val_cocoqa.jsonl}
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 1000}
+
+evaluate:
+  sets:
+    val_gqa: data/val_gqa.jsonl
+    val_vqav2: data/val_vqav2.jsonl
+    pope: data/pope.jsonl
+    val_cocoqa: data/val_cocoqa.jsonl
+  commands:
+    - uv run python runs/analysis/gqa_by_type.py {checkpoint} > {checkpoint}/gqa_by_type.txt 2>&1
+    - uv run python runs/analysis/cocoqa_by_kind.py {checkpoint} > {checkpoint}/cocoqa_by_kind.txt 2>&1

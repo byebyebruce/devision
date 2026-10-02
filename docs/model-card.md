@@ -57,7 +57,7 @@ scorer over one `[MASK]` per option) → softmax with a per-type temperature. 51
 
 ## Training
 
-On a Mac (MPS), about 16 hours in total (`scripts/recipe.sh` in the code repo):
+On a Mac (MPS), about 16 hours in total (`configs/release-0.1.yaml` in the code repo, run with `devision-pipeline`):
 
 1. **Alignment.** Image-conditioned masked captions on all COCO train2014 captions (82,583 images), training only the projector, with ModernBERT-large's MLM head.
 2. **Decisions.** RLCD (noisy-logit policy gradient with proper scoring rewards, plus soft cross-entropy), training the projector, decision head and a LoRA on ModernBERT (merged into this checkpoint):

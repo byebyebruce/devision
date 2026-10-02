@@ -262,6 +262,6 @@ flowchart TB
 - 训练分两个阶段：
   - **阶段 1 对齐**（`devision-align`）：带图完形填空，只训投影层。数据是 COCO train2014 全部 caption。
   - **阶段 2 决策**（`devision-train`）：RLCD，训投影层、决策头和 ModernBERT 的 LoRA。先在 6 万 GQA + 4 万 VQAv2 是非题上训，再在从 COCO 实例框自动出的题（有没有某物、位置、大小）上接着训。
-  - 发布的 checkpoint 的完整步骤见 [`scripts/recipe.sh`](scripts/recipe.sh)，在 Mac（MPS）上共约 16 小时。
+  - 发布的 checkpoint 的完整步骤见 [`configs/release-0.1.yaml`](configs/release-0.1.yaml)，`uv run devision-pipeline configs/release-0.1.yaml` 可复现，在 Mac（MPS）上共约 16 小时。新实验复制一份 YAML 改参数即可。
 - 训练数据是 JSONL 样本，格式见 `src/devision/train/samples.py`。生成数据的代码（GQA / VQAv2 / POPE / COCO 的下载与规则转换）不在仓库里。所有评测图片按 COCO 和 VG 两套 id 从训练数据中剔除。
 - 实验过程和结论见 [`docs/experiments/2026-09-30-rlcd-plateau.md`](docs/experiments/2026-09-30-rlcd-plateau.md)。

@@ -52,11 +52,14 @@ uv run devision-align --data data/align_train.jsonl --val data/align_val.jsonl -
 uv run devision-train --init runs/align --lr-new 5e-5 --lr-head 5e-5 --lr-lora 1e-4 --warmup 500 --data data/train_100k.jsonl --val data/val_mix.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
+uv run devision-pipeline configs/x.yaml [--dry-run] [--from STAGE] [--force]   # 按 YAML 跑一整个实验
 ```
+
+- **实验用 YAML 编排**（`configs/*.yaml`，`src/devision/train/pipeline.py`）：每个新实验复制一份 YAML 改参数，不要再写训练脚本。一个 YAML = `name` + 若干 `stages`（`kind: align|train`、`init` 指向前面的阶段或路径、`data` / `val` / `eval`、`params` 即训练 CLI 的参数名，`common` 是所有阶段共用的参数）+ `evaluate`（评测集和额外命令，`{checkpoint}` / `{name}` 会被替换）。阶段 N 输出到 `runs/<name>-N/`，日志 `runs/logs/<name>-N.log`，SwanLab run 名 `<name>-N`。启动前检查所有参数名、类型和数据文件；已完成的阶段自动跳过（`--from` 从某阶段起重跑）。长任务用 `nohup uv run devision-pipeline configs/x.yaml > runs/logs/x.log 2>&1 &`。
 
 - `data/`（数据集）、`runs/`（checkpoint）不进 git；`examples/` 里的少量示例图进 git，供 web demo 默认加载。
 - 训练默认上报 SwanLab（项目 `devision`），两个阶段同一套分组（`src/devision/train/tracking.py`），每 `--log-every` 步一行：`train/`（窗口内均值：loss、accuracy、grad_norm；阶段 2 另有 nll、sigma）、`lr/`（各参数组）、`perf/`（step_s、samples_per_s、progress_pct、eta_h）、`sys/`（cpu_pct、proc_cpu_pct、ram_used_pct、ram_available_gb、swap_used_gb、proc_rss_gb、gpu_util_pct、gpu_mem_gb、torch_mps_gb）。评测行另记：阶段 1 每 `--eval-every` 步记 val 上真实/错配图片的补词准确率与 nll 及两者之差（`val/mlm_acc_gap`）；阶段 2 从第 0 步起每 `--eval-every` 步和每个 epoch 末，在 val 和每个 `--eval` 集上记准确率（总体/noul/choice，混合来源时按来源拆分）、nll、ECE，结束时记拟合温度和套用温度后的指标（`final/...`）。只有训练（`devision-align` / `devision-train`）上报；`devision-eval`、分析脚本和测试都不上报，结果写成 JSON / 文本文件。先 `uv run swanlab login` 登录（API key 只存在本机用户目录，**不要写进仓库**）；`--swanlab-project ""` 关闭。本地缓存 `swanlog/` 不进 git。
 - 首次训练会从 Hub 下载 `convaiinnovations/laya` 与 `google/siglip2-base-patch16-256`；对齐阶段还会下载 `answerdotai/ModernBERT-large`（只取 MLM 头）。
 - 不做阶段 1 直接训决策题，nll 会停在 ln2（见 `docs/experiments/2026-09-30-rlcd-plateau.md`）。
-- 阶段 2 用默认学习率长训练（上万步）会塌缩成 50/50 输出；用上面命令里的低学习率加预热。发布的 checkpoint 怎么训出来的见 `scripts/recipe.sh`。
+- 阶段 2 用默认学习率长训练（上万步）会塌缩成 50/50 输出；用上面命令里的低学习率加预热。发布的 checkpoint 怎么训出来的见 `configs/release-0.1.yaml`。
 - `--checkpoint` / `--init` / `Decider.load` 都接受本地目录或 Hugging Face 模型仓库 id。

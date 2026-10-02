@@ -334,6 +334,7 @@ serve = [
 train = [
     { name = "peft" },
     { name = "psutil" },
+    { name = "pyyaml" },
     { name = "swanlab" },
 ]
 
@@ -346,6 +347,7 @@ dev = [
     { name = "pyarrow" },
     { name = "pyright" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "swanlab" },
     { name = "uvicorn" },
 ]
@@ -359,6 +361,7 @@ requires-dist = [
     { name = "peft", marker = "extra == 'train'", specifier = ">=0.13" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "psutil", marker = "extra == 'train'", specifier = ">=5.9" },
+    { name = "pyyaml", marker = "extra == 'train'", specifier = ">=6" },
     { name = "safetensors", specifier = ">=0.4" },
     { name = "swanlab", marker = "extra == 'train'", specifier = ">=0.10.1" },
     { name = "torch", specifier = ">=2.4" },
@@ -376,6 +379,7 @@ dev = [
     { name = "pyarrow", specifier = ">=25.0.1" },
     { name = "pyright", specifier = ">=1.1.380" },
     { name = "pytest", specifier = ">=8" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "swanlab", specifier = ">=0.10.1" },
     { name = "uvicorn", specifier = ">=0.27" },
 ]

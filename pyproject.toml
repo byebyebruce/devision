@@ -32,6 +32,7 @@ dev = [
     "peft>=0.13",
     "swanlab>=0.10.1",
     "psutil>=5.9",
+    "pyyaml>=6",
 ]
 
 [project.urls]
@@ -42,6 +43,7 @@ devision-align = "devision.train.cli:align_main"
 devision-train = "devision.train.cli:train_main"
 devision-eval = "devision.train.cli:eval_main"
 devision-serve = "devision.serve.cli:serve_main"
+devision-pipeline = "devision.train.pipeline:pipeline_main"
 
 [project.optional-dependencies]
 serve = [
@@ -51,6 +53,7 @@ serve = [
 train = [
     "peft>=0.13",
     "psutil>=5.9",
+    "pyyaml>=6",
     "swanlab>=0.10.1",
 ]
 
