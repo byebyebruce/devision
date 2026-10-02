@@ -98,6 +98,7 @@ def test_training_continues_from_an_aligned_checkpoint(tmp_path):
     report = align(tiny_decider(seed=1), captions[:24], data_root=root, out_dir=tmp_path / "aligned",
                    val_samples=captions[24:],
                    config=AlignConfig(epochs=20, batch=8, lr=3e-3, warmup=5, mlm_head="", eval_every=0,
+                                      lora_r=8, lr_lora=3e-3,
                                       seed=0, device="cpu"))
     first, last = report["losses"][:5], report["losses"][-5:]
     assert sum(last) / len(last) < sum(first) / len(first)

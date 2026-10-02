@@ -2,8 +2,10 @@
 
 Input [CLS] <visual tokens> <caption, a share of its tokens replaced by [MASK]> [SEP]; the loss is
 cross-entropy on the masked tokens through ModernBERT-large's MLM head (Apache-2.0, used only here,
-not saved). Only the projector trains. Deciding straight from a random projector stalls at
-nll = ln2 (docs/experiments/2026-09-30-rlcd-plateau.md); this gives it a dense signal first.
+not saved). The projector trains; with `lora_r` > 0 ModernBERT also adapts through LoRA (merged
+before saving), as vision-language encoders do when they align. Deciding straight from a random
+projector stalls at nll = ln2 (docs/experiments/2026-09-30-rlcd-plateau.md); this gives it a dense
+signal first.
 
 The checkpoint is a normal devision checkpoint; `devision-train --init` continues from it.
 """
@@ -28,6 +30,9 @@ class AlignConfig:
     epochs: int = 3
     batch: int = 16
     lr: float = 1e-3
+    lora_r: int = 0                # > 0: also train a LoRA of this rank on ModernBERT
+    lora_alpha: int = 32
+    lr_lora: float = 1e-4
     warmup: int = 50
     mask_prob: float = 0.5
     max_caption_tokens: int = 40
@@ -141,13 +146,24 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     model.requires_grad_(False)
     model.projector.requires_grad_(True)
     params: List[nn.Parameter] = list(model.projector.parameters())
+    lora_params: List[nn.Parameter] = []
+    peft_encoder = None
+    if c.lora_r:
+        from peft import LoraConfig, get_peft_model
+
+        from .rlcd import LORA_TARGETS
+
+        peft_encoder = get_peft_model(text_encoder(model.decision), LoraConfig(
+            r=c.lora_r, lora_alpha=c.lora_alpha, lora_dropout=0.0, target_modules=LORA_TARGETS))
+        model.decision.encoder = peft_encoder
+        lora_params = [p for p in peft_encoder.parameters() if p.requires_grad]
     if not c.mlm_head:
         head.head.requires_grad_(True)
         head.bias.requires_grad_(True)
         params += list(head.head.parameters()) + [head.bias]
     else:
         head.requires_grad_(False)
-    # eval(): nothing but the projector trains, so dropout in the frozen parts only adds noise.
+    # eval(): only the projector (and LoRA) train, so dropout in the frozen parts only adds noise.
     model.to(device).eval()
     head.to(device)
 
@@ -155,7 +171,9 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     train_samples = [s for s in samples if s["captions"]]
     val = [s for s in (val_samples or []) if s["captions"]]
     steps = c.epochs * max(1, len(train_samples) // c.batch)
-    optimizer = torch.optim.AdamW(params, lr=c.lr, weight_decay=0.01)
+    optimizer = torch.optim.AdamW([{"params": params, "lr": c.lr}]
+                                  + ([{"params": lora_params, "lr": c.lr_lora}] if lora_params else []),
+                                  weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
     tracker = _Tracker(c.swanlab_project, c.run_name, {"align": asdict(c), "model": decider.cfg.to_dict(),
@@ -185,7 +203,7 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             loss = F.cross_entropy(logits[m], y[m])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(params, 1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(params + lora_params, 1.0)
             optimizer.step()
             scheduler.step()
             losses.append(loss.item())
@@ -193,6 +211,7 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             gpu = _apple_gpu_stats() if device.type == "mps" and len(losses) % c.log_every == 0 else {}
             tracker.log({"align/loss": losses[-1], "align/mlm_acc": (logits[m].argmax(-1) == y[m]).float().mean().item(),
                          "align/grad_norm": grad_norm.item(), "lr/projector": optimizer.param_groups[0]["lr"],
+                         **({"lr/lora": optimizer.param_groups[1]["lr"]} if lora_params else {}),
                          "epoch": epoch + 1, "perf/step_s": step_s, "perf/samples_per_s": len(chunk) / step_s,
                          **_device_memory(device), **gpu}, step=len(losses))
             if len(losses) % c.log_every == 0:
@@ -205,6 +224,8 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         run_eval()
     tracker.finish()
 
+    if peft_encoder is not None:
+        model.decision.encoder = peft_encoder.merge_and_unload()
     decider.model = model.cpu().float()
     decider.save(out_dir)
     return {"losses": losses, "val": evals, "train_images": len(train_samples), "val_images": len(val)}
