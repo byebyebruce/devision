@@ -114,8 +114,9 @@ def eval_main(argv=None) -> None:
     p.add_argument("--seed", type=int, default=0, help="seed of the mismatched-picture pairing")
     p.add_argument("--no-temperature", action="store_true",
                    help="evaluate the raw probabilities (all temperatures 1), to compare before / after calibration")
-    p.add_argument("--role", choices=["heldout", "calibration_fit", "monitoring"], default="heldout",
-                   help="what this set was used for: heldout = never used to fit temperatures or choose")
+    p.add_argument("--role", choices=["unspecified", "heldout", "calibration_fit", "monitoring"], default="unspecified",
+                   help="what this set was used for; heldout = never used to fit temperatures or choose. "
+                        "Not given -> unspecified (nothing is claimed)")
     a = p.parse_args(argv)
     control = "mismatched" if a.shuffle_images else a.control
 
