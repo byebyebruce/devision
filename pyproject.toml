@@ -31,6 +31,7 @@ dev = [
     "uvicorn>=0.27",
     "peft>=0.13",
     "swanlab>=0.10.1",
+    "psutil>=5.9",
 ]
 
 [project.urls]
@@ -49,6 +50,7 @@ serve = [
 ]
 train = [
     "peft>=0.13",
+    "psutil>=5.9",
     "swanlab>=0.10.1",
 ]
 

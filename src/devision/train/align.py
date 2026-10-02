@@ -11,7 +11,6 @@ The checkpoint is a normal devision checkpoint; `devision-train --init` continue
 """
 import math
 import random
-import time
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -20,8 +19,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.models.modernbert.modeling_modernbert import ModernBertPredictionHead
 
-from .rlcd import _apple_gpu_stats, _device, _device_memory, _Images, _Tracker
+from .rlcd import _device, _Images
 from .samples import Sample
+from .tracking import Tracker, TrainLog
 from ..model import Decider, text_encoder
 
 
@@ -176,7 +176,7 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                                   weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
-    tracker = _Tracker(c.swanlab_project, c.run_name, {"align": asdict(c), "model": decider.cfg.to_dict(),
+    tracker = Tracker(c.swanlab_project, c.run_name, {"align": asdict(c), "model": decider.cfg.to_dict(),
                            "train_images": len(train_samples), "val_images": len(val), "steps": steps})
     losses: List[float] = []
     evals: List[Dict[str, float]] = []
@@ -189,11 +189,11 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                                                     if k != "step"}), flush=True)
 
     run_eval()
+    log = TrainLog(tracker, device, steps, c.log_every)
     for epoch in range(c.epochs):
         order = list(train_samples)
         rng.shuffle(order)
         for b in range(0, len(order) - c.batch + 1, c.batch):
-            t_step = time.perf_counter()
             chunk = order[b:b + c.batch]
             input_ids, attention, target = _masked_batch(tok, [rng.choice(s["captions"]) for s in chunk], c, rng)
             logits = _mlm_logits(model, head, input_ids, attention,
@@ -207,17 +207,14 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             optimizer.step()
             scheduler.step()
             losses.append(loss.item())
-            step_s = time.perf_counter() - t_step
-            gpu = _apple_gpu_stats() if device.type == "mps" and len(losses) % c.log_every == 0 else {}
-            tracker.log({"align/loss": losses[-1], "align/mlm_acc": (logits[m].argmax(-1) == y[m]).float().mean().item(),
-                         "align/grad_norm": grad_norm.item(), "lr/projector": optimizer.param_groups[0]["lr"],
-                         **({"lr/lora": optimizer.param_groups[1]["lr"]} if lora_params else {}),
-                         "epoch": epoch + 1, "perf/step_s": step_s, "perf/samples_per_s": len(chunk) / step_s,
-                         **_device_memory(device), **gpu}, step=len(losses))
-            if len(losses) % c.log_every == 0:
-                recent = losses[-c.log_every:]
-                print("epoch %d step %d/%d loss %.4f" % (epoch + 1, len(losses), steps,
-                                                        sum(recent) / len(recent)), flush=True)
+            log.add(len(chunk), loss=losses[-1], accuracy=(logits[m].argmax(-1) == y[m]).float().mean().item(),
+                    grad_norm=grad_norm.item())
+            means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
+                                                       **({"lora": optimizer.param_groups[1]["lr"]}
+                                                          if lora_params else {})})
+            if means:
+                print("epoch %d step %d/%d loss %.4f acc %.3f" % (epoch + 1, len(losses), steps,
+                                                                 means["train/loss"], means["train/accuracy"]), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
     if not evals or evals[-1]["step"] != len(losses):

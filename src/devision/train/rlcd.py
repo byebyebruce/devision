@@ -7,9 +7,6 @@ LoRA is merged before saving, so checkpoints load without peft.
 import math
 import os
 import random
-import re
-import subprocess
-import time
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -20,6 +17,7 @@ from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
 
 from .samples import Sample
+from .tracking import Tracker, TrainLog
 from ..model import Decider, image_tensor, question_item, text_encoder
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
@@ -47,58 +45,6 @@ class TrainConfig:
     eval_every: int = 500        # steps between evaluations (plus step 0 and each epoch end); 0: epoch ends only
     swanlab_project: str = ""    # "" disables SwanLab; the CLI defaults to "devision"
     run_name: str = ""
-
-
-class _Tracker:
-    """SwanLab logging when `swanlab_project` is set, otherwise a no-op."""
-
-    def __init__(self, project: str, run_name: str, config: Dict[str, Any]):
-        self.swanlab = None
-        if project:
-            import swanlab
-
-            swanlab.init(project=project, name=run_name or None, config=config)
-            self.swanlab = swanlab
-
-    def log(self, data: Dict[str, float], step: int) -> None:
-        if self.swanlab:
-            self.swanlab.log(data, step=step)
-
-    def finish(self) -> None:
-        if self.swanlab:
-            self.swanlab.finish()
-
-
-_IOREG_STATS = {"Device Utilization %": "sys/apple_gpu_util_pct",
-                "Renderer Utilization %": "sys/apple_gpu_renderer_pct",
-                "In use system memory": "sys/apple_gpu_in_use_mb"}
-
-
-def _apple_gpu_stats() -> Dict[str, float]:
-    """Apple GPU utilisation from `ioreg` (no sudo needed); {} when unavailable. Costs ~tens of ms."""
-    try:
-        out = subprocess.run(["ioreg", "-r", "-d", "1", "-c", "IOAccelerator"], capture_output=True,
-                             text=True, timeout=2).stdout
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    stats = {}
-    for field, key in _IOREG_STATS.items():
-        m = re.search(r'"%s"=(\d+)' % re.escape(field), out)
-        if m:
-            stats[key] = int(m.group(1)) / (1024 ** 2 if key.endswith("_mb") else 1)
-    return stats
-
-
-def _device_memory(device: torch.device) -> Dict[str, float]:
-    """Accelerator memory in MB. SwanLab's own monitor covers CPU / RAM (and NVIDIA GPUs), not MPS."""
-    mb = 1024 ** 2
-    if device.type == "mps":
-        return {"sys/mps_allocated_mb": torch.mps.current_allocated_memory() / mb,
-                "sys/mps_driver_mb": torch.mps.driver_allocated_memory() / mb}
-    if device.type == "cuda":
-        return {"sys/cuda_allocated_mb": torch.cuda.memory_allocated(device) / mb,
-                "sys/cuda_max_allocated_mb": torch.cuda.max_memory_allocated(device) / mb}
-    return {}
 
 
 def _device(name: str) -> torch.device:
@@ -290,7 +236,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     losses: List[float] = []
     val_accuracy: List[float] = []
     evals: List[Dict[str, float]] = []
-    tracker = _Tracker(c.swanlab_project, c.run_name, {"train": asdict(c), "model": decider.cfg.to_dict(),
+    tracker = Tracker(c.swanlab_project, c.run_name, {"train": asdict(c), "model": decider.cfg.to_dict(),
                            "train_items": len(train_items), "val_items": len(calib), "steps": steps,
                            "eval_items": {name: len(its) for name, its in sets.items()}})
 
@@ -306,10 +252,10 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         return evals[-1]
 
     run_eval()
+    log = TrainLog(tracker, device, steps, c.log_every)
     for epoch in range(c.epochs):
         random.shuffle(train_items)
         for b in range(0, len(train_items), c.micro_batch):
-            t_step = time.perf_counter()
             sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * len(losses) / max(1, steps - 1)
             chunk = train_items[b:b + c.micro_batch]
             batch = collate_items([chunk], tok.pad_token_id)
@@ -324,20 +270,20 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
             optimizer.step()
             scheduler.step()
-            losses.append(nll.item())  # .item() syncs the device, so the step time below is real
-            step_s = time.perf_counter() - t_step
-            gpu = _apple_gpu_stats() if device.type == "mps" and len(losses) % c.log_every == 0 else {}
+            losses.append(nll.item())  # .item() syncs the device, so step times are real
             hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
                    == batch["target"].to(device).argmax(-1)).float().mean()
-            tracker.log({"train/loss": loss.item(), "train/nll": nll.item(), "train/accuracy": hit.item(),
-                         "train/grad_norm": grad_norm.item(), "train/sigma": sigma,
-                         "lr/projector": optimizer.param_groups[0]["lr"],
-                         "lr/lora": optimizer.param_groups[2]["lr"], "epoch": epoch + 1,
-                         "perf/step_s": step_s, "perf/samples_per_s": len(chunk) / step_s,
-                         **_device_memory(device), **gpu}, step=len(losses))
-            if len(losses) % c.log_every == 0:
-                print("epoch %d step %d/%d loss %.4f nll %.4f" % (epoch + 1, len(losses), steps, loss.item(),
-                                                                 nll.item()), flush=True)
+            log.add(len(chunk), loss=loss.item(), nll=nll.item(), accuracy=hit.item(),
+                    grad_norm=grad_norm.item(), sigma=sigma)
+            means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
+                                                       "head": optimizer.param_groups[1]["lr"],
+                                                       "lora": optimizer.param_groups[2]["lr"],
+                                                       **({"encoder": optimizer.param_groups[3]["lr"]}
+                                                          if len(optimizer.param_groups) > 3 else {})})
+            if means:
+                print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f" % (
+                    epoch + 1, len(losses), steps, means["train/loss"], means["train/nll"],
+                    means["train/accuracy"]), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
         val_accuracy.append(run_eval()["val/accuracy"])
