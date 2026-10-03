@@ -64,6 +64,10 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
     assert {"held/accuracy", "held/ece"} <= set(evals[-1])
     assert {"held/other/accuracy", "held/synthetic/accuracy"} <= set(evals[-1])  # a mixed set, per source
     assert {"val/accuracy_noul", "val/accuracy_choice", "held/accuracy"} <= set(report["final"])
+    assert set(report["final_per_type"]) == set(report["final"])
+    # 16 val questions: no bucket reaches the floor, so decide() uses the per-type temperatures
+    assert report["temperature_by_options"] == {}
+    assert report["final_per_type"] == report["final"]
 
     decider = Decider.load(tmp_path / "ckpt")
     result = evaluate(decider, samples, data_root=root)
@@ -73,7 +77,8 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
     # "clearly above chance" is what the smoke test asks for.
     assert result["accuracy"]["choice"] > 0.6
     assert 0.0 <= result["ece"] <= 1.0
-    assert result["latency_ms"]["p50"] > 0
+    assert result["request_latency_ms"]["p50"] > 0
+    assert result["questions_per_request"]["max"] == 2  # an image's noul and choice sample in one request
     assert result["n"] == len(samples)
     assert set(result["by_source"]) == {"synthetic"}
     # control: the same questions about other images -- a model that looks at the picture falls apart

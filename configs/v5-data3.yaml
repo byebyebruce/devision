@@ -22,13 +22,13 @@ evaluate:
   controls: true                           # + mismatched pictures and reversed options for every set
   sets:
     dev_mix: data/v3/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
-    eval_pope: data/v2/eval_pope.jsonl
-    eval_vqa_yesno: data/v2/eval_vqa_yesno.jsonl
-    eval_vqa_choice: data/v2/eval_vqa_choice.jsonl
-    eval_gqa: data/v2/eval_gqa.jsonl
-    eval_coco_exist: data/v2/eval_coco_exist.jsonl
-    eval_coco_position: data/v2/eval_coco_position.jsonl
-    eval_coco_relation: data/v2/eval_coco_relation.jsonl
-    eval_coco_size: data/v2/eval_coco_size.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
   commands:
     - uv run devision-pipeline configs/v5-data3-lvbench.yaml   # then laya-vision's benchmark (no controls)

@@ -24,7 +24,7 @@ laya-vision 是目前唯一公开的、能看图的 System One（Jev 式）模�
 | A-OKVQA，未见过 | 1,089 | 0.592 | 0.527 | −0.065 [−0.099, −0.029] | 0.559 | −0.033 [−0.069, +0.002] |
 | ScienceQA（全部都未见过） | 2,097 | 0.824 | 0.471 | −0.353 [−0.379, −0.328] | 0.485 | −0.340 [−0.364, −0.314] |
 
-v3 对 v2（同题配对，`runs/v3-data2/eval/compare/v2_vs_v3.lv_*.json`）：VQAv2 是非 +0.7 [−0.4, +1.9]，A-OKVQA +3.3 [+0.9, +5.9]，ScienceQA +1.4 [−0.3, +3.1]。v3 在这四个集合上都是 heldout（v2 的 VQAv2 / POPE 是 monitoring）。
+v3 对 v2（同题配对，`runs/v3-data2/eval/compare/v2_vs_v3.bench_lv_*.json`）：VQAv2 是非 +0.7 [−0.4, +1.9]，A-OKVQA +3.3 [+0.9, +5.9]，ScienceQA +1.4 [−0.3, +3.1]。v3 在这四个集合上都是 heldout（v2 的 VQAv2 / POPE 是 monitoring）。
 
 POPE（9,000 题）他们只公开总分，不能配对；我们的区间只反映我们这一侧的抽样：
 

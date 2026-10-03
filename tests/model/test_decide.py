@@ -169,3 +169,58 @@ def test_a_saved_checkpoint_loads_through_the_package_and_answers_the_same(decid
     loaded = devision.load(str(tmp_path / "ckpt"))
 
     assert loaded.predict(**request) == decider.decide(**request)
+
+
+QUESTIONS_BY_BUCKET = {
+    "noul": NOUL,
+    "two": {"type": "choice", "instructions": "What color is it?", "criteria": {"red": None, "blue": None}},
+    "three": CHOICE,
+    "seven": {"type": "choice", "instructions": "What color is it?",
+              "criteria": {c: None for c in ["red", "green", "blue", "black", "white", "dog", "cat"]}},
+}
+
+
+def test_a_checkpoint_saved_before_bucket_temperatures_answers_with_its_per_type_temperatures(tmp_path):
+    import json
+
+    from conftest import tiny_decider
+
+    from devision.model import Decider
+
+    decider = tiny_decider()
+    decider.cfg.temperature = [2.0, 1.0, 0.6]
+    decider.save(tmp_path / "ckpt")
+    config = json.loads((tmp_path / "ckpt" / "devision_config.json").read_text())
+    del config["temperature_by_options"]   # as written before the field existed
+    (tmp_path / "ckpt" / "devision_config.json").write_text(json.dumps(config))
+
+    old = Decider.load(tmp_path / "ckpt")
+    untempered = tiny_decider()
+
+    state = [{"type": "image", "base64": image_b64()}]
+    assert old.decide(state, QUESTIONS_BY_BUCKET) == decider.decide(state, QUESTIONS_BY_BUCKET)
+    assert old.decide(state, QUESTIONS_BY_BUCKET) != untempered.decide(state, QUESTIONS_BY_BUCKET)
+
+
+def test_a_bucket_temperature_changes_only_the_questions_in_that_bucket():
+    from conftest import tiny_decider
+
+    decider = tiny_decider()
+    state = [{"type": "image", "base64": image_b64()}]
+    before = decider.decide(state, QUESTIONS_BY_BUCKET)["answers"]
+
+    decider.cfg.temperature_by_options = {"choice:3-5": 3.0}
+    after = decider.decide(state, QUESTIONS_BY_BUCKET)["answers"]
+
+    assert after["three"] != before["three"]
+    assert after["three"]["choice"] == before["three"]["choice"]   # a temperature never changes the answer
+    assert {q: after[q] for q in ("noul", "two", "seven")} == {q: before[q] for q in ("noul", "two", "seven")}
+
+
+def test_options_that_become_identical_when_cut_to_fit_are_refused(decider):
+    # each option is longer than the head gives one option, and they differ only at the end
+    prefix = "the dog is sitting on the left side of the white cat in the picture " * 6
+    q = {"type": "choice", "instructions": "Which is it?",
+         "criteria": {prefix + "left": None, prefix + "right": None}}
+    with pytest.raises(InvalidRequest, match="identical"):
+        decider.decide(state=[{"type": "image", "base64": image_b64()}], questions={"q": q})

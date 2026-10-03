@@ -7,7 +7,7 @@ go in; published benchmarks (POPE, laya-vision's sets) and plain re-formats of o
 ScienceQA, AI2D, TQA) stay out. Images are not redistributed: every row names its COCO or Visual Genome
 picture, and the dataset ships fetch_images.py to download them from the original hosts.
 
-One config per ability, each with train / validation / test (the data-v2 pools, dev_* and eval_*), in
+One config per ability, each with train / validation / test (the data-v2 pools, dev_* and test_*), in
 Parquet with flat columns so the Hub viewer works. `to_sample` in the card turns a row back into the
 training format (devision.train.samples).
 """
@@ -18,13 +18,13 @@ import shutil
 from collections import Counter
 
 CONFIGS = {   # config -> (train pools, dev file, test file) under data/v2
-    "exist": (["coco_exist"], "dev_coco_exist", "eval_coco_exist"),
-    "position": (["coco_position"], "dev_coco_position", "eval_coco_position"),
-    "relation": (["coco_relation", "vg_relation_tb"], "dev_coco_relation", "eval_coco_relation"),
-    "size": (["coco_size"], "dev_coco_size", "eval_coco_size"),
-    "vqa_yesno": (["vqa_yesno"], "dev_vqa_yesno", "eval_vqa_yesno"),
-    "vqa_choice": (["vqa_choice"], "dev_vqa_choice", "eval_vqa_choice"),
-    "gqa": (["gqa"], "dev_gqa", "eval_gqa"),
+    "exist": (["coco_exist"], "dev_coco_exist", "test_exist"),
+    "position": (["coco_position"], "dev_coco_position", "test_position"),
+    "relation": (["coco_relation", "vg_relation_tb"], "dev_coco_relation", "test_relation"),
+    "size": (["coco_size"], "dev_coco_size", "test_size"),
+    "vqa_yesno": (["vqa_yesno"], "dev_vqa_yesno", "test_vqa_yesno"),
+    "vqa_choice": (["vqa_choice"], "dev_vqa_choice", "test_vqa_choice"),
+    "gqa": (["gqa"], "dev_gqa", "test_gqa"),
 }
 SPLITS = ("train", "validation", "test")
 
@@ -100,7 +100,7 @@ def main(argv=None):
     manifest = os.path.join(v2, "MANIFEST.json")
     if os.path.exists(manifest):
         tb = json.load(open(manifest)).get("text_baselines", {})
-        keep = {k: v.get("all_files") for k, v in tb.items() if k.startswith(("eval_", "dev_")) and "pope" not in k}
+        keep = {k: v.get("all_files") for k, v in tb.items() if k.startswith(("test_", "dev_")) and "pope" not in k}
         with open(os.path.join(a.out, "question_only_baselines.json"), "w") as f:
             json.dump(keep, f, indent=1)
     shutil.copy(os.path.join(os.path.dirname(__file__), "dataset_fetch_images.py"), os.path.join(a.out, "fetch_images.py"))

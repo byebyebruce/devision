@@ -5,11 +5,11 @@ Sequence seen by the encoder: [CLS] <visual tokens> <rest of Laya's sequence>. M
 visual tokens itself, so callers never deal with that offset.
 """
 from dataclasses import asdict, dataclass, field
-from typing import List, Optional, cast
+from typing import Dict, List, Optional, Sequence, cast
 
 import torch
 import torch.nn as nn
-from laya.common import DecisionModel
+from laya.common import DecisionModel, temp_bucket
 from transformers import AutoModel, PretrainedConfig, PreTrainedModel, SiglipVisionConfig, SiglipVisionModel
 
 
@@ -23,6 +23,14 @@ class ModelConfig:
     head_layers: int = 2
     n_act: int = 2
     temperature: List[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])  # choice, score, noul
+    # Laya's per (type, option count) buckets: "noul:2", "choice:2", "choice:3-5", "choice:6-10", "choice:11+".
+    # A bucket that is absent (too few questions to fit it, or a checkpoint from before buckets) uses its
+    # type's entry in `temperature`.
+    temperature_by_options: Dict[str, float] = field(default_factory=dict)
+
+    def temperature_for(self, qtype: int, k: int) -> float:
+        """The temperature `decide` divides a `qtype` question's `k` option logits by."""
+        return pick_temperature(self.temperature, self.temperature_by_options, qtype, k)
 
     def to_dict(self):
         return asdict(self)
@@ -30,6 +38,17 @@ class ModelConfig:
     @classmethod
     def from_dict(cls, d):
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+def pick_temperature(temperature: Sequence[float], by_options: Optional[Dict[str, float]], qtype: int,
+                     k: int) -> float:
+    """The bucket's temperature (`option_bucket(qtype, k)`) if `by_options` has it, else the type's."""
+    return (by_options or {}).get(option_bucket(qtype, k), temperature[qtype])
+
+
+def option_bucket(qtype: int, k: int) -> str:
+    """Calibration bucket of a question with `k` options, named as in Laya's `temperature_by_options`."""
+    return temp_bucket(qtype, k)
 
 
 class Projector(nn.Module):
@@ -57,6 +76,10 @@ class VisionDecisionModel(nn.Module):
     def __init__(self, vision: SiglipVisionModel, decision: DecisionModel, cfg: ModelConfig):
         super().__init__()
         self.vision = vision
+        # only the patch features are used: skip SigLIP's pooling head (its weights stay, so checkpoints load as before)
+        holder = getattr(vision, "vision_model", vision)   # where `use_head` lives depends on the transformers version
+        if hasattr(holder, "use_head"):
+            setattr(holder, "use_head", False)
         self.decision = decision
         self.projector = Projector(vision.config.hidden_size, text_encoder(decision).config.hidden_size,
                                    cfg.visual_shuffle)

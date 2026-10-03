@@ -305,21 +305,21 @@ GQA 空间题：to the left of / to the right of 0.50 → 0.62（71% 答 right�
 
 训练中 val 总体在第 5,000 步最高（0.694），终点 0.683；GQA 后半程略降。阶段 2b 对 VQAv2 没有再提升（2a 终点 0.723）。
 
-**v2 测试集**（`configs/v2-align-lora-testsets.yaml`，日志 `runs/v2-align-lora/logs/eval-v1-align-lora.log`，明细 `runs/v2-align-lora/eval/v2eval_*.details.jsonl`）。只看题目基线取自 `data/v2/MANIFEST.json` 的 `all_files` 规则；配错图 = 同一批题换成别的图片（seed 0 错排）；翻转率 = 选择题倒序后预测改变的比例（只对 choice）。
+**v2 测试集**（`configs/v2-align-lora-testsets.yaml`，日志 `runs/v2-align-lora/logs/eval-v1-align-lora.log`，明细 `runs/v2-align-lora/eval/*.details.jsonl`）。只看题目基线取自 `data/v2/MANIFEST.json` 的 `all_files` 规则；配错图 = 同一批题换成别的图片（seed 0 错排）；翻转率 = 选择题倒序后预测改变的比例（只对 choice）。
 
 | 集合 | 用途 | 准确率 | NLL | ECE | 配错图 | 只看题目 | 翻转率 |
 |---|---|---|---|---|---|---|---|
 | val_mix | calibration_fit | 0.683 | 0.577 | 0.029 | 0.541 | — | 0.300 |
-| eval_pope | monitoring | 0.828 | 0.416 | 0.084 | 0.540 | 0.498 | — |
-| eval_vqa_yesno | heldout | 0.691 | 0.570 | 0.030 | 0.517 | 0.518 | — |
-| eval_vqa_choice | heldout | 0.826 | 0.517 | 0.142 | 0.330 | 0.418（随机 0.32） | 0.105 |
-| eval_gqa | heldout | 0.750 | 0.453 | 0.051 | 0.547 | 0.524 | 0.192 |
-| eval_coco_exist | heldout | 0.931 | 0.188 | 0.023 | 0.491 | 0.508 | — |
-| eval_coco_position | heldout | 0.708 | 0.490 | 0.035 | 0.505 | 0.481 | 0.440 |
-| eval_coco_relation | heldout | 0.598 | 0.612 | 0.017 | 0.515 | 0.485 | 0.706 |
-| eval_coco_size | heldout | 0.837 | 0.369 | 0.029 | 0.497 | 0.532 | 0.034 |
+| bench_pope | monitoring | 0.828 | 0.416 | 0.084 | 0.540 | 0.498 | — |
+| test_vqa_yesno | heldout | 0.691 | 0.570 | 0.030 | 0.517 | 0.518 | — |
+| test_vqa_choice | heldout | 0.826 | 0.517 | 0.142 | 0.330 | 0.418（随机 0.32） | 0.105 |
+| test_gqa | heldout | 0.750 | 0.453 | 0.051 | 0.547 | 0.524 | 0.192 |
+| test_exist | heldout | 0.931 | 0.188 | 0.023 | 0.491 | 0.508 | — |
+| test_position | heldout | 0.708 | 0.490 | 0.035 | 0.505 | 0.481 | 0.440 |
+| test_relation | heldout | 0.598 | 0.612 | 0.017 | 0.515 | 0.485 | 0.706 |
+| test_size | heldout | 0.837 | 0.369 | 0.029 | 0.497 | 0.532 | 0.034 |
 
-按方向拆：position 左右 0.516（640 题）/ 上下 0.902（634）；relation 左右 0.518（1,492）/ 上下 0.860（458）；GQA 的 spatial 0.53（200）、其余 0.806（792）。eval_vqa_choice 按类：颜色 0.493、计数 0.493、材质 0.698，其余类 0.83–0.99。
+按方向拆：position 左右 0.516（640 题）/ 上下 0.902（634）；relation 左右 0.518（1,492）/ 上下 0.860（458）；GQA 的 spatial 0.53（200）、其余 0.806（792）。test_vqa_choice 按类：颜色 0.493、计数 0.493、材质 0.698，其余类 0.83–0.99。
 
 结论：
 
@@ -327,7 +327,7 @@ GQA 空间题：to the left of / to the right of 0.50 → 0.62（71% 答 right�
 - 左右仍在随机水平，上下已经会（0.86–0.90）。左右类选择题的翻转率高（relation 0.706、position 0.440），说明答不出时在按选项位置猜；尺寸题几乎不受顺序影响（0.034）。
 - 颜色和计数是选择题里最弱的两类（各约 0.49）。
 - 校准：noul 集合 ECE 0.02–0.03；POPE 0.084、vqa_choice 0.142 偏差较大（温度只在 val_mix 上拟合，val_mix 里的选择题只有 GQA 二选一）。
-- eval_pope 对这个模型是 monitoring（与训练中监测的旧 POPE 共享图片），只作回归参考。
+- bench_pope 对这个模型是 monitoring（与训练中监测的旧 POPE 共享图片），只作回归参考。
 
 laya-vision 公开评测集上的逐题对比见 `../research/laya-vision-gap.md`。
 

@@ -97,17 +97,19 @@ GQA 来自 Visual Genome 场景图，问题经常涉及很小或被遮挡的物�
 | 大小 | 0.844 | 0.480 |
 | 多选题（总挑最常见答案，随机 0.313） | — | 0.355 |
 
-### 评测集（`data/v2/eval_*.jsonl`，图片全部来自 COCO val2014）
+### 评测集（`data/v2/test_*.jsonl` 和 `bench_pope.jsonl`，图片全部来自 COCO val2014）
+
+2026-10 起改名：我们自己留出的测试划分叫 `test_*`（与 LookFirst 的 config 名一致），外部公开评测叫 `bench_*`（`bench_pope`；laya-vision 的四个集合评测时叫 `bench_lv_<集合>`），见 `scripts/rename_eval_sets.py`。
 
 | 文件 | 题数 | 用途 |
 |---|---|---|
-| `eval_pope.jsonl` | 8,694 | POPE random / popular / adversarial（按来源拆分统计），去掉了 17 张出现在 v1 训练数据里的图 |
+| `bench_pope.jsonl` | 8,694 | POPE random / popular / adversarial（按来源拆分统计），去掉了 17 张出现在 v1 训练数据里的图 |
 | `pope_full_9000.jsonl` | 9,000 | 完整 POPE，只用于和外部结果（laya-vision）对比 |
-| `eval_coco_exist.jsonl` | 1,074 | 有没有某物，每类 "有 / 没有" 各半 |
-| `eval_coco_position.jsonl` | 1,217 | 位置 |
-| `eval_coco_relation.jsonl` | 1,986 | 相对位置 |
-| `eval_coco_size.jsonl` | 1,067 | 大小 |
-| `eval_vqa_choice.jsonl` | 931 | 多选题（VQAv2 val） |
+| `test_exist.jsonl` | 1,074 | 有没有某物，每类 "有 / 没有" 各半 |
+| `test_position.jsonl` | 1,217 | 位置 |
+| `test_relation.jsonl` | 1,986 | 相对位置 |
+| `test_size.jsonl` | 1,067 | 大小 |
+| `test_vqa_choice.jsonl` | 931 | 多选题（VQAv2 val） |
 
 所有评测集同时避开了 v1 和 v2 的全部训练图片，所以 v1、v2 训练出的模型可以在同一套评测集上直接比较。旧的 `val_mix` / `val_gqa` / `val_vqav2` / `pope.jsonl` 保留不变。
 
@@ -137,7 +139,7 @@ GQA 来自 Visual Genome 场景图，问题经常涉及很小或被遮挡的物�
 |---|---|---|
 | 训练 | `coco_*.jsonl`、`vqa_*.jsonl`、`gqa.jsonl`（约 20.4 万题） | COCO train2014、VQAv2 train、GQA（VG） |
 | 选模型、拟合温度 | `dev_*.jsonl`（约 5,400 题） | 同上，按图片哈希取约 3%，同一张图在所有文件里都在同一边 |
-| 最终测试 | `eval_*.jsonl`（约 1.6 万题） | COCO val2014、VQAv2 val、POPE；避开 v1 和 v2 的全部训练图片 |
+| 最终测试 | `test_*.jsonl`、`bench_pope.jsonl`（约 1.6 万题） | COCO val2014、VQAv2 val、POPE；避开 v1 和 v2 的全部训练图片 |
 | 外部对比 | `pope_full_9000.jsonl` | 完整 POPE，只和 laya-vision 等外部结果比 |
 
 ### 新增的对照
@@ -161,9 +163,9 @@ GQA 来自 Visual Genome 场景图，问题经常涉及很小或被遮挡的物�
 
 ### 当前数据（`data/v2/MANIFEST.json`）
 
-训练 198,648 题（73,504 张图），dev 约 5,400 题，最终测试 `eval_*` 约 1.6 万题；所有验收项通过：ID 唯一、按组配平、多选题选项检查、训练与 dev / eval / align_val 无共用图片（任何 COCO / VG 编号）、eval 无 v1 训练图片。
+训练 198,648 题（73,504 张图），dev 约 5,400 题，最终测试 `test_*` + `bench_pope` 约 1.6 万题；所有验收项通过：ID 唯一、按组配平、多选题选项检查、训练与 dev / eval / align_val 无共用图片（任何 COCO / VG 编号）、eval 无 v1 训练图片。
 
-多选题只看题目的准确率（`eval_vqa_choice`，MANIFEST 当前实现，口径见下方验收补充）：
+多选题只看题目的准确率（`test_vqa_choice`，MANIFEST 当前实现，口径见下方验收补充）：
 
 | 题型 | 题数 | 只看题目 | 随机 |
 |---|---|---|---|
@@ -184,9 +186,9 @@ GQA 来自 Visual Genome 场景图，问题经常涉及很小或被遮挡的物�
 ### v2 训练实验计划（待执行）
 
 1. **起点**：`runs/v2-align-lora/align`（第 2 轮的 LoRA 对齐，见 `configs/v3-data2.yaml`）。
-2. **对照组**：同一对齐 checkpoint + v1 数据（今晚的 `align-lora-100k` → `align-lora-cocoqa`）。两组都在 `eval_*` 上测（eval 不含 v1 / v2 训练图片）。
+2. **对照组**：同一对齐 checkpoint + v1 数据（今晚的 `align-lora-100k` → `align-lora-cocoqa`）。两组都在 `test_*` / `bench_pope` 上测（eval 不含 v1 / v2 训练图片）。
 3. **混合比例**（约 15 万题，1 个 epoch，Mac 上约 6 小时）：VQAv2 是非 5 万、COCO 有没有 4 万、VQAv2 多选 3.6 万（全部）、GQA 非空间选择题 8 千、COCO 上下 / 大小各约 5 千、左右类（位置 lr、相对位置、GQA spatial）合计 **不超过 5%**；混合时每张图最多 6 题（目前跨文件最多 29 题）。空间题占比用一组 5% 对 15% 的受控对照决定，而不是现在定死。
-4. **划分**：`dev_*` 合并成一个 dev 集，用于训练中评测、选 checkpoint 和拟合温度；`eval_*` 只在最后测一次。
+4. **划分**：`dev_*` 合并成一个 dev 集，用于训练中评测、选 checkpoint 和拟合温度；`test_*` / `bench_pope` 只在最后测一次。
 5. **报告**：每个评测集给出模型准确率、只看题目的基线、配错图对照和 ECE；题数少于 100 的题型（天气、水果、食物、蔬菜、肉）只合并报告，不单独下结论。
 
 ### 验收补充（2026-10-02 18:17 +08:00）

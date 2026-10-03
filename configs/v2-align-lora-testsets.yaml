@@ -1,8 +1,8 @@
 # Evaluation only: round 2 (runs/v2-align-lora, data-v1) on the data-v2 test sets, with the same controls
-# as configs/v3-data2.yaml. The data-v2 eval_* sets hold no picture any data-v1 training file used. Its temperatures were fitted on
+# as configs/v3-data2.yaml. The data-v2 test_* sets and bench_pope hold no picture any data-v1 training file used. Its temperatures were fitted on
 # data/val_mix.jsonl, and its training watched data/pope.jsonl and data/val_cocoqa.jsonl (history), so
 # sets sharing questions or pictures with those are labelled calibration_fit / monitoring, not heldout:
-# eval_pope shares 10 pictures with val_mix and 234 with the old pope.jsonl -> monitoring for this model.
+# bench_pope shares 10 pictures with val_mix and 234 with the old pope.jsonl -> monitoring for this model.
 #   uv run devision-pipeline configs/v2-align-lora-testsets.yaml
 name: testsets
 stages: []
@@ -12,15 +12,14 @@ evaluate:
   calibration_fit: data/val_mix.jsonl
   history: [data/pope.jsonl, data/val_cocoqa.jsonl]
   image_identity: data/v2/image_identity.json
-  prefix: v2eval_                          # results as runs/v2-align-lora/eval/v2eval_<set>.json
   controls: true
   sets:
     val_mix: data/val_mix.jsonl
-    eval_pope: data/v2/eval_pope.jsonl
-    eval_vqa_yesno: data/v2/eval_vqa_yesno.jsonl
-    eval_vqa_choice: data/v2/eval_vqa_choice.jsonl
-    eval_gqa: data/v2/eval_gqa.jsonl
-    eval_coco_exist: data/v2/eval_coco_exist.jsonl
-    eval_coco_position: data/v2/eval_coco_position.jsonl
-    eval_coco_relation: data/v2/eval_coco_relation.jsonl
-    eval_coco_size: data/v2/eval_coco_size.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl

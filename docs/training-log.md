@@ -65,7 +65,7 @@
 
 **还没做**：Hugging Face 目录（`../devision-hf`）目前放的仍是 v2。
 
-**产物**：checkpoint `runs/v3-data2/stage2`；评测 `runs/v3-data2/eval/`；SwanLab `uz6smi3f`（评测汇总在 `test/`、`ref/`）。
+**产物**：checkpoint `runs/v3-data2/stage2`；评测 `runs/v3-data2/eval/`；SwanLab `uz6smi3f`（评测汇总在 `test/`、`ref/`，用的是改名前的集合名（eval_ 和 lv 开头）；结果文件已改名为 `test_*` / `bench_*`）。
 
 ## v2-align-lora
 
@@ -103,7 +103,7 @@
 - 两轮的初始投影层不同（当时 CLI 在播种前建模型，评审 MC1，已修），差距大，初始化差异大概率解释不了，但没有量化。
 - 要给 v1 → v2 的增长加区间：用 `configs/v2-align-lora-testsets.yaml` 的同一批集合补评 v1（只评测），再 `devision-compare`。
 
-**产物**：checkpoint `runs/v2-align-lora/stage2b`；评测 `runs/v2-align-lora/eval/`；SwanLab 对齐 `uxknjl4o`、2a `nlkszqdl`、2b `lei97w39`（评测汇总在 2b 的 `test/`、`ref/`）。
+**产物**：checkpoint `runs/v2-align-lora/stage2b`；评测 `runs/v2-align-lora/eval/`；SwanLab 对齐 `uxknjl4o`、2a `nlkszqdl`、2b `lei97w39`（评测汇总在 2b 的 `test/`、`ref/`，用的是改名前的集合名）。
 
 ## v1-release-0.1
 

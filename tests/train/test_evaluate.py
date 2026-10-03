@@ -86,3 +86,89 @@ def test_fallback_holdout_never_splits_an_image():
     held, rest = holdout_by_image(items, 15)
     assert held and rest
     assert not {it["image"] for it in held} & {it["image"] for it in rest}
+
+
+def per_picture_samples(root, pictures=3, per_picture=10):
+    """Several one-question samples per picture file (as in POPE), of different lengths and option
+    counts, two of them per picture with a text state, so grouped requests mix padding lengths."""
+    (root / "img").mkdir(parents=True)
+    colours = ["red", "blue", "green", "black", "white"]
+    out = []
+    for p in range(pictures):
+        Image.new("RGB", (40 + 9 * p, 30), (80 * p % 255, 40, 200)).save(root / "img" / ("%d.jpg" % p))
+        for k in range(per_picture):
+            if k % 2:
+                opts = colours[: 2 + k % 4]
+                q = {"type": "choice", "instructions": "What color is the " + "dog " * (k % 3) + "?",
+                     "criteria": {o: ("dark " + o if k % 3 == 0 else None) for o in opts}}
+                gold = {o: float(o == opts[k % len(opts)]) for o in opts}
+            else:
+                q = {"type": "noul", "instructions": "Is there a " + ("cat" if k % 4 else "person sitting") + "?"}
+                gold = {"false": 0.4, "true": 0.6} if k % 4 else {"false": 1.0, "true": 0.0}
+            s = {"id": "p%d-%d" % (p, k), "source": "pope-adversarial" if k < 4 else "colors", "kind": "color",
+                 "image_id": "pic:%d" % p, "image": "img/%d.jpg" % p,
+                 "questions": {"q": q}, "gold": {"q": {"probabilities": gold}}}
+            if k % 5 == 4:  # k = 4, 9: a noul and a choice question with a text state
+                s["state_text"] = "the photo is on the left"
+            out.append(s)
+    random.Random(0).shuffle(out)
+    return out
+
+
+def close(a, b, tol=1e-5):
+    """Equal, floats within `tol` (NLL and ECE are means of per-question floats)."""
+    if isinstance(a, dict):
+        return isinstance(b, dict) and a.keys() == b.keys() and all(close(a[k], b[k], tol) for k in a)
+    if isinstance(a, list):
+        return isinstance(b, list) and len(a) == len(b) and all(close(x, y, tol) for x, y in zip(a, b))
+    if isinstance(a, float) and isinstance(b, float):
+        return abs(a - b) < tol
+    return a == b
+
+
+def test_grouping_questions_by_picture_changes_no_answer(tmp_path):
+    rows = per_picture_samples(tmp_path)
+    decider = tiny_decider()
+
+    def run(control, max_questions):
+        records = []
+        summary = evaluate(decider, rows, tmp_path, control=control, records_out=records,
+                           max_questions=max_questions)
+        return sorted(records, key=lambda r: (r["sample_id"], r["qid"])), summary
+
+    plain = {}
+    for control in ("none", "mismatched", "reversed"):
+        alone, s_alone = run(control, None)
+        grouped, s_grouped = run(control, 32)
+        capped, _ = run(control, 3)  # a picture's questions split over several requests
+        assert {r["questions_in_request"] for r in alone} == {1}
+        assert max(r["questions_in_request"] for r in grouped) > 3
+        assert max(r["questions_in_request"] for r in capped) == 3
+        for other in (grouped, capped):
+            assert len(other) == len(alone)
+            for a, b in zip(alone, other):
+                assert a.keys() == b.keys()
+                for key in a:
+                    if key in ("latency_ms", "questions_in_request"):
+                        continue
+                    if key == "probabilities":
+                        assert a[key].keys() == b[key].keys()
+                        assert all(abs(a[key][o] - b[key][o]) < 1e-5 for o in a[key]), (control, a, b)
+                    elif key in ("nll", "brier", "p_prediction"):
+                        assert abs(a[key] - b[key]) < 1e-5, (control, key)
+                    else:
+                        assert a[key] == b[key], (control, key)
+        for key in ("n", "images", "accuracy_all", "accuracy", "nll", "brier", "ece", "reliability", "by_source",
+                    "by_kind", "by_options", "pope", "noul_confusion", "thresholds", "control"):
+            assert close(s_grouped.get(key), s_alone.get(key)), (control, key)
+        # timing: each request counted once; single-question latency only from one-question requests
+        assert s_alone["request_latency_ms"]["requests"] == len(alone) == s_alone["latency_ms"]["requests"]
+        assert s_grouped["request_latency_ms"]["requests"] == 3 * 2  # per picture: without / with text state
+        assert s_grouped["questions_per_request"]["max"] > 3
+        singles = [r for r in grouped if r["questions_in_request"] == 1]
+        assert s_grouped.get("latency_ms", {}).get("requests", 0) == len(singles)
+        plain[control] = (alone, grouped)
+    a = order_sensitivity(plain["none"][0], plain["reversed"][0])
+    b = order_sensitivity(plain["none"][1], plain["reversed"][1])
+    assert a["n"] == b["n"] > 0 and a["answer_flip_rate"] == b["answer_flip_rate"]
+    assert abs(a["mean_abs_probability_change"] - b["mean_abs_probability_change"]) < 1e-5

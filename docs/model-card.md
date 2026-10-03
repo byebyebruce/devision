@@ -17,7 +17,6 @@ tags:
 - jev
 datasets:
 - lmms-lab/GQA
-- lmms-lab/POPE
 ---
 
 # deVision
@@ -105,7 +104,7 @@ Full numbers: [`eval/results.md`](eval/results.md) and [`eval/results.json`](eva
 | COCO object presence | 1,120 | 0.931 | 0.023 |
 | COCO size (which is bigger) | 1,100 | 0.837 | 0.029 |
 | VQAv2 multiple choice (13 categories) | 1,420 | 0.826 | 0.142 |
-| GQA val (yes/no + choice) | 992 | 0.750 | 0.051 |
+| GQA val (choice) | 992 | 0.750 | 0.051 |
 | COCO position | 1,274 | 0.708 (above/below 0.902, left/right 0.516) | 0.035 |
 | VQAv2 val yes/no | 1,000 | 0.691 | 0.030 |
 | COCO relative position | 1,950 | 0.598 (above/below 0.860, left/right 0.518) | 0.017 |
