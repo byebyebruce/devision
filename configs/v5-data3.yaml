@@ -1,8 +1,8 @@
-# Round 5: data-v3 -- the data-v2 mix plus common-sense reasoning and textbook diagrams (A-OKVQA, ScienceQA,
-# AI2D, TQA train splits, 17.5% of the mix) and round 4's above/below relation questions.
-# Data: scripts/data/v3_build.py (out of the repo); see docs/research/data-quality.md.
-# INIT is decided from round 4's test results: runs/v4-relation-tb/stage2 if it fixed above/below without
-# regressions, else runs/v3-data2/stage2.
+# Round 5: continue round 3 with what data-v3 adds -- common-sense reasoning and textbook diagrams (A-OKVQA,
+# ScienceQA, AI2D, TQA train splits) and the above/below relation questions (32,164 in all) -- plus 30,000
+# questions replayed from data-v2's mix. Round 3 already made one pass over data-v2's mix; passing over it
+# again would repeat it (round 4 showed repeats make the model over-confident). One pass, 62,164 questions.
+# Data: scripts/data/v3_build.py then scripts/data/v5_mix.py (out of the repo); docs/research/data-quality.md.
 #   uv run devision-pipeline configs/v5-data3.yaml
 name: v5-data3
 device: mps
@@ -12,8 +12,8 @@ common:
 stages:
   - name: stage2
     kind: train
-    init: INIT
-    data: data/v3/train_mix.jsonl           # 166,720 questions
+    init: runs/v3-data2/stage2              # the current best (round 4 regressed on GQA)
+    data: data/v3/train_cont.jsonl          # 62,164 = 32,164 new + 30,000 replayed
     val: data/v3/dev_mix.jsonl              # 4,531: dev of the new sets + data/v2/dev_mix_half; temperature fit
     params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 2000}
 

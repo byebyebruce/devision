@@ -234,3 +234,4 @@ v3 在 laya-vision 评测集上 A-OKVQA 低 3.7 个点、ScienceQA 低 34 个点
 左右题到 v3 仍在随机水平，之前试过的办法（只训投影层、LoRA r16/r64、放开全部参数、4 倍合成数据、带方位的完形填空）都没用（`../experiments/2026-09-30-rlcd-plateau.md`）。新做法：把每道左右题在左右镜像的图上再问一遍、答案对调——同一张图、同样的词、相反的答案，只看名字或选项顺序必错，只有看出物体在哪才能都对。
 
 `scripts/data/v6_flip.py`（测试 `test_v6_flip.py`）→ `data/v6/flip_lr.jsonl`：COCO 位置池和相对位置池里全部左右题的镜像版，25,530 道（位置 18,116、相对位置 7,414），18,100 张镜像图在 `data/v6/images/flip/`；镜像图的 `image_id` 加 `:flip`，按图计数时与原图分开。抽查 2 对（`runs/analysis/flip_check.jpg`），答案都随镜像正确对调。图中文字也被镜像，但这些题不涉及文字。训练时要与原题一起放进混合，才构成成对反例。
+- **第 5 轮实际用的训练数据**（2026-10-03 改）：v3 已经训过一遍 data-v2 混合，第 5 轮从 v3 接着训时不再重复它。`scripts/data/v5_mix.py` → `data/v3/train_cont.jsonl`：data-v3 混合里不在 data-v2 混合中的题 32,164 道（A-OKVQA 14,918、TQA 5,941、AI2D 5,443、ScienceQA 2,848、上下相对位置 3,014）+ 从 data-v2 混合随机回放 30,000 道，共 62,164 道、一遍。
