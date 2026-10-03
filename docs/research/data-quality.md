@@ -208,3 +208,21 @@ v3 在相对位置上下题上从 0.860 掉到 0.572（`../training-log.md`）�
 - **噪声**：抽查 16 道（`runs/analysis/vg_relation_check*.jpg`），方向标签都与框一致；但约 1/4 的题目名字有问题——同名物体不止一个却只标了一个，或场景图把物体标错（把柜门标成 "surfboard"）。这是 Visual Genome 标注本身的噪声，规则消不掉；因为每对名字上下各半，噪声不带方向偏向。
 - **v4 训练数据**：`scripts/data/v4_relation_mix.py` → `data/v2/train_relation_tb.jsonl`：上下题 3,186 道（COCO 1,402 + 场景图 1,784，上下各半）+ 从 `train_mix` 随机回放 3 倍（9,558 道）防遗忘。配置 `configs/v4-relation-tb.yaml`，从 v3 接着训 2 个 epoch。
 - 以后重建训练混合时，上下类相对位置题要单独保底，不能和左右类一起算进"空间题"限额。
+
+## data-v3：常识推理和教科书插图（2026-10-03）
+
+v3 在 laya-vision 评测集上 A-OKVQA 低 3.7 个点、ScienceQA 低 34 个点：这两类题我们从没训练过，laya-vision 训练过。`scripts/data/v3_build.py`（测试 `test_v3_build.py`）一条命令生成 `data/v3/`：
+
+| 来源 | 题型 | 取自 | 保留 | 剔除 |
+|---|---|---|---|---|
+| A-OKVQA train | 常识推理，四选一 | `HuggingFaceM4/A-OKVQA` | 14,918 训练 + 503 dev | 1,602 道的图与评测图相同，33 道选项不可用 |
+| ScienceQA train（带图） | 自然 / 社会科学，2–5 选一，提示放进 `state_text` | `derek-thomas/ScienceQA` | 2,853 + 106 | 3,259 道的图与评测图相同（同一张地图在各划分里反复使用） |
+| AI2D | 科学示意图，四选一 | The Cauldron `ai2d` | 7,206 + 237 | 19 道选项不可用 |
+| TQA | 教材示意图，四选一 | The Cauldron `tqa` | 6,285 + 167 | 21 道图与评测图相同，9 道选项不可用 |
+
+- **只用训练划分**；图片按感知哈希与所有评测、dev 和 laya-vision 评测集的图（16,635 张）比对，相同就丢掉，所以 laya-vision 的 A-OKVQA / ScienceQA 仍是未见集。ScienceQA 因此少了一半多：8×8 的感知哈希分不出 "同一张美国地图标了不同的州"，这里宁可多丢。
+- **选项顺序打乱**（固定种子），答案位置均匀（例如 AI2D 四个位置 1,787 / 1,835 / 1,746 / 1,838）；"总选最常见位置" 的基线等于随机（`MANIFEST.json` 的 `train_baseline`）。选项清理末尾句号，重复或空选项的题丢掉。
+- **dev 按图片取 3%**（与 v2 相同的哈希规则）；`dev_mix.jsonl` = 新 dev（1,013 道）+ `data/v2/dev_mix_half.jsonl`。
+- **训练混合** `train_mix.jsonl`：166,720 道 = data-v2 训练混合 134,556 + v4 的上下相对位置题 3,014 + 新数据 29,150（每图最多 6 道，AI2D / TQA 一张图题多，被截掉一部分），新数据占 17.5%。
+- **训练读取提示文字**：ScienceQA 的提示原来只在评测时送进模型；`rlcd.py` 现在训练时也按 `decide` 的方式送入（commit "Training feeds state_text ..."，测试 `test_text_that_comes_with_the_image_is_learned_from`）。
+- **限制**：示意图上的小字在 256×256 下基本看不清，ScienceQA / AI2D 的提升会有上限；"只看题目" 能答多少要等训练后用配错图对照测。
