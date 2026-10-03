@@ -141,10 +141,10 @@ def test_evaluating_a_checkpoint_of_a_round_writes_into_that_round(tmp_path):
     (tmp_path / "v2-old" / "decide").mkdir(parents=True)
     (tmp_path / "v2-old" / "run.json").write_text("{}")
     ck = str(tmp_path / "v2-old" / "decide")
-    p = plan(config(stages=[], evaluate={"checkpoint": ck, "prefix": "lv_", "sets": {"pope": "pope.jsonl"}}))
+    p = plan(config(stages=[], evaluate={"checkpoint": ck, "prefix": "bench_lv_", "sets": {"pope": "pope.jsonl"}}))
     assert p.round_dir is None   # evaluating is not a new round
-    assert p.eval_outputs == {"pope": str(tmp_path / "v2-old" / "eval" / "lv_pope.json")}
-    assert p.metric_names == {"pope": "lv_pope"}
+    assert p.eval_outputs == {"pope": str(tmp_path / "v2-old" / "eval" / "bench_lv_pope.json")}
+    assert p.metric_names == {"pope": "bench_lv_pope"}
 
 
 def test_finished_evaluations_are_skipped_on_a_rerun(tmp_path, capsys):
@@ -159,19 +159,21 @@ def test_finished_evaluations_are_skipped_on_a_rerun(tmp_path, capsys):
     assert "eval:pope: already done" in capsys.readouterr().out
 
 
-def test_the_evaluation_summary_goes_to_swanlab_as_test_and_ref_numbers(tmp_path):
+def test_the_evaluation_summary_goes_to_swanlab_as_test_bench_and_ref_numbers(tmp_path):
     fresh = _jsonl(tmp_path / "fresh.jsonl", [{"id": "f1", "image_id": "coco:50"}])
-    p = plan(config(evaluate={"sets": {"pope": "pope.jsonl", "fresh": fresh}}))
-    for set_name, acc in (("pope", 0.8), ("fresh", 0.7)):
+    other = _jsonl(tmp_path / "other.jsonl", [{"id": "o1", "image_id": "coco:60"}])
+    p = plan(config(evaluate={"sets": {"bench_pope": "pope.jsonl", "test_fresh": fresh, "bench_other": other}}))
+    for set_name, acc in (("bench_pope", 0.8), ("test_fresh", 0.7), ("bench_other", 0.6)):
         out = tmp_path / ("%s.json" % set_name)
         out.write_text(json.dumps({"accuracy_all": acc, "accuracy": {"noul": acc, "choice": None},
                                    "nll": 0.5, "ece": 0.03}))
         p.eval_outputs[set_name] = str(out)
     m = pipeline.swanlab_metrics(p)
-    assert m["ref/pope/accuracy"] == 0.8      # pope was watched during training
-    assert m["test/fresh/accuracy"] == 0.7
-    assert "test/fresh/accuracy_choice" not in m and "test/fresh/flip_rate" not in m
-    assert set(pipeline.swanlab_metrics(p, only={"fresh"})) == {k for k in m if k.startswith("test/fresh/")}
+    assert m["ref/bench_pope/accuracy"] == 0.8      # watched during training: a reference, benchmark or not
+    assert m["test/test_fresh/accuracy"] == 0.7     # our own held-out split
+    assert m["bench/bench_other/accuracy"] == 0.6   # held-out external benchmark
+    assert "test/test_fresh/accuracy_choice" not in m and "test/test_fresh/flip_rate" not in m
+    assert set(pipeline.swanlab_metrics(p, only={"test_fresh"})) == {k for k in m if k.startswith("test/test_fresh/")}
 
 
 def _jsonl(path, rows):
