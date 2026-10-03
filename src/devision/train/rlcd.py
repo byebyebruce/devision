@@ -4,6 +4,10 @@
 Frozen: the SigLIP vision tower. Trained: projector, Laya's decision head, LoRA on ModernBERT.
 LoRA is merged before saving, so checkpoints load without peft.
 
+Calibration: at the end, temperatures are fitted on the val set, one per question type and one per
+(type, option count) bucket as in Laya (`fit_temperatures`); `calibrate` refits them on an existing
+checkpoint without training (the `devision-calibrate` command).
+
 Every `save_every` steps the training state (trainable weights with the LoRA unmerged, optimizer,
 scheduler, step, epoch order, RNG, metrics so far) is written to <out>/resume.pt, replacing the previous
 one. Training the same out directory again picks up from there (the model must be built the same way,
@@ -12,8 +16,9 @@ i.e. the same --init); the file is removed when training finishes.
 import math
 import os
 import random
+from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -23,9 +28,11 @@ from PIL import Image
 
 from .samples import Sample
 from .tracking import Tracker, TrainLog
-from ..model import Decider, image_tensor, question_item, text_encoder
+from ..model import Decider, ModelConfig, image_tensor, option_bucket, pick_temperature, question_item, text_encoder
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
+MIN_TYPE_ITEMS = 10      # fewer val questions of a type: its temperature is not fitted
+MIN_BUCKET_ITEMS = 50    # fewer val questions in a bucket: no bucket temperature, decide() uses the type's
 
 
 @dataclass
@@ -132,6 +139,29 @@ def _fit_temperature(rows) -> float:
     return clamp_temperature(log_t.exp().item())
 
 
+def fit_temperatures(logits, items, previous: Optional[ModelConfig] = None,
+                     min_bucket: int = MIN_BUCKET_ITEMS) -> Tuple[List[float], Dict[str, float]]:
+    """(per-type temperatures [choice, score, noul], per-bucket temperatures {"choice:3-5": t, ...}) fitted
+    on `logits` against the items' targets.
+
+    A bucket with fewer than `min_bucket` questions gets no entry, so decide() falls back to its type's
+    temperature rather than one fitted on a handful of rows. A type with fewer than MIN_TYPE_ITEMS questions
+    is not fitted: it keeps `previous`'s temperature and buckets (1.0 and none without `previous`)."""
+    by_type: Dict[int, list] = defaultdict(list)
+    by_bucket: Dict[str, list] = defaultdict(list)
+    for z, it in zip(logits, items):
+        by_type[it["qtype"]].append((z, it["target"]))
+        by_bucket[option_bucket(it["qtype"], len(z))].append((z, it["target"]))
+    fitted = {t for t in QTYPES.values() if len(by_type[t]) >= MIN_TYPE_ITEMS}
+    temperature = [_fit_temperature(by_type[t]) if t in fitted else (previous.temperature[t] if previous else 1.0)
+                   for t in range(len(QTYPES))]
+    by_options = {b: _fit_temperature(rows) for b, rows in by_bucket.items() if len(rows) >= min_bucket}
+    if previous:
+        by_options.update({b: t for b, t in previous.temperature_by_options.items()
+                           if QTYPES.get(b.split(":")[0]) not in fitted})
+    return temperature, dict(sorted(by_options.items()))
+
+
 def _val_logits(model, items, images, pad_id, device):
     """Temperature-free option logits for each item, in eval mode."""
     was_training = model.training
@@ -169,26 +199,30 @@ def holdout_by_image(items: List[Dict[str, Any]], n: int):
     return [it for it in items if it["image"] in held], [it for it in items if it["image"] not in held]
 
 
-def _set_metrics(name: str, logits, items, temperature: Optional[Sequence[float]] = None) -> Dict[str, float]:
+def _set_metrics(name: str, logits, items, temperature: Optional[Sequence[float]] = None,
+                 by_options: Optional[Dict[str, float]] = None) -> Dict[str, float]:
     """`_metrics` as "<name>/<metric>", plus "<name>/<source>/<metric>" when the set mixes sources."""
-    out = {"%s/%s" % (name, k): v for k, v in _metrics(logits, items, temperature).items()}
+    out = {"%s/%s" % (name, k): v for k, v in _metrics(logits, items, temperature, by_options).items()}
     sources = sorted({it["source"] for it in items})
     if len(sources) > 1:
         for src in sources:
             idx = [i for i, it in enumerate(items) if it["source"] == src]
             out.update({"%s/%s/%s" % (name, src, k): v for k, v in
-                        _metrics([logits[i] for i in idx], [items[i] for i in idx], temperature).items()})
+                        _metrics([logits[i] for i in idx], [items[i] for i in idx], temperature,
+                                 by_options).items()})
         # every source weighs the same: a big source must not decide which checkpoint looks best
         out["%s/macro_accuracy" % name] = sum(out["%s/%s/accuracy" % (name, src)] for src in sources) / len(sources)
     return out
 
 
-def _metrics(logits, items, temperature: Optional[Sequence[float]] = None) -> Dict[str, float]:
+def _metrics(logits, items, temperature: Optional[Sequence[float]] = None,
+             by_options: Optional[Dict[str, float]] = None) -> Dict[str, float]:
     """Accuracy (all / noul / choice), NLL against the gold distribution and ECE on max
-    probability, with logits divided by the per-type temperature as decide() does (1 if none)."""
+    probability, with logits divided by the temperature decide() would use: the bucket's in `by_options`,
+    else the type's in `temperature` (1 if no temperatures)."""
     nll, conf, hits = [], [], []
     for z, it in zip(logits, items):
-        t = temperature[it["qtype"]] if temperature else 1.0
+        t = pick_temperature(temperature, by_options, it["qtype"], len(z)) if temperature else 1.0
         logp = torch.log_softmax(torch.tensor(z) / t, -1)
         nll.append(-(torch.tensor(it["target"]) * logp).sum().item())
         conf.append(logp.max().exp().item())
@@ -197,6 +231,42 @@ def _metrics(logits, items, temperature: Optional[Sequence[float]] = None) -> Di
            "accuracy_choice": _accuracy(logits, items, QTYPES["choice"]),
            "nll": sum(nll) / len(nll) if nll else float("nan"), "ece": ece_score(np.array(conf), np.array(hits))}
     return {k: v for k, v in out.items() if v == v}  # drop NaN (a type the set has no questions of)
+
+
+def bucket_metrics(logits, items, temperature: Sequence[float],
+                   by_options: Optional[Dict[str, float]] = None) -> Dict[str, Dict[str, float]]:
+    """{"all" / bucket: {"n", "temperature" (buckets only), "accuracy", "nll", "ece"}} under these temperatures."""
+    groups: Dict[str, List[int]] = defaultdict(list)
+    for i, (z, it) in enumerate(zip(logits, items)):
+        groups[option_bucket(it["qtype"], len(z))].append(i)
+    out = {}
+    for name, idx in [("all", list(range(len(items))))] + sorted(groups.items()):
+        m = _metrics([logits[i] for i in idx], [items[i] for i in idx], temperature, by_options)
+        row = {"n": len(idx), **{k: m[k] for k in ("accuracy", "nll", "ece") if k in m}}
+        if name != "all":
+            row["temperature"] = pick_temperature(temperature, by_options, items[idx[0]]["qtype"],
+                                                  len(logits[idx[0]]))
+        out[name] = row
+    return out
+
+
+def calibrate(decider: Decider, samples: Sequence[Sample], data_root, device: str = "cpu",
+              min_bucket: int = MIN_BUCKET_ITEMS) -> Dict[str, Any]:
+    """Refit `decider`'s temperatures (per type and per bucket, `fit_temperatures`) on `samples` without
+    training; the weights are untouched. Returns the temperatures and `bucket_metrics` before (the
+    checkpoint as it was) and after."""
+    dev = _device(device)
+    model = decider.model.to(dev).eval()
+    items = _items(decider, samples)
+    logits = _val_logits(model, items, _Images(data_root, decider), decider.tok.pad_token_id, dev)
+    decider.model = model.cpu()
+    cfg = decider.cfg
+    before = {"temperature": list(cfg.temperature), "temperature_by_options": dict(cfg.temperature_by_options)}
+    cfg.temperature, cfg.temperature_by_options = fit_temperatures(logits, items, cfg, min_bucket)
+    after = {"temperature": list(cfg.temperature), "temperature_by_options": dict(cfg.temperature_by_options)}
+    return {"items": len(items), "min_bucket": min_bucket, "before": before, "after": after,
+            "metrics_before": bucket_metrics(logits, items, before["temperature"], before["temperature_by_options"]),
+            "metrics_after": bucket_metrics(logits, items, cfg.temperature, cfg.temperature_by_options)}
 
 
 RESUME = "resume.pt"
@@ -242,8 +312,10 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     `eval_every` steps and at each epoch end, then once more with the fitted temperatures.
     Returns {"losses": per-step NLL against the gold distribution (the RLCD policy term is too
     noisy to monitor), "val_accuracy": per epoch, "evals": [{"step", "<set>/<metric>": ...}],
-    "final": {"<set>/<metric>": ...} with temperatures applied, "temperature": [choice, score, noul],
-    "train_items", "calib_items"}.
+    "final": {"<set>/<metric>": ...} with the fitted temperatures applied as decide() does, "final_per_type":
+    the same with only the per-type temperatures, "temperature": [choice, score, noul], "temperature_by_options":
+    {bucket: t} (buckets with at least MIN_BUCKET_ITEMS val questions), "calibration": val metrics per bucket
+    under per_type / by_options temperatures, "train_items", "calib_items"}.
     """
     c = config or TrainConfig()
     device = _device(c.device)
@@ -376,18 +448,22 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     model.decision.encoder = peft_encoder.merge_and_unload()
     model.eval()
     set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device) for name, its in sets.items()}
-    rows: Dict[int, list] = {t: [] for t in QTYPES.values()}
-    for z, it in zip(set_logits["val"], calib):
-        rows[it["qtype"]].append((z, it["target"]))
-    decider.cfg.temperature = [_fit_temperature(rows[t]) for t in range(3)]
-    print("temperatures (choice, score, noul):", [round(t, 3) for t in decider.cfg.temperature])
+    temperature, by_options = fit_temperatures(set_logits["val"], calib)
+    decider.cfg.temperature, decider.cfg.temperature_by_options = temperature, by_options
+    print("temperatures (choice, score, noul):", [round(t, 3) for t in temperature])
+    print("temperatures by options:", {b: round(t, 3) for b, t in by_options.items()})
     # With the fitted temperatures, i.e. what decide() will return. val is also the fitting set.
     final = {k: v for name, its in sets.items()
-             for k, v in _set_metrics(name, set_logits[name], its, decider.cfg.temperature).items()}
+             for k, v in _set_metrics(name, set_logits[name], its, temperature, by_options).items()}
+    # the per-type temperatures alone (calibration before buckets), to see what the buckets add
+    final_per_type = {k: v for name, its in sets.items()
+                      for k, v in _set_metrics(name, set_logits[name], its, temperature).items()}
     print("final %s" % {k: round(v, 4) for k, v in final.items()}, flush=True)
-    tracker.log({"calib/temperature_choice": decider.cfg.temperature[QTYPES["choice"]],
-                 "calib/temperature_noul": decider.cfg.temperature[QTYPES["noul"]],
-                 **{"final/" + k: v for k, v in final.items()}}, step=len(losses))
+    tracker.log({"calib/temperature_choice": temperature[QTYPES["choice"]],
+                 "calib/temperature_noul": temperature[QTYPES["noul"]],
+                 **{"calib/temperature/" + b: t for b, t in by_options.items()},
+                 **{"final/" + k: v for k, v in final.items()},
+                 **{"final_per_type/" + k: v for k, v in final_per_type.items()}}, step=len(losses))
     tracker.finish()
 
     decider.model = model.cpu().float()
@@ -396,6 +472,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         os.remove(resume_path)
     # "final" on the val set is measured on the data the temperatures were fitted on: not held out
     return {"losses": losses, "val_accuracy": val_accuracy, "evals": evals, "final": final,
+            "final_per_type": final_per_type,
             "calibration_fit_set": "val",
-            "temperature": decider.cfg.temperature,
+            "temperature": temperature, "temperature_by_options": by_options,
+            "calibration": {"per_type": bucket_metrics(set_logits["val"], calib, temperature),
+                            "by_options": bucket_metrics(set_logits["val"], calib, temperature, by_options)},
             "train_items": len(train_items), "calib_items": len(calib)}

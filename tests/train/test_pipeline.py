@@ -64,6 +64,10 @@ def test_training_teaches_the_model_what_it_sees(tmp_path):
     assert {"held/accuracy", "held/ece"} <= set(evals[-1])
     assert {"held/other/accuracy", "held/synthetic/accuracy"} <= set(evals[-1])  # a mixed set, per source
     assert {"val/accuracy_noul", "val/accuracy_choice", "held/accuracy"} <= set(report["final"])
+    assert set(report["final_per_type"]) == set(report["final"])
+    # 16 val questions: no bucket reaches the floor, so decide() uses the per-type temperatures
+    assert report["temperature_by_options"] == {}
+    assert report["final_per_type"] == report["final"]
 
     decider = Decider.load(tmp_path / "ckpt")
     result = evaluate(decider, samples, data_root=root)

@@ -125,7 +125,7 @@
     - 学习率先线性预热，再余弦衰减到 0；噪声 σ 按步数从 0.4 退火到 0.1。长训练（上万步）要用较低的学习率，否则会塌缩成对每题输出 50/50。
     - ModernBERT 默认只训 LoRA；`--unfreeze-top N` 可以同时训最上面 N 层的原始权重，用于实验。
     - 训练流程用 YAML 描述（`configs/`），`devision-pipeline` 按顺序执行各阶段和评测，启动前校验参数与数据文件，已完成的阶段自动跳过。发布的 checkpoint 对应 `configs/v1-release-0.1.yaml`。
-  - 训练结束后在 val 集上拟合温度参数，和 checkpoint 一起保存。
+  - 训练结束后在 val 集上拟合温度参数，和 checkpoint 一起保存：每个题型一个，另按 Laya 的（题型, 选项数）分桶（`noul:2`、`choice:2`、`choice:3-5`、`choice:6-10`、`choice:11+`）各拟合一个；val 里不足 50 题的桶不存，推理时退回题型温度。已有 checkpoint 可用 `devision-calibrate` 只重拟合温度、不训练。
   - 训练中从第 0 步起定期在 val 和额外评测集（如 POPE）上记录准确率、nll、ECE，并上报 SwanLab，这样能看到每个实验的曲线，也能在实验之间对比。
   - 两个阶段的 checkpoint 格式相同，都能被 `decide` 直接加载；`Decider.load` 也接受 Hugging Face 模型仓库 id。
 - **HTTP 服务**

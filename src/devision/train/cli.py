@@ -1,4 +1,4 @@
-"""Training-side command-line entry points: align, train, eval (see CLAUDE.md)."""
+"""Training-side command-line entry points: align, train, calibrate, eval, compare (see CLAUDE.md)."""
 import argparse
 import json
 import os
@@ -136,7 +136,7 @@ def eval_main(argv=None) -> None:
     records: list = []
     decider = Decider.load(a.checkpoint)
     if a.no_temperature:
-        decider.cfg.temperature = [1.0, 1.0, 1.0]
+        decider.cfg.temperature, decider.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}
     result = evaluate(decider, read_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records)
     result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
                      "temperature": "none (raw)" if a.no_temperature else "fitted",
@@ -152,6 +152,71 @@ def eval_main(argv=None) -> None:
         with open(details, "w") as f:
             for r in records:
                 f.write(json.dumps(r) + "\n")
+
+
+CHECKPOINT_FILES = ("devision_config.json", "model.safetensors", "encoder", "vision", "tokenizer")
+
+
+def calibrate_main(argv=None) -> None:
+    """Refit a checkpoint's temperatures (one per question type and one per (type, option count) bucket) on
+    a JSONL of decision samples, without training. Prints NLL / ECE per bucket before and after; writes the
+    recalibrated checkpoint to --out (a copy) or, with --in-place, over the given one. Neither: report only."""
+    _need_train_extra()
+    import shutil
+
+    from ..model import Decider
+    from ..model.decider import CONFIG_FILE
+    from .rlcd import MIN_BUCKET_ITEMS, calibrate
+
+    p = argparse.ArgumentParser(description=calibrate_main.__doc__)
+    p.add_argument("--checkpoint", required=True, help="checkpoint directory or Hugging Face repo id")
+    p.add_argument("--data", required=True, help="samples to fit on, e.g. data/val_mix.jsonl (never a test set)")
+    p.add_argument("--data-root", default="data")
+    where = p.add_mutually_exclusive_group()
+    where.add_argument("--out", help="new directory: a copy of the checkpoint with the refitted temperatures")
+    where.add_argument("--in-place", action="store_true", help="overwrite the checkpoint's devision_config.json")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--min-bucket", type=int, default=MIN_BUCKET_ITEMS,
+                   help="fewer questions than this in a bucket: no bucket temperature, the type's is used")
+    a = p.parse_args(argv)
+    if a.in_place and not os.path.isdir(a.checkpoint):
+        raise SystemExit("--in-place needs a local checkpoint directory")
+    if a.out and os.path.exists(a.out):
+        raise SystemExit("%s already exists" % a.out)
+
+    decider = Decider.load(a.checkpoint)
+    report = calibrate(decider, read_jsonl(a.data), a.data_root, device=a.device, min_bucket=a.min_bucket)
+    report["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data),
+                     "code": _code_version()}
+    print("temperature (choice, score, noul): %s -> %s" % (
+        [round(t, 3) for t in report["before"]["temperature"]], [round(t, 3) for t in report["after"]["temperature"]]))
+    print("%-12s %6s %8s %8s %8s %8s %8s %8s" % ("bucket", "n", "T_before", "T_after", "nll_bef", "nll_aft",
+                                                  "ece_bef", "ece_aft"))
+    for name, after in report["metrics_after"].items():
+        before = report["metrics_before"][name]
+        print("%-12s %6d %8s %8s %8.4f %8.4f %8.4f %8.4f" % (
+            name, after["n"], "%.3f" % before["temperature"] if "temperature" in before else "",
+            "%.3f" % after["temperature"] if "temperature" in after else "",
+            before["nll"], after["nll"], before["ece"], after["ece"]))
+    if not (a.out or a.in_place):
+        print("report only: pass --out DIR or --in-place to write the temperatures")
+        return
+    target = a.checkpoint if a.in_place else a.out
+    if a.out:
+        src = a.checkpoint
+        if not os.path.isdir(src):
+            from huggingface_hub import snapshot_download
+
+            src = snapshot_download(src)
+        os.makedirs(a.out)
+        for name in CHECKPOINT_FILES:
+            copy = shutil.copytree if os.path.isdir(os.path.join(src, name)) else shutil.copyfile
+            copy(os.path.join(src, name), os.path.join(a.out, name))
+    with open(os.path.join(target, CONFIG_FILE), "w") as f:
+        json.dump(decider.cfg.to_dict(), f, indent=2)
+    with open(os.path.join(target, "calibrate_report.json"), "w") as f:
+        json.dump(report, f, indent=2)
+    print("wrote %s" % os.path.join(target, CONFIG_FILE))
 
 
 def compare_main(argv=None) -> None:

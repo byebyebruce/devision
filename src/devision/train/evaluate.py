@@ -193,7 +193,8 @@ def evaluate(decider: Decider, samples: Sequence[Sample], data_root, control: st
         records_out.extend(records)
     out = summarize(records)
     out["model"] = decider.cfg.model_name
-    out["temperature"] = {"choice": decider.cfg.temperature[0], "noul": decider.cfg.temperature[2]}
+    out["temperature"] = {"choice": decider.cfg.temperature[0], "noul": decider.cfg.temperature[2],
+                          "by_options": dict(decider.cfg.temperature_by_options)}
     out["environment"] = {"threads": _threads(), "machine": platform.machine(), "system": platform.system()}
     return out
 

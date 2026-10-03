@@ -156,6 +156,8 @@ class Decider:
 
     @torch.no_grad()
     def decide(self, state: Any, questions: Any) -> Dict[str, Any]:
+        """Jev answers. Each question's probabilities are softmax(option logits / T), T being its
+        (type, option count) bucket's temperature, or its type's when the bucket has none."""
         if not isinstance(questions, dict) or not questions:
             raise InvalidRequest("questions must be a non-empty object")
         for qid, q in questions.items():
@@ -182,7 +184,7 @@ class Decider:
         for i, qid in enumerate(qids):
             q, it = questions[qid], items[i]
             k = len(it["markers"])
-            t = self.cfg.temperature[it["qtype"]]
+            t = self.cfg.temperature_for(it["qtype"], k)
             p = torch.softmax(logits[i, :k] / t, -1).tolist()
             answers[qid] = self._answer(q, p)
         input_tokens = sum(len(it["ids"]) + n_visual for it in items)
