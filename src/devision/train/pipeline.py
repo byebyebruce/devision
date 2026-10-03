@@ -15,8 +15,9 @@ plus laya / vision / visual_shuffle / model_name), checked before anything runs.
 After the stages, `evaluate:` runs devision-eval on each set (JSON in the round's eval/; sets already
 evaluated are skipped unless rerun) and any extra shell commands, with {checkpoint} and {name}
 substituted (and {eval_dir}), then prints a summary and adds it to the SwanLab run that trained the checkpoint
-(test/<set>/... for heldout sets, ref/<set>/... for the others), found through the
-swanlab_run.json the trainer left in the stage directory. An evaluation-only config (`stages: []`) is
+(heldout sets under test/<set>/..., or bench/<set>/... when the name starts with bench_; the others under
+ref/<set>/...), found through the swanlab_run.json the trainer left in the stage directory. Set names:
+test_* for our own held-out splits, bench_* for external public benchmarks. An evaluation-only config (`stages: []`) is
 not a round: it writes into the eval/ of the round the checkpoint belongs to. Every set is
 labelled by what it shares -- sample ids or pictures, not file paths -- with the data the checkpoint
 was tuned on: calibration_fit (at least half of it is in the temperature-fit set: the evaluated stage's
@@ -313,14 +314,27 @@ def _summary(plan: Plan) -> str:
     return "\n".join(lines)
 
 
+BENCH_PREFIX = "bench_"   # external public benchmarks (bench_pope, bench_lv_<set>); our own test splits are test_*
+
+
+def summary_group(metric_name: str, role: Optional[str]) -> str:
+    """SwanLab group of an evaluated set. The role decides first: a set the checkpoint was tuned or watched on
+    (calibration_fit / monitoring) is a reference number, ref/, whatever its name -- e.g. bench_pope for
+    round 2, whose training watched the old POPE. A heldout set goes to bench/ if its name starts with
+    bench_, else to test/."""
+    if role != "heldout":
+        return "ref"
+    return "bench" if metric_name.startswith(BENCH_PREFIX) else "test"
+
+
 def swanlab_metrics(plan: Plan, only: Optional[Set[str]] = None) -> Dict[str, float]:
-    """The evaluation summary as SwanLab scalars: test/<set>/<metric> for heldout sets, ref/<set>/<metric>
-    for sets the checkpoint was tuned or watched on. `only`: just these sets."""
+    """The evaluation summary as SwanLab scalars, <group>/<set>/<metric> with the group from summary_group.
+    `only`: just these sets."""
     out: Dict[str, float] = {}
     for set_name, r in _results(plan).items():
         if only is not None and set_name not in only:
             continue
-        group = "test" if plan.roles.get(set_name) == "heldout" else "ref"
+        group = summary_group(plan.metric_names.get(set_name, set_name), plan.roles.get(set_name))
         for k, v in r.items():
             if isinstance(v, (int, float)):
                 out["%s/%s/%s" % (group, plan.metric_names.get(set_name, set_name), k)] = float(v)

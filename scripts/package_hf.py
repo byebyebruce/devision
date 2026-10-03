@@ -1,7 +1,7 @@
 """Lay out one training round's checkpoint as a Hugging Face model repository (nothing is uploaded).
 
     uv run --with matplotlib python scripts/package_hf.py --round runs/v2-align-lora --stage stage2b \
-        --name devision-v2 --test-prefix v2eval_ --out ../devision-hf
+        --name devision-v2 --out ../devision-hf
 
 The layout follows convaiinnovations/laya: weights and configs at the root, a model card as README.md,
 and eval/ with results.json (every number of the card, from the round's evaluation summaries),
@@ -15,8 +15,8 @@ import shutil
 from collections import defaultdict
 
 CHECKPOINT_FILES = ["model.safetensors", "encoder", "tokenizer", "vision"]
-TEST_SETS = ["eval_coco_exist", "eval_coco_size", "eval_vqa_choice", "eval_gqa", "eval_coco_position",
-             "eval_vqa_yesno", "eval_coco_relation", "eval_pope"]
+TEST_SETS = ["test_exist", "test_size", "test_vqa_choice", "test_gqa", "test_position", "test_vqa_yesno",
+             "test_relation", "bench_pope"]   # results.json names them without the test_ / bench_ part
 LAYA_VISION = ["vqav2_yesno", "aokvqa", "scienceqa"]
 LAYA_VISION_POPE = {"random": 0.836, "popular": 0.819, "adversarial": 0.777}   # their published scores
 # The default .gitattributes of a new Hugging Face model repository (large and binary files through LFS).
@@ -57,24 +57,28 @@ def summary(path):
     return out
 
 
-def results(round_dir, prefix, name, config):
+def short(set_name):
+    return set_name.split("_", 1)[1]
+
+
+def results(round_dir, name, config):
     ev = os.path.join(round_dir, "eval")
     res = {"model": name, "round": os.path.basename(round_dir.rstrip("/")),
            "temperature": {"choice": rnd(config["temperature"][0]), "noul": rnd(config["temperature"][2])},
            "test_sets": {}, "laya_vision": {}}
     for s in TEST_SETS:
-        p = os.path.join(ev, "%s%s.json" % (prefix, s))
+        p = os.path.join(ev, "%s.json" % s)
         if os.path.exists(p):
-            res["test_sets"][s[5:]] = summary(p)
+            res["test_sets"][short(s)] = summary(p)
     for s in LAYA_VISION:
         for subset in ("all", "unseen"):
-            p = os.path.join(ev, "compare", "lv_%s.%s.json" % (s, subset))
+            p = os.path.join(ev, "compare", "bench_lv_%s.%s.json" % (s, subset))
             if os.path.exists(p):
                 c = load(p)["all"]
                 res["laya_vision"].setdefault(s, {})[subset] = {
                     "questions": c["questions"], "laya_vision_201m": rnd(c["accuracy_a"]), "devision": rnd(c["accuracy_b"]),
                     "difference": rnd(c["difference"]), "ci95": [rnd(x) for x in c["ci95"]]}
-    p = os.path.join(ev, "lv_pope.json")
+    p = os.path.join(ev, "bench_lv_pope.json")
     if os.path.exists(p):
         pope = summary(p)["pope"]
         res["laya_vision"]["pope"] = {k: {"devision": pope[k]["accuracy"], "laya_vision_201m_published": v}
@@ -119,7 +123,7 @@ def results_md(res):
     return "\n".join(lines) + "\n"
 
 
-def plots(round_dir, prefix, res, out):
+def plots(round_dir, res, out):
     try:
         import matplotlib  # pyright: ignore[reportMissingImports]  (run with `uv run --with matplotlib`)
         matplotlib.use("Agg")
@@ -130,8 +134,8 @@ def plots(round_dir, prefix, res, out):
     # reliability over every held-out test question
     bins = defaultdict(lambda: [0, 0.0, 0.0])
     for s in TEST_SETS:
-        p = os.path.join(round_dir, "eval", "%s%s.details.jsonl" % (prefix, s))
-        if not os.path.exists(p) or res["test_sets"].get(s[5:], {}).get("role") != "heldout":
+        p = os.path.join(round_dir, "eval", "%s.details.jsonl" % s)
+        if not os.path.exists(p) or res["test_sets"].get(short(s), {}).get("role") != "heldout":
             continue
         for line in open(p):
             r = json.loads(line)
@@ -184,7 +188,6 @@ def main(argv=None):
     p.add_argument("--round", required=True, help="runs/<round>")
     p.add_argument("--stage", required=True, help="the stage whose checkpoint is published")
     p.add_argument("--name", required=True, help="model_name the API reports, e.g. devision-v2")
-    p.add_argument("--test-prefix", default="", help="file prefix of the test-set results in <round>/eval/")
     p.add_argument("--card", default="docs/model-card.md")
     p.add_argument("--out", required=True)
     a = p.parse_args(argv)
@@ -206,12 +209,12 @@ def main(argv=None):
                           "git_commit": run.get("git_commit")}
     with open(os.path.join(a.out, "devision_config.json"), "w") as f:
         json.dump(config, f, indent=2)
-    res = results(a.round, a.test_prefix, a.name, config)
+    res = results(a.round, a.name, config)
     with open(os.path.join(a.out, "eval", "results.json"), "w") as f:
         json.dump(res, f, indent=2)
     with open(os.path.join(a.out, "eval", "results.md"), "w") as f:
         f.write(results_md(res))
-    plots(a.round, a.test_prefix, res, a.out)
+    plots(a.round, res, a.out)
     shutil.copy(a.card, os.path.join(a.out, "README.md"))
     with open(os.path.join(a.out, ".gitattributes"), "w") as f:
         f.write(GITATTRIBUTES)

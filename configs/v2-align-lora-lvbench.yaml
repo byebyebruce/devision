@@ -4,7 +4,7 @@
 #   uv run devision-pipeline configs/v2-align-lora-lvbench.yaml
 # Then pair with their published rows, on all questions and on the ones our training never saw:
 #   uv run devision-compare data/lv_bench/laya-vision-201m.aokvqa.details.jsonl \
-#       runs/v2-align-lora/eval/lv_aokvqa.details.jsonl [--only data/lv_bench/aokvqa.unseen.jsonl]
+#       runs/v2-align-lora/eval/bench_lv_aokvqa.details.jsonl [--only data/lv_bench/aokvqa.unseen.jsonl]
 name: lvbench
 stages: []
 
@@ -13,9 +13,8 @@ evaluate:
   calibration_fit: data/val_mix.jsonl
   history: [data/pope.jsonl, data/val_cocoqa.jsonl]
   image_identity: data/v2/image_identity.json
-  prefix: lv_
   sets:
-    vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
-    aokvqa: data/lv_bench/aokvqa.jsonl
-    scienceqa: data/lv_bench/scienceqa.jsonl
-    pope: data/lv_bench/pope.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
