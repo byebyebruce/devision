@@ -1,0 +1,32 @@
+# Round 4: continue v3 with relative above/below questions. v3's data-v2 mix held only 172 of them and
+# v3 fell from 0.86 to 0.57 there (docs/training-log.md). Data: every above/below question of the COCO
+# relation pool (1,402) and of GQA scene graphs (1,784, scripts/data/v2_vg_relation.py), plus 3x as many
+# replayed from data/v2/train_mix.jsonl (scripts/data/v4_relation_mix.py), 2 epochs.
+#   uv run devision-pipeline configs/v4-relation-tb.yaml
+name: v4-relation-tb
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v3-data2/stage2
+    data: data/v2/train_relation_tb.jsonl   # 12,744 questions: 3,186 above/below + 9,558 replayed
+    val: data/v2/dev_mix_half.jsonl         # monitoring, temperature fit (calibration_fit)
+    eval: {relation: data/v2/dev_coco_relation.jsonl}   # dev slice: 158 left/right + 42 above/below
+    params: {epochs: 2, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 200, eval_every: 1000}
+
+evaluate:
+  image_identity: data/v2/image_identity.json
+  controls: true                           # + mismatched pictures and reversed options for every set
+  sets:
+    dev_mix_half: data/v2/dev_mix_half.jsonl   # calibration_fit: reported, but not a held-out result
+    eval_pope: data/v2/eval_pope.jsonl
+    eval_vqa_yesno: data/v2/eval_vqa_yesno.jsonl
+    eval_vqa_choice: data/v2/eval_vqa_choice.jsonl
+    eval_gqa: data/v2/eval_gqa.jsonl
+    eval_coco_exist: data/v2/eval_coco_exist.jsonl
+    eval_coco_position: data/v2/eval_coco_position.jsonl
+    eval_coco_relation: data/v2/eval_coco_relation.jsonl
+    eval_coco_size: data/v2/eval_coco_size.jsonl
