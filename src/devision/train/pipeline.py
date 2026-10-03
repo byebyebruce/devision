@@ -313,11 +313,13 @@ def _summary(plan: Plan) -> str:
     return "\n".join(lines)
 
 
-def swanlab_metrics(plan: Plan) -> Dict[str, float]:
+def swanlab_metrics(plan: Plan, only: Optional[Set[str]] = None) -> Dict[str, float]:
     """The evaluation summary as SwanLab scalars: test/<set>/<metric> for heldout sets, ref/<set>/<metric>
-    for sets the checkpoint was tuned or watched on."""
+    for sets the checkpoint was tuned or watched on. `only`: just these sets."""
     out: Dict[str, float] = {}
     for set_name, r in _results(plan).items():
+        if only is not None and set_name not in only:
+            continue
         group = "test" if plan.roles.get(set_name) == "heldout" else "ref"
         for k, v in r.items():
             if isinstance(v, (int, float)):
@@ -325,8 +327,9 @@ def swanlab_metrics(plan: Plan) -> Dict[str, float]:
     return out
 
 
-def report_to_swanlab(plan: Plan) -> None:
-    """Add the evaluation summary to the SwanLab run that trained the checkpoint, if one is recorded."""
+def report_to_swanlab(plan: Plan, only: Optional[Set[str]] = None) -> None:
+    """Add the evaluation summary to the SwanLab run that trained the checkpoint, if one is recorded.
+    Called after every evaluation step with `only` = that set, so results show up as they come in."""
     from .tracking import RECORD, log_to_finished_run
 
     record = os.path.join(plan.checkpoint or "", RECORD)
@@ -335,9 +338,12 @@ def report_to_swanlab(plan: Plan) -> None:
         return
     if (plan.config.get("swanlab_project", "devision")) == "":
         return
-    metrics = swanlab_metrics(plan)
+    metrics = swanlab_metrics(plan, only)
     if not metrics:
         return
+    done = sum(os.path.exists(p) for p in plan.eval_outputs.values())
+    metrics["eval_progress/sets_done"] = float(done)
+    metrics["eval_progress/sets_total"] = float(len(plan.eval_outputs))
     try:
         where = log_to_finished_run(record, metrics)
         print("   %d evaluation numbers added to SwanLab run %s" % (len(metrics), where), flush=True)
@@ -401,6 +407,9 @@ def run_plan(plan: Plan, start_from: Optional[str] = None, force: bool = False, 
                                   stdout=log, stderr=subprocess.STDOUT).returncode
         if code:
             raise SystemExit("%s failed (exit %d); see %s" % (step.name, code, step.log))
+        kind, _, set_name = step.name.partition(":")
+        if kind in ("eval", "mismatched", "reversed") and set_name in plan.eval_outputs:
+            report_to_swanlab(plan, only={set_name})   # visible now, not only when every set is done
     if not dry_run and plan.eval_outputs:
         print("== done %s\n%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), _summary(plan)), flush=True)
         report_to_swanlab(plan)

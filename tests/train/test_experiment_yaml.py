@@ -171,6 +171,7 @@ def test_the_evaluation_summary_goes_to_swanlab_as_test_and_ref_numbers(tmp_path
     assert m["ref/pope/accuracy"] == 0.8      # pope was watched during training
     assert m["test/fresh/accuracy"] == 0.7
     assert "test/fresh/accuracy_choice" not in m and "test/fresh/flip_rate" not in m
+    assert set(pipeline.swanlab_metrics(p, only={"fresh"})) == {k for k in m if k.startswith("test/fresh/")}
 
 
 def _jsonl(path, rows):
