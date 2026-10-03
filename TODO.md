@@ -34,7 +34,7 @@
 - **评测提速**：即第 9 项（同图多题合并成一次请求），提前做。
 - **评测汇总写回该轮训练的 SwanLab run**（`test/<集合>/accuracy|nll|ece`、对照结果），不新建 run；先确认 SwanLab 能续写已结束的 run。逐题明细仍只在文件里。
 
-### 4. 回复 critic MC1–MC6
+### 4. ~~回复 critic MC1–MC6~~（已完成：2026-10-02 21:40 追加到 `critic/critic.md`）
 - 按 CLAUDE.md 的格式追加到 `critic/critic.md`：事实 / 影响 / 决定（现在做 MC1、MC4-1；推迟 MC2、MC3、MC4-2、MC5、RLCD 消融；暂不采纳 MC6）。
 
 ---
