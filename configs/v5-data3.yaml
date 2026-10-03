@@ -1,0 +1,34 @@
+# Round 5: data-v3 -- the data-v2 mix plus common-sense reasoning and textbook diagrams (A-OKVQA, ScienceQA,
+# AI2D, TQA train splits, 17.5% of the mix) and round 4's above/below relation questions.
+# Data: scripts/data/v3_build.py (out of the repo); see docs/research/data-quality.md.
+# INIT is decided from round 4's test results: runs/v4-relation-tb/stage2 if it fixed above/below without
+# regressions, else runs/v3-data2/stage2.
+#   uv run devision-pipeline configs/v5-data3.yaml
+name: v5-data3
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: INIT
+    data: data/v3/train_mix.jsonl           # 166,720 questions
+    val: data/v3/dev_mix.jsonl              # 4,531: dev of the new sets + data/v2/dev_mix_half; temperature fit
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 2000}
+
+evaluate:
+  image_identity: data/v2/image_identity.json
+  controls: true                           # + mismatched pictures and reversed options for every set
+  sets:
+    dev_mix: data/v3/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    eval_pope: data/v2/eval_pope.jsonl
+    eval_vqa_yesno: data/v2/eval_vqa_yesno.jsonl
+    eval_vqa_choice: data/v2/eval_vqa_choice.jsonl
+    eval_gqa: data/v2/eval_gqa.jsonl
+    eval_coco_exist: data/v2/eval_coco_exist.jsonl
+    eval_coco_position: data/v2/eval_coco_position.jsonl
+    eval_coco_relation: data/v2/eval_coco_relation.jsonl
+    eval_coco_size: data/v2/eval_coco_size.jsonl
+  commands:
+    - uv run devision-pipeline configs/v5-data3-lvbench.yaml   # then laya-vision's benchmark (no controls)
