@@ -63,7 +63,7 @@ uv run python scripts/data/v2_mix.py --root data     # 仓库外：按能力配�
 uv run python scripts/data/lv_bench.py --root data   # 仓库外：按 laya-vision 公开的逐题预测重建他们的评测集到 data/lv_bench/（VQAv2 是非 / A-OKVQA / ScienceQA / POPE，含我们训练没见过的 *.unseen 子集），并把他们的逐题预测转成我们的明细格式；不安装、不运行他们的模型。用 configs/*-lvbench.yaml 评测我们的模型，再用 devision-compare [--only *.unseen.jsonl] 逐题配对比较
 uv run devision-align --data data/align_train.jsonl --val data/align_val.jsonl --data-root data --out runs/align --run-name align   # 阶段 1
 uv run devision-train --init runs/align --lr-new 5e-5 --lr-head 5e-5 --lr-lora 1e-4 --warmup 500 --data data/train_100k.jsonl --val data/val_mix.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
-uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json --role heldout   # 另写 pope.details.jsonl（逐题明细）；--control mismatched|reversed 为对照
+uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json --role heldout   # 另写 pope.details.jsonl（逐题明细）；--control mismatched|reversed 为对照；同一图片文件 + 同一 state_text 的题合成一次 decide 请求（每次至多 --max-questions，默认 32，图只编码一次，结果与逐题问相同）；--no-group 每题单独请求，用来测单题延迟。汇总里 request_latency_ms 是每个请求的 P50/P95，questions_per_request 是每请求题数，ms_per_question 是吞吐（请求耗时 / 题数），latency_ms 只统计只含一题的请求
 uv run devision-compare runs/a/x.details.jsonl runs/b/x.details.jsonl --by source   # 同一批题上两个模型的差值，按图片配对重采样给 95% 区间
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
 uv run devision-pipeline configs/v3-x.yaml [--dry-run] [--from STAGE] [--force]   # 按 YAML 跑一轮训练（再跑同一个 YAML 是续跑）
