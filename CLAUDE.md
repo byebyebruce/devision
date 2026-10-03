@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 设计与范围：`docs/spec/vision-decision-mvp.md`（改设计先改 spec）
 - 调研：`docs/research/jev-api.md`（Jev 协议）、`docs/research/encoder-data.md`（编码器与数据集）、`docs/research/data-quality.md`（训练数据质量与 v2）、`docs/research/laya-vision-gap.md`（与 laya-vision 的差距）
 - 实验过程与结论：`docs/experiments/2026-09-30-rlcd-plateau.md`（按时间追加；提新实验前先看，避免重复已失败的做法）
+- 训练日志：`docs/training-log.md`（每一轮一节：改了什么、结果、相对上一轮的增长；顶部标明当前最佳。每轮训练评测完后更新）
 
 ## 代码结构
 
@@ -69,7 +70,7 @@ uv run devision-pipeline configs/v3-x.yaml [--dry-run] [--from STAGE] [--force] 
 ```
 
 - **实验用 YAML 编排**（`configs/*.yaml`，`src/devision/train/pipeline.py`）：每个新实验复制一份 YAML 改参数和 `name`，不要再写训练脚本。一个 YAML = `name` + 若干 `stages`（`kind: align|train`、`init` 指向前面的阶段或路径、`data` / `val` / `eval`、`params` 即训练 CLI 的参数名，`common` 是所有阶段共用的参数）+ `evaluate`（评测集和额外命令，`{checkpoint}` / `{name}` / `{eval_dir}` 会被替换）。启动前检查所有参数名、类型和数据文件。长任务用 `nohup uv run devision-pipeline configs/v3-x.yaml > runs/v3-x.out 2>&1 &`。
-- **训练轮次 = YAML 的 `name`**，格式 `v<轮次>-<描述>`（如 `v3-data2`），文件名与之相同（`configs/v3-data2.yaml`）；轮次号由人来管理，不自动生成。输出在 `runs/<name>/`：`run.json`（配置、开始时间、git commit、各阶段起点）、每个阶段一个子目录（checkpoint + 报告 + `swanlab_run.json`）、`eval/`（评测结果和逐题明细）、`logs/`；SwanLab run 名 `<name>/<阶段>`。再跑同一个 YAML 就是续跑：已完成的阶段和评测跳过，`--from STAGE` 从某阶段重跑。新的一轮 = 新 YAML + 新 name。只评测的 YAML（`stages: []`）不算一轮，结果写进被评 checkpoint 所在轮次的 `eval/`。轮次（v1、v2、v3……）和数据版本（data-v1、data-v2）是两回事。第 1 轮 `v1-release-0.1`（发布的 0.1），第 2 轮 `v2-align-lora`；早期和失败的运行在 `runs/archive/`。
+- **训练轮次 = YAML 的 `name`**，格式 `v<轮次>-<描述>`（如 `v3-data2`），文件名与之相同（`configs/v3-data2.yaml`）；轮次号由人来管理，不自动生成。输出在 `runs/<name>/`：`run.json`（配置、开始时间、git commit、各阶段起点）、每个阶段一个子目录（checkpoint + 报告 + `swanlab_run.json`）、`eval/`（评测结果和逐题明细）、`logs/`；SwanLab run 名 `<name>/<阶段>`。再跑同一个 YAML 就是续跑：已完成的阶段和评测跳过，`--from STAGE` 从某阶段重跑；阶段 2 每 `--save-every` 步（默认 1000）把训练状态写到阶段目录的 `resume.pt`，中断后再跑会从那里接着训（设置不同会拒绝，`--force` 会删掉它从头来），训完自动删除。同一 seed 在 CPU 上逐位可复现；MPS 上有 1e-7 量级的浮点差异，不保证逐位一致。新的一轮 = 新 YAML + 新 name。只评测的 YAML（`stages: []`）不算一轮，结果写进被评 checkpoint 所在轮次的 `eval/`。轮次（v1、v2、v3……）和数据版本（data-v1、data-v2）是两回事。第 1 轮 `v1-release-0.1`（发布的 0.1），第 2 轮 `v2-align-lora`；早期和失败的运行在 `runs/archive/`。
 
 - `data/`（数据集）、`runs/`（checkpoint）不进 git；`examples/` 里的少量示例图进 git，供 web demo 默认加载；`examples/train/` 是格式示例数据（含合成形状图），配 `configs/example.yaml` 端到端跑通，改样本格式时要同步更新它。
 - 训练默认上报 SwanLab（项目 `devision`），两个阶段同一套分组（`src/devision/train/tracking.py`），每 `--log-every` 步一行：`train/`（窗口内均值：loss、accuracy、grad_norm；阶段 2 另有 nll、sigma）、`lr/`（各参数组）、`perf/`（step_s、samples_per_s、progress_pct、eta_h）、`sys/`（cpu_pct、proc_cpu_pct、ram_used_pct、ram_available_gb、swap_used_gb、proc_rss_gb、gpu_util_pct、gpu_mem_gb、torch_mps_gb）。评测行另记：阶段 1 每 `--eval-every` 步记 val 上真实/错配图片的补词准确率与 nll 及两者之差（`val/mlm_acc_gap`）；阶段 2 从第 0 步起每 `--eval-every` 步和每个 epoch 末，在 val 和每个 `--eval` 集上记准确率（总体/noul/choice，混合来源时按来源拆分）、nll、ECE，结束时记拟合温度和套用温度后的指标（`final/...`）。只有训练（`devision-align` / `devision-train`）新建 SwanLab run；`devision-eval`、分析脚本和测试都不上报，结果写成 JSON / 文本文件。例外：`devision-pipeline` 评测完后把汇总（每个集合的准确率、NLL、ECE、配错图准确率、倒序翻转率）续写进训练这个 checkpoint 的那个 run（按阶段目录里的 `swanlab_run.json` 找到），heldout 集合记在 `test/<集合>/...`，其余记在 `ref/<集合>/...`；不新建 run，逐题明细只在文件里。先 `uv run swanlab login` 登录（API key 只存在本机用户目录，**不要写进仓库**）；`--swanlab-project ""` 关闭。本地缓存 `swanlog/` 不进 git。

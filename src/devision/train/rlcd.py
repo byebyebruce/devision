@@ -3,6 +3,11 @@
 
 Frozen: the SigLIP vision tower. Trained: projector, Laya's decision head, LoRA on ModernBERT.
 LoRA is merged before saving, so checkpoints load without peft.
+
+Every `save_every` steps the training state (trainable weights with the LoRA unmerged, optimizer,
+scheduler, step, epoch order, RNG, metrics so far) is written to <out>/resume.pt, replacing the previous
+one. Training the same out directory again picks up from there (the model must be built the same way,
+i.e. the same --init); the file is removed when training finishes.
 """
 import math
 import os
@@ -43,6 +48,7 @@ class TrainConfig:
     device: str = "auto"
     log_every: int = 10
     eval_every: int = 500        # steps between evaluations (plus step 0 and each epoch end); 0: epoch ends only
+    save_every: int = 1000       # steps between resume states (<out>/resume.pt); 0: none
     swanlab_project: str = ""    # "" disables SwanLab; the CLI defaults to "devision"
     run_name: str = ""
 
@@ -192,6 +198,38 @@ def _metrics(logits, items, temperature: Optional[Sequence[float]] = None) -> Di
     return {k: v for k, v in out.items() if v == v}  # drop NaN (a type the set has no questions of)
 
 
+RESUME = "resume.pt"
+# what must match for a resume state to continue a run (logging and saving settings may change)
+_RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
+                "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed")
+
+
+def _rng_state() -> Dict[str, Any]:
+    state = {"python": random.getstate(), "torch": torch.get_rng_state()}
+    if torch.backends.mps.is_available():
+        state["mps"] = torch.mps.get_rng_state()
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def _set_rng_state(state: Dict[str, Any]) -> None:
+    random.setstate(state["python"])
+    torch.set_rng_state(state["torch"])
+    if "mps" in state and torch.backends.mps.is_available():
+        torch.mps.set_rng_state(state["mps"])
+    if "cuda" in state and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["cuda"])
+
+
+def _save_state(path: str, state: Dict[str, Any]) -> None:
+    """Write `state` to `path` through a temporary file, so a crash mid-write keeps the previous one."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    torch.save(state, tmp)
+    os.replace(tmp, path)
+
+
 def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
           config: Optional[TrainConfig] = None,
           val_samples: Optional[Sequence[Sample]] = None,
@@ -248,9 +286,38 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     losses: List[float] = []
     val_accuracy: List[float] = []
     evals: List[Dict[str, float]] = []
+    order: List[int] = []            # this epoch's item order (indices into train_items)
+    start_epoch, start_b = 0, 0
+    resume_path = os.path.join(str(out_dir), RESUME) if out_dir else ""
+    trainable = {n: p for n, p in model.named_parameters() if p.requires_grad}
+    resumed = None
+    if resume_path and os.path.exists(resume_path):
+        resumed = torch.load(resume_path, map_location="cpu", weights_only=False)
+        changed = {k: (resumed["config"].get(k), getattr(c, k)) for k in _RESUME_KEYS
+                   if resumed["config"].get(k) != getattr(c, k)}
+        if changed or resumed["train_items"] != len(train_items):
+            raise ValueError("%s was written by a different run (%s); delete it to start over"
+                             % (resume_path, changed or "different training data"))
+        with torch.no_grad():
+            for n, p in trainable.items():
+                p.copy_(resumed["weights"][n].to(device))
+        optimizer.load_state_dict(resumed["optimizer"])
+        scheduler.load_state_dict(resumed["scheduler"])
+        losses, val_accuracy, evals = resumed["losses"], resumed["val_accuracy"], resumed["evals"]
+        order, start_epoch, start_b = resumed["order"], resumed["epoch"], resumed["b"]
+        _set_rng_state(resumed["rng"])
+        print("resumed from %s at step %d" % (resume_path, len(losses)), flush=True)
     tracker = Tracker(c.swanlab_project, c.run_name, {"train": asdict(c), "model": decider.cfg.to_dict(),
                            "train_items": len(train_items), "val_items": len(calib), "steps": steps,
-                           "eval_items": {name: len(its) for name, its in sets.items()}}, record_dir=str(out_dir or ""))
+                           "eval_items": {name: len(its) for name, its in sets.items()}}, record_dir=str(out_dir or ""),
+                      resume=resumed is not None)
+
+    def save_state(epoch: int, b: int) -> None:
+        _save_state(resume_path, {
+            "config": asdict(c), "train_items": len(train_items), "epoch": epoch, "b": b, "order": order,
+            "weights": {n: p.detach().cpu() for n, p in trainable.items()},
+            "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
+            "losses": losses, "val_accuracy": val_accuracy, "evals": evals, "rng": _rng_state()})
 
     def run_eval() -> Dict[str, float]:
         if evals and evals[-1]["step"] == len(losses):
@@ -263,13 +330,16 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         evals.append(dict(row, step=len(losses)))
         return evals[-1]
 
-    run_eval()
+    if resumed is None:
+        run_eval()
     log = TrainLog(tracker, device, steps, c.log_every)
-    for epoch in range(c.epochs):
-        random.shuffle(train_items)
-        for b in range(0, len(train_items), c.micro_batch):
+    for epoch in range(start_epoch, c.epochs):
+        if not (resumed and epoch == start_epoch):
+            order = order or list(range(len(train_items)))
+            random.shuffle(order)   # reshuffles last epoch's order, as shuffling the items in place did
+        for b in range(start_b if resumed and epoch == start_epoch else 0, len(train_items), c.micro_batch):
             sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * len(losses) / max(1, steps - 1)
-            chunk = train_items[b:b + c.micro_batch]
+            chunk = [train_items[i] for i in order[b:b + c.micro_batch]]
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
             pixels = torch.stack([images(it["image"]) for it in chunk])
@@ -298,6 +368,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     means["train/accuracy"]), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
+            if resume_path and c.save_every and len(losses) % c.save_every == 0:
+                save_state(epoch, b + c.micro_batch)
         val_accuracy.append(run_eval()["val/accuracy"])
 
     model.decision.encoder = peft_encoder.merge_and_unload()
@@ -319,6 +391,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
 
     decider.model = model.cpu().float()
     decider.save(out_dir)
+    if resume_path and os.path.exists(resume_path):
+        os.remove(resume_path)
     # "final" on the val set is measured on the data the temperatures were fitted on: not held out
     return {"losses": losses, "val_accuracy": val_accuracy, "evals": evals, "final": final,
             "calibration_fit_set": "val",

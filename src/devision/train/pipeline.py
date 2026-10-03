@@ -385,6 +385,9 @@ def run_plan(plan: Plan, start_from: Optional[str] = None, force: bool = False, 
             continue
         if stage:
             rerun = True  # every later stage builds on this one
+            state = os.path.join(step.out or "", "resume.pt")
+            if force and not dry_run and os.path.exists(state):
+                os.remove(state)   # --force: from the start, not from the resume state
         shown = step.argv[0] if step.shell else " ".join(shlex.quote(a) for a in step.argv)
         print("== %s %s\n   %s\n   log: %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), step.name, shown, step.log),
               flush=True)

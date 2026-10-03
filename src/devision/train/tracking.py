@@ -25,17 +25,26 @@ class Tracker:
     """SwanLab logging when `project` is set, otherwise a no-op. With `record_dir`, the run's project, id
     and last step are written to <record_dir>/swanlab_run.json, so evaluations can be added to it later."""
 
-    def __init__(self, project: str, run_name: str, config: Dict[str, Any], record_dir: str = ""):
+    def __init__(self, project: str, run_name: str, config: Dict[str, Any], record_dir: str = "",
+                 resume: bool = False):
+        """`resume`: continue the run recorded in record_dir (training picked up from a resume state)."""
         self.swanlab = None
         self.record: Dict[str, Any] = {}
         self.record_path = os.path.join(record_dir, RECORD) if record_dir else ""
         if project:
             import swanlab
 
-            run = swanlab.init(project=project, name=run_name or None, config=config)
+            earlier = None
+            if resume and self.record_path and os.path.exists(self.record_path):
+                with open(self.record_path) as f:
+                    earlier = json.load(f)
+            if earlier and earlier.get("id"):
+                run = swanlab.init(project=project, id=earlier["id"], resume="allow")
+            else:
+                run = swanlab.init(project=project, name=run_name or None, config=config)
             self.swanlab = swanlab
             self.record = {"project": project, "id": getattr(run, "id", None), "name": run_name,
-                           "url": getattr(run, "url", None), "last_step": 0}
+                           "url": getattr(run, "url", None), "last_step": (earlier or {}).get("last_step", 0)}
             self._save()
 
     def _save(self) -> None:
