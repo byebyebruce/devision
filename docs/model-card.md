@@ -18,7 +18,7 @@ datasets:
 - lmms-lab/POPE
 ---
 
-# deVision 0.1
+# deVision (round 2, `v2-align-lora`)
 
 deVision (Decision + Vision) answers typed questions about an image with **calibrated probabilities**, in one
 forward pass and without generating text. It is compatible with the Jev `/v1/systemone` API; the only
@@ -36,9 +36,9 @@ uv run devision-serve --checkpoint HF_REPO_ID --port 8000   # POST /v1/systemone
 ```
 
 ```python
-from devision.model import Decider
+import devision
 
-decider = Decider.load("HF_REPO_ID")
+decider = devision.load("HF_REPO_ID")
 decider.decide(
     state=[{"type": "image", "url": "https://example.com/kitchen.jpg"}],
     questions={
@@ -57,38 +57,46 @@ scorer over one `[MASK]` per option) → softmax with a per-type temperature. 51
 
 ## Training
 
-On a Mac (MPS), about 16 hours in total (`configs/v1-release-0.1.yaml` in the code repo, run with `devision-pipeline`):
+On a Mac (MPS), about 13 hours in total (`configs/v2-align-lora.yaml` in the code repo, run with `devision-pipeline`):
 
-1. **Alignment.** Image-conditioned masked captions on all COCO train2014 captions (82,583 images), training only the projector, with ModernBERT-large's MLM head.
+1. **Alignment.** Image-conditioned masked captions on all COCO train2014 captions (82,583 images, 2 epochs) with ModernBERT-large's MLM head, training the projector and a LoRA (r=16) on ModernBERT, merged afterwards.
 2. **Decisions.** RLCD (noisy-logit policy gradient with proper scoring rewards, plus soft cross-entropy), training the projector, decision head and a LoRA on ModernBERT (merged into this checkpoint):
    - 60k GQA balanced train questions (yes/no → `noul`, choose → `choice`) + 40k VQAv2 train yes/no questions, one epoch;
    - then 57k questions generated from COCO train2014 instance boxes (object presence with co-occurrence negatives, position, relative position, size) + 23k replayed questions, one epoch.
-3. **Calibration.** Per-type temperatures fitted on held-out GQA testdev + VQAv2 val questions: choice 2.72, noul 1.46.
+3. **Calibration.** Per-type temperatures fitted on held-out GQA testdev + VQAv2 val questions: choice 2.71, noul 1.57.
 
 Every evaluation image is excluded from every training source, under both its COCO and Visual Genome id.
 
 ## Evaluation
 
-Through `decide()` on CPU, with the fitted temperatures:
+Through `decide()` on CPU, with the fitted temperatures. The test sets hold no picture any training file used.
 
 | Set | Role | Questions | Accuracy | ECE |
 |---|---|---|---|---|
-| POPE adversarial | held out | 300 | 0.773 | 0.098 |
-| VQAv2 val yes/no (re-split by image, balanced) | **temperature fit** | 1,000 | 0.648 | 0.025 |
-| GQA testdev (yes/no + 2-way choice) | **temperature fit** | 1,000 | 0.635 | 0.042 |
-| COCO val2014 box questions | held out | 1,000 | 0.761 | 0.054 |
+| COCO object presence | held out | 1,120 | 0.931 | 0.023 |
+| COCO size (which is bigger) | held out | 1,100 | 0.837 | 0.029 |
+| VQAv2 multiple choice (13 categories) | held out | 1,420 | 0.826 | 0.142 |
+| GQA val (yes/no + choice) | held out | 992 | 0.750 | 0.051 |
+| COCO position | held out | 1,274 | 0.708 (above/below 0.902, left/right 0.516) | 0.035 |
+| VQAv2 val yes/no | held out | 1,000 | 0.691 | 0.030 |
+| COCO relative position | held out | 1,950 | 0.598 (above/below 0.860, left/right 0.518) | 0.017 |
+| POPE (all three splits) | watched in training | 8,676 | 0.828 | 0.084 |
+| GQA testdev + VQAv2 val | **temperature fit** | 2,000 | 0.683 | 0.029 |
 
-The temperatures were fitted on the VQAv2 + GQA rows, so their ECE is not a held-out result; on the held-out POPE and COCO questions the probabilities are less well calibrated. Validate any decision threshold on your own data.
+With every picture swapped for another one, accuracy falls to chance or to the question-only baseline on every set, so the scores come from looking at the image.
+
+On laya-vision's published questions, paired question by question with their per-question predictions (difference = ours − laya-vision 201M, 95% interval by picture bootstrap): VQAv2 yes/no 0.721 vs 0.717, +0.4 [−1.3, +2.0]; A-OKVQA 0.527 vs 0.598, −7.1 [−10.5, −3.5]; ScienceQA 0.471 vs 0.824 (deVision was never trained on A-OKVQA or ScienceQA-style questions; laya-vision was). POPE random / popular / adversarial: 0.842 / 0.835 / 0.805 (laya-vision reports 0.836 / 0.819 / 0.777).
 
 The VQAv2 and GQA sets are subsets drawn by this project and are not comparable to published leaderboard numbers.
 Latency on a Mac CPU: P50 about 160–190 ms per question (an older measurement without warm-up separation or thread count; not a server benchmark).
 
 ## Limitations
 
-- **It cannot tell where a named object is.** Questions like "Is the cup to the left of the laptop?" are at chance. Results on above/below and size come mostly from category priors. The visual tokens carry the positions; the model does not learn to pick the object the words refer to (see the experiment log).
+- **Left and right are at chance.** "Is the cup to the left of the laptop?" is a coin flip; above/below and size work. The visual tokens carry the positions; the model does not learn to pick the object the words refer to (see the experiment log).
+- Colour and counting choices are weak (about 0.49 each).
+- POPE-style questions lean towards "no" (recall 0.71) and VQAv2 multiple choice is over-confident (ECE 0.142); the temperatures were fitted on GQA/VQAv2 yes/no and two-way questions. Validate any decision threshold on your own data.
 - English only, one image per request, `noul` and `choice` only.
 - 256×256 input: small text and fine detail are lost.
-- POPE-style questions are less well calibrated (ECE 0.098) than the GQA/VQAv2 questions the temperatures were fitted on.
 
 ## License
 
