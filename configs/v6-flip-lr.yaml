@@ -1,0 +1,37 @@
+# Round 6: left/right counterfactual pairs. Every earlier fix left left/right at chance (docs/experiments/
+# 2026-09-30-rlcd-plateau.md); here each left/right question comes with the same question on the mirrored
+# picture and the answer swapped, so names and option order cannot answer it (docs/research/data-quality.md).
+# Data: scripts/data/v6_flip.py (and --dev), then scripts/data/v6_mix.py (out of the repo):
+# 12,000 pairs + 24,000 replayed questions from data-v3 without left/right ones, one pass.
+# Mirrored test sets: scripts/data/v6_flip.py --files test_position|test_relation --out <name>_flip.jsonl.
+# INIT: the current best when this runs -- runs/v5-data3/stage2 if round 5 is accepted, else runs/v3-data2/stage2.
+#   uv run devision-pipeline configs/v6-flip-lr.yaml
+name: v6-flip-lr
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: INIT
+    data: data/v6/train_flip_mix.jsonl      # 48,000 = 12,000 left/right pairs + 24,000 replayed
+    val: data/v3/dev_mix.jsonl              # temperature fit (calibration_fit)
+    eval: {lr_pairs: data/v6/dev_lr_pairs.jsonl}   # 772 dev left/right questions + their mirrors
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 300, eval_every: 1000}
+
+evaluate:
+  image_identity: data/v2/image_identity.json
+  controls: true                           # + mismatched pictures and reversed options for every set
+  sets:
+    dev_mix: data/v3/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl   # left/right test questions on mirrored pictures:
+    test_relation_flip: data/v6/test_relation_flip.jsonl   # right on both a question and its mirror = grounded
