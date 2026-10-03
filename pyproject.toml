@@ -45,6 +45,7 @@ devision-eval = "devision.train.cli:eval_main"
 devision-serve = "devision.serve.cli:serve_main"
 devision-pipeline = "devision.train.pipeline:pipeline_main"
 devision-compare = "devision.train.cli:compare_main"
+devision-calibrate = "devision.train.cli:calibrate_main"
 
 [project.optional-dependencies]
 serve = [
