@@ -10,7 +10,8 @@ One JSON object per JSONL line:
 
 `questions` follows the Jev request format (noul / choice); `gold` is a distribution over the
 options (noul: "false" / "true") and is used as a soft target.
-An optional "state_text" is sent next to the image as text state (evaluation only, e.g. a hint).
+An optional "state_text" is text that comes with the image (e.g. a ScienceQA hint): decide() gets it as
+[image, state_text], training feeds it to the encoder the same way.
 
 The alignment stage (`align.py`) reads caption samples instead, one image per line:
 

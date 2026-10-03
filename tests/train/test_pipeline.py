@@ -115,3 +115,25 @@ def test_training_continues_from_an_aligned_checkpoint(tmp_path):
                              seed=0, device="cpu"))
     result = evaluate(Decider.load(tmp_path / "ckpt"), samples, data_root=root)
     assert result["accuracy"]["noul"] > 0.8
+
+
+@pytest.mark.slow
+def test_text_that_comes_with_the_image_is_learned_from(tmp_path):
+    """state_text (e.g. a ScienceQA hint) reaches the model in training as decide() passes it."""
+    root = tmp_path / "data"
+    (root / "images").mkdir(parents=True)
+    samples = []
+    for i in range(32):
+        color = "red" if i % 2 else "blue"
+        Image.new("RGB", (64, 64), (128, 128, 128)).save(root / "images" / ("grey%d.jpg" % i))
+        samples.append({"id": "t:%d" % i, "source": "synthetic", "image_id": "syn:%d" % i,
+                        "image": "images/grey%d.jpg" % i,
+                        "state_text": "it is %s" % color,
+                        "questions": {"q": {"type": "noul", "instructions": "Is it red?"}},
+                        "gold": {"q": {"probabilities": {"false": float(color == "blue"),
+                                                         "true": float(color == "red")}}}})
+    train(tiny_decider(seed=1), samples, data_root=root, out_dir=tmp_path / "ckpt",
+          config=TrainConfig(epochs=30, micro_batch=8, lr_new=3e-3, lr_head=3e-3, lr_lora=3e-3, lora_r=32,
+                             lora_alpha=128, warmup=10, eval_every=0, seed=0, device="cpu"))
+    result = evaluate(Decider.load(tmp_path / "ckpt"), samples, data_root=root)
+    assert result["accuracy"]["noul"] > 0.8   # the picture is the same grey for every answer

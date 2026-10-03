@@ -63,7 +63,8 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
     items = []
     for s in samples:
         for qid, q in s["questions"].items():
-            it = question_item(decider.tok, decider.cfg, "", q)
+            # text that comes with the image (e.g. a ScienceQA hint), as decide() gets it from the state
+            it = question_item(decider.tok, decider.cfg, s.get("state_text", ""), q)
             probs = s["gold"][qid]["probabilities"]
             keys = ["false", "true"] if q["type"] == "noul" else list(q["criteria"])
             target = [float(probs.get(k, 0.0)) for k in keys]
