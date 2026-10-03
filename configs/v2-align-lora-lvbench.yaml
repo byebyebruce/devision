@@ -1,15 +1,15 @@
 # Our model on laya-vision's public benchmark (rebuilt by scripts/data/lv_bench.py, out of the repo):
 # the exact questions of their published per-question predictions (VQAv2 yes/no without the 113
 # annotator ties, A-OKVQA val, ScienceQA image val with hints as text) plus all of POPE. Evaluation only.
-#   uv run devision-pipeline configs/lv-bench-align-lora.yaml
+#   uv run devision-pipeline configs/v2-align-lora-lvbench.yaml
 # Then pair with their published rows, on all questions and on the ones our training never saw:
 #   uv run devision-compare data/lv_bench/laya-vision-201m.aokvqa.details.jsonl \
-#       runs/align-lora-cocoqa/lv_aokvqa.details.jsonl [--only data/lv_bench/aokvqa.unseen.jsonl]
-name: lv-bench-align-lora
+#       runs/v2-align-lora/eval/lv_aokvqa.details.jsonl [--only data/lv_bench/aokvqa.unseen.jsonl]
+name: lvbench
 stages: []
 
 evaluate:
-  checkpoint: runs/align-lora-cocoqa
+  checkpoint: runs/v2-align-lora/stage2b
   calibration_fit: data/val_mix.jsonl
   history: [data/pope.jsonl, data/val_cocoqa.jsonl]
   image_identity: data/v2/image_identity.json

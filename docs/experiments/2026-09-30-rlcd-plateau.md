@@ -1,5 +1,7 @@
 # 实验记录：直接 RLCD 微调停在 ln2（2026-09-30）
 
+> 目录名（2026-10-03 起按轮次整理）：第 1 轮 `runs/v1-release-0.1/` = `align-full-mac` → `stage2-100k-lowlr` → `stage2-cocoqa`（align / stage2a / stage2b）；第 2 轮 `runs/v2-align-lora/` = `align-lora` → `align-lora-100k` → `align-lora-cocoqa`；其余早期和失败的运行在 `runs/archive/<原名>`。下文保留当时的名字。
+
 ## 结论
 
 从 Laya + SigLIP2 + 随机初始化的投影层出发，直接在 GQA/VQAv2 决策题上做 RLCD 微调，模型学不到东西：训练 nll 很快停在 ln2 ≈ 0.693，即每题都输出 50/50，val 准确率在随机水平。加 warmup、加数据、加步数都没用。瓶颈是投影层没有学会把视觉特征对齐到 ModernBERT，下一步是在任务微调前加投影层对齐阶段。
@@ -16,7 +18,7 @@
 | 对照：100 步 warmup | `train_small.jsonl` | 200 | 0.696 | 0.520 |
 | `full-1ep` | `train.jsonl`，19998 题 | 2500（1 epoch） | 0.693 | 0.530 |
 
-`full-1ep` 训练 nll 每 500 步的均值：0.697 / 0.694 / 0.694 / 0.693 / 0.694。拟合出的温度是 [1.0, 1.0, 1.0]。checkpoint 在 `runs/full-1ep`，SwanLab run `full-1ep`。
+`full-1ep` 训练 nll 每 500 步的均值：0.697 / 0.694 / 0.694 / 0.693 / 0.694。拟合出的温度是 [1.0, 1.0, 1.0]。checkpoint 在 `runs/archive/full-1ep`，SwanLab run `full-1ep`。
 
 ## 诊断
 
@@ -97,7 +99,7 @@ val 上被遮词的准确率 / nll。"错配"指每张图配上另一张图的 c
 
 第 2,500 步后基本饱和。
 
-阶段 2 `devision-train --init runs/align-mac --lr-new 1e-4`：`train.jsonl`（19,998 题），micro batch 8，4 个 epoch 共 10,000 步，约 3 小时。
+阶段 2 `devision-train --init runs/align-mac --lr-new 1e-4`（checkpoint 现在 `runs/archive/align-mac`）：`train.jsonl`（19,998 题），micro batch 8，4 个 epoch 共 10,000 步，约 3 小时。
 
 | epoch | 训练 nll（每 50 步采样的均值） | val 准确率 |
 |---|---|---|
@@ -303,7 +305,7 @@ GQA 空间题：to the left of / to the right of 0.50 → 0.62（71% 答 right�
 
 训练中 val 总体在第 5,000 步最高（0.694），终点 0.683；GQA 后半程略降。阶段 2b 对 VQAv2 没有再提升（2a 终点 0.723）。
 
-**v2 测试集**（`configs/eval-v1-align-lora.yaml`，日志 `runs/logs/eval-v1-align-lora.log`，明细 `runs/align-lora-cocoqa/v2eval_*.details.jsonl`）。只看题目基线取自 `data/v2/MANIFEST.json` 的 `all_files` 规则；配错图 = 同一批题换成别的图片（seed 0 错排）；翻转率 = 选择题倒序后预测改变的比例（只对 choice）。
+**v2 测试集**（`configs/v2-align-lora-testsets.yaml`，日志 `runs/v2-align-lora/logs/eval-v1-align-lora.log`，明细 `runs/v2-align-lora/eval/v2eval_*.details.jsonl`）。只看题目基线取自 `data/v2/MANIFEST.json` 的 `all_files` 规则；配错图 = 同一批题换成别的图片（seed 0 错排）；翻转率 = 选择题倒序后预测改变的比例（只对 choice）。
 
 | 集合 | 用途 | 准确率 | NLL | ECE | 配错图 | 只看题目 | 翻转率 |
 |---|---|---|---|---|---|---|---|

@@ -1,6 +1,6 @@
 # release-0.1 with one change: stage 1 also adapts ModernBERT through a LoRA (r=16).
-# Started 2026-10-02 as runs/logs/pipeline-align-lora.sh (outputs runs/align-lora*); this file is the
-# same experiment for reruns.
+# Round 2 (runs/v2-align-lora/), started 2026-10-02 as a shell script (its logs/pipeline.sh); this file is
+# the same experiment for reruns, each of which is a new round.
 name: align-lora
 device: mps
 common:
@@ -37,5 +37,5 @@ evaluate:
     pope: data/pope.jsonl
     val_cocoqa: data/val_cocoqa.jsonl
   commands:
-    - uv run python runs/analysis/gqa_by_type.py {checkpoint} > {checkpoint}/gqa_by_type.txt 2>&1
-    - uv run python runs/analysis/cocoqa_by_kind.py {checkpoint} > {checkpoint}/cocoqa_by_kind.txt 2>&1
+    - uv run python runs/analysis/gqa_by_type.py {checkpoint} > {eval_dir}/gqa_by_type.txt 2>&1
+    - uv run python runs/analysis/cocoqa_by_kind.py {checkpoint} > {eval_dir}/cocoqa_by_kind.txt 2>&1

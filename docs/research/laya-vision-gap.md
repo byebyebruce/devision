@@ -4,7 +4,7 @@ laya-vision 是目前唯一公开的、能看图的 System One（Jev 式）模�
 
 ## 结论
 
-**2026-10-03 更新（同一批题逐题配对，新一轮 `align-lora-cocoqa`，详见下一节）**：VQAv2 是非题打平（+0.4 个点，区间 ±2）；POPE 三档都不低于对方公开分；A-OKVQA 低 7 个点、ScienceQA 低 35 个点，这两类题我们没训练过、对方训练过；左右关系仍在随机水平。下面五条是 2026-10-01 用发布 checkpoint 和不同题目得出的旧结论，保留作对照。
+**2026-10-03 更新（同一批题逐题配对，第 2 轮 `runs/v2-align-lora`，详见下一节）**：VQAv2 是非题打平（+0.4 个点，区间 ±2）；POPE 三档都不低于对方公开分；A-OKVQA 低 7 个点、ScienceQA 低 35 个点，这两类题我们没训练过、对方训练过；左右关系仍在随机水平。下面五条是 2026-10-01 用发布 checkpoint 和不同题目得出的旧结论，保留作对照。
 
 - **"图里有没有某物"已经追平**：POPE adversarial 0.773 对 0.777。
 - **日常是非题还差约 7 个点**：VQAv2 yes/no 0.648 对 0.715（历史最好的 `two-stage-mac` 是 0.688，差 3 个点）。
@@ -14,7 +14,7 @@ laya-vision 是目前唯一公开的、能看图的 System One（Jev 式）模�
 
 ## 同一批题上的逐题对比（2026-10-03）
 
-对象：`runs/align-lora-cocoqa`（对齐阶段加 LoRA 的新一轮，非发布 checkpoint）vs laya-vision 201M 公开的逐题预测。评测集按他们的题重建（`scripts/data/lv_bench.py`，标签逐题核对一致；VQAv2 两边都去掉 113 道标注者五五开的题），配置 `configs/lv-bench-align-lora.yaml`。差值 = 我们 − 他们，95% 区间按图片配对重采样（`devision-compare`，结果在 `runs/align-lora-cocoqa/compare/`）。"未见过" = 去掉我们训练用过的图片（A-OKVQA 按感知哈希，近似）。
+对象：第 2 轮 `runs/v2-align-lora/stage2b`（对齐阶段加 LoRA，非发布 checkpoint）vs laya-vision 201M 公开的逐题预测。评测集按他们的题重建（`scripts/data/lv_bench.py`，标签逐题核对一致；VQAv2 两边都去掉 113 道标注者五五开的题），配置 `configs/v2-align-lora-lvbench.yaml`。差值 = 我们 − 他们，95% 区间按图片配对重采样（`devision-compare`，结果在 `runs/v2-align-lora/eval/compare/`）。"未见过" = 去掉我们训练用过的图片（A-OKVQA 按感知哈希，近似）。
 
 | 集合 | 题数 | laya-vision | 我们 | 差值 [95% 区间] |
 |---|---|---|---|---|
@@ -126,4 +126,4 @@ POPE（9,000 题）他们只公开总分，不能配对；我们的区间只反�
 - [r33drichards/laya-vision](https://github.com/r33drichards/laya-vision)，结构说明见 `site-docs/concepts/architecture.md`
 - [ModernVBERT/modernvbert](https://huggingface.co/ModernVBERT/modernvbert)（arXiv 2510.01149）
 - [systemonemodels.org](https://systemonemodels.org/)：收录的 System One 模型里其余都只接受文本
-- deVision 的数字：`runs/stage2-cocoqa/*.json`、`runs/analysis/`，过程见 `../experiments/2026-09-30-rlcd-plateau.md`
+- deVision 的数字：`runs/v1-release-0.1/eval/*.json`（第 1 轮）、`runs/v2-align-lora/eval/`（第 2 轮）、`runs/analysis/`，过程见 `../experiments/2026-09-30-rlcd-plateau.md`

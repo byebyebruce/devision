@@ -177,7 +177,8 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
     tracker = Tracker(c.swanlab_project, c.run_name, {"align": asdict(c), "model": decider.cfg.to_dict(),
-                           "train_images": len(train_samples), "val_images": len(val), "steps": steps})
+                           "train_images": len(train_samples), "val_images": len(val), "steps": steps},
+                      record_dir=str(out_dir or ""))
     losses: List[float] = []
     evals: List[Dict[str, float]] = []
 

@@ -1,8 +1,8 @@
-# Stage 2 on the v2 data mix, from the LoRA-aligned stage 1 (runs/align-lora). Compare with
-# configs/eval-v1-align-lora.yaml: the same stage 1 + v1 data, on the same test sets and controls.
-#   uv run devision-pipeline configs/v2-align-lora.yaml
+# Stage 2 on the data-v2 mix, from round 2's LoRA-aligned stage 1 (runs/v2-align-lora/align). Compare with
+# configs/v2-align-lora-testsets.yaml: the same stage 1 + data-v1, on the same test sets and controls.
+#   uv run devision-pipeline configs/data2.yaml          # a new round, runs/v<N>-data2/
 # Data: scripts/data/v2_build.py then scripts/data/v2_mix.py (out of the repo); see docs/research/data-quality.md.
-name: v2-align-lora
+name: data2
 device: mps
 common:
   log_every: 50
@@ -10,7 +10,7 @@ common:
 stages:
   - name: stage2
     kind: train
-    init: runs/align-lora
+    init: runs/v2-align-lora/align
     data: data/v2/train_mix.jsonl          # 134,556 questions, left/right 4.1%, <= 6 per picture
     val: data/v2/dev_mix.jsonl             # monitoring, checkpoint choice, temperature fit (calibration_fit)
     params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 1000}

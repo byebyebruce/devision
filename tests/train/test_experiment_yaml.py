@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from devision.train import pipeline
 from devision.train.pipeline import PlanError, build_plan, run_plan
 
 
@@ -24,16 +25,17 @@ def config(**over):
 
 
 def plan(cfg):
-    return build_plan(cfg, python="python", check_files=False)
+    return build_plan(cfg, python="python", check_files=False, round_name="v3-exp")
 
 
 def test_a_stage_starts_from_the_checkpoint_of_the_stage_it_names():
     align, decide = plan(config()).steps[:2]
 
-    assert align.out == "runs/exp-align"
+    assert align.out == "runs/v3-exp/align"
     assert "--init" not in align.argv  # first stage: Laya + SigLIP2 + fresh projector
-    assert decide.argv[decide.argv.index("--init") + 1] == "runs/exp-align"
-    assert decide.argv[decide.argv.index("--run-name") + 1] == "exp-decide"
+    assert decide.argv[decide.argv.index("--init") + 1] == "runs/v3-exp/align"
+    assert decide.argv[decide.argv.index("--run-name") + 1] == "v3-exp/decide"
+    assert decide.log == "runs/v3-exp/logs/decide.log"
 
 
 def test_params_and_common_params_reach_the_trainer_as_flags():
@@ -50,7 +52,7 @@ def test_controls_add_mismatched_and_reversed_runs_per_set():
     assert "mismatched:pope" in names and "reversed:pope" in names
     step = next(s for s in p.steps if s.name == "mismatched:pope")
     assert step.argv[step.argv.index("--control") + 1] == "mismatched"
-    assert p.control_outputs["pope"]["reversed"] == "runs/exp-decide/pope.reversed.json"
+    assert p.control_outputs["pope"]["reversed"] == "runs/v3-exp/eval/pope.reversed.json"
 
 
 def test_an_existing_checkpoint_can_be_evaluated_without_training():
@@ -84,9 +86,9 @@ def test_sets_are_labelled_by_what_they_were_used_for():
 def test_evaluation_runs_on_the_last_stage_and_fills_in_commands():
     p = plan(config())
 
-    assert p.checkpoint == "runs/exp-decide"
-    assert p.eval_outputs == {"pope": "runs/exp-decide/pope.json"}
-    assert p.steps[-1].argv == ["echo runs/exp-decide exp"]
+    assert p.checkpoint == "runs/v3-exp/decide"
+    assert p.eval_outputs == {"pope": "runs/v3-exp/eval/pope.json"}
+    assert p.steps[-1].argv == ["echo runs/v3-exp/decide exp"]
 
 
 @pytest.mark.parametrize("cfg, message", [
@@ -111,11 +113,11 @@ def test_missing_data_files_are_reported_up_front(tmp_path):
 
 def test_finished_stages_are_skipped_and_everything_after_a_rerun_stage_reruns(tmp_path, capsys):
     cfg = config(runs_dir=str(tmp_path))
-    p = build_plan(cfg, python="python", check_files=False)
-    (tmp_path / "exp-align").mkdir()
-    (tmp_path / "exp-align" / "align_report.json").write_text("{}")
-    (tmp_path / "exp-decide").mkdir()
-    (tmp_path / "exp-decide" / "train_report.json").write_text("{}")
+    p = build_plan(cfg, python="python", check_files=False, round_name="v1-exp")
+    (tmp_path / "v1-exp" / "align").mkdir(parents=True)
+    (tmp_path / "v1-exp" / "align" / "align_report.json").write_text("{}")
+    (tmp_path / "v1-exp" / "decide").mkdir()
+    (tmp_path / "v1-exp" / "decide" / "train_report.json").write_text("{}")
 
     run_plan(p, dry_run=True)
     out = capsys.readouterr().out
@@ -124,6 +126,51 @@ def test_finished_stages_are_skipped_and_everything_after_a_rerun_stage_reruns(t
     run_plan(p, start_from="decide", dry_run=True)
     out = capsys.readouterr().out
     assert "align: already done" in out and "decide: already done" not in out
+
+
+def test_each_run_of_a_training_config_is_a_new_round(tmp_path):
+    (tmp_path / "v1-first").mkdir()
+    (tmp_path / "v2-second").mkdir()
+    (tmp_path / "archive").mkdir()
+    p = build_plan(config(runs_dir=str(tmp_path)), python="python", check_files=False)
+    assert p.round_dir == str(tmp_path / "v3-exp")
+    assert p.steps[0].out == str(tmp_path / "v3-exp" / "align")
+
+
+def test_evaluating_a_checkpoint_of_a_round_writes_into_that_round(tmp_path):
+    (tmp_path / "v2-old" / "decide").mkdir(parents=True)
+    (tmp_path / "v2-old" / "run.json").write_text("{}")
+    ck = str(tmp_path / "v2-old" / "decide")
+    p = plan(config(stages=[], evaluate={"checkpoint": ck, "prefix": "lv_", "sets": {"pope": "pope.jsonl"}}))
+    assert p.round_dir is None   # evaluating is not a new round
+    assert p.eval_outputs == {"pope": str(tmp_path / "v2-old" / "eval" / "lv_pope.json")}
+    assert p.metric_names == {"pope": "lv_pope"}
+
+
+def test_finished_evaluations_are_skipped_on_a_rerun(tmp_path, capsys):
+    p = build_plan(config(runs_dir=str(tmp_path)), python="python", check_files=False, round_name="v1-exp")
+    for st in ("align", "decide"):
+        (tmp_path / "v1-exp" / st).mkdir(parents=True)
+    (tmp_path / "v1-exp" / "align" / "align_report.json").write_text("{}")
+    (tmp_path / "v1-exp" / "decide" / "train_report.json").write_text("{}")
+    (tmp_path / "v1-exp" / "eval").mkdir()
+    (tmp_path / "v1-exp" / "eval" / "pope.json").write_text("{}")
+    run_plan(p, dry_run=True)
+    assert "eval:pope: already done" in capsys.readouterr().out
+
+
+def test_the_evaluation_summary_goes_to_swanlab_as_test_and_ref_numbers(tmp_path):
+    fresh = _jsonl(tmp_path / "fresh.jsonl", [{"id": "f1", "image_id": "coco:50"}])
+    p = plan(config(evaluate={"sets": {"pope": "pope.jsonl", "fresh": fresh}}))
+    for set_name, acc in (("pope", 0.8), ("fresh", 0.7)):
+        out = tmp_path / ("%s.json" % set_name)
+        out.write_text(json.dumps({"accuracy_all": acc, "accuracy": {"noul": acc, "choice": None},
+                                   "nll": 0.5, "ece": 0.03}))
+        p.eval_outputs[set_name] = str(out)
+    m = pipeline.swanlab_metrics(p)
+    assert m["ref/pope/accuracy"] == 0.8      # pope was watched during training
+    assert m["test/fresh/accuracy"] == 0.7
+    assert "test/fresh/accuracy_choice" not in m and "test/fresh/flip_rate" not in m
 
 
 def _jsonl(path, rows):

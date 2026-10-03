@@ -1,4 +1,4 @@
-# The released checkpoint (deVision 0.1, stage2-cocoqa): ~16 h on a Mac (MPS).
+# The released checkpoint (deVision 0.1; round 1, runs/v1-release-0.1/stage2b): ~16 h on a Mac (MPS).
 #   uv run devision-pipeline configs/release-0.1.yaml
 # Data files come from the converters in scripts/data/ and the analysis commands from runs/analysis/,
 # both kept out of the repo (see CLAUDE.md).
@@ -42,5 +42,5 @@ evaluate:
     pope: data/pope.jsonl
     val_cocoqa: data/val_cocoqa.jsonl
   commands:
-    - uv run python runs/analysis/gqa_by_type.py {checkpoint} > {checkpoint}/gqa_by_type.txt 2>&1
-    - uv run python runs/analysis/cocoqa_by_kind.py {checkpoint} > {checkpoint}/cocoqa_by_kind.txt 2>&1
+    - uv run python runs/analysis/gqa_by_type.py {checkpoint} > {eval_dir}/gqa_by_type.txt 2>&1
+    - uv run python runs/analysis/cocoqa_by_kind.py {checkpoint} > {eval_dir}/cocoqa_by_kind.txt 2>&1

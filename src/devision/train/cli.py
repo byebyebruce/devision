@@ -144,6 +144,7 @@ def eval_main(argv=None) -> None:
     text = json.dumps(result, indent=2)
     print(text)
     if a.out:
+        os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
         with open(a.out, "w") as f:
             f.write(text)
     details = a.details or (a.out[:-5] if a.out and a.out.endswith(".json") else a.out or "eval") + ".details.jsonl"

@@ -32,7 +32,7 @@ pip install "devision @ git+https://github.com/byebyebruce/devision"          # 
 ```python
 import devision
 
-decider = devision.load("runs/stage2-cocoqa")   # 本地 checkpoint 目录，或 Hugging Face 仓库 id
+decider = devision.load("runs/v1-release-0.1/stage2b")   # 本地 checkpoint 目录，或 Hugging Face 仓库 id
 # devision.load("user/repo", revision="v0.1", token="hf_...")   # 固定版本 / 私有仓库
 
 result = decider.predict(            # 和 decider.decide(...) 完全相同，predict 是 Laya 的叫法
@@ -50,7 +50,7 @@ result = decider.predict(            # 和 decider.decide(...) 完全相同，pr
 ### 启动 HTTP 服务
 
 ```bash
-devision-serve --checkpoint runs/stage2-cocoqa --port 8000
+devision-serve --checkpoint runs/v1-release-0.1/stage2b --port 8000
 ```
 
 | 参数 | 作用 |

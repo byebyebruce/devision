@@ -7,6 +7,7 @@ One row every `log_every` steps, grouped by prefix so SwanLab draws one panel gr
   sys/    CPU, RAM, swap and accelerator load, sampled at log time
 Evaluations go in their own rows (val/, pope/, ...) from the training loops.
 """
+import json
 import os
 import re
 import subprocess
@@ -17,24 +18,54 @@ from typing import Any, Dict, List
 import torch
 
 
-class Tracker:
-    """SwanLab logging when `project` is set, otherwise a no-op."""
+RECORD = "swanlab_run.json"   # in a stage's output directory: which SwanLab run trained it
 
-    def __init__(self, project: str, run_name: str, config: Dict[str, Any]):
+
+class Tracker:
+    """SwanLab logging when `project` is set, otherwise a no-op. With `record_dir`, the run's project, id
+    and last step are written to <record_dir>/swanlab_run.json, so evaluations can be added to it later."""
+
+    def __init__(self, project: str, run_name: str, config: Dict[str, Any], record_dir: str = ""):
         self.swanlab = None
+        self.record: Dict[str, Any] = {}
+        self.record_path = os.path.join(record_dir, RECORD) if record_dir else ""
         if project:
             import swanlab
 
-            swanlab.init(project=project, name=run_name or None, config=config)
+            run = swanlab.init(project=project, name=run_name or None, config=config)
             self.swanlab = swanlab
+            self.record = {"project": project, "id": getattr(run, "id", None), "name": run_name,
+                           "url": getattr(run, "url", None), "last_step": 0}
+            self._save()
+
+    def _save(self) -> None:
+        if self.record_path and self.record.get("id"):
+            os.makedirs(os.path.dirname(self.record_path), exist_ok=True)
+            with open(self.record_path, "w") as f:
+                json.dump(self.record, f, indent=1)
 
     def log(self, data: Dict[str, float], step: int) -> None:
         if self.swanlab:
             self.swanlab.log(data, step=step)
+            self.record["last_step"] = max(step, self.record.get("last_step", 0))
 
     def finish(self) -> None:
         if self.swanlab:
+            self._save()
             self.swanlab.finish()
+
+
+def log_to_finished_run(record_path: str, data: Dict[str, float]) -> str:
+    """Add `data` to the SwanLab run recorded in `record_path` (resumed by id), at its last step.
+    Used for evaluation summaries, which belong to the run that trained the checkpoint."""
+    import swanlab
+
+    with open(record_path) as f:
+        rec = json.load(f)
+    swanlab.init(project=rec["project"], id=rec["id"], resume="must")
+    swanlab.log(data, step=int(rec.get("last_step") or 0))
+    swanlab.finish()
+    return rec.get("url") or rec["id"]
 
 
 _IOREG = {"Device Utilization %": "sys/gpu_util_pct", "In use system memory": "sys/gpu_mem_gb"}

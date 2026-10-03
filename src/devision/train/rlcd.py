@@ -250,7 +250,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     evals: List[Dict[str, float]] = []
     tracker = Tracker(c.swanlab_project, c.run_name, {"train": asdict(c), "model": decider.cfg.to_dict(),
                            "train_items": len(train_items), "val_items": len(calib), "steps": steps,
-                           "eval_items": {name: len(its) for name, its in sets.items()}})
+                           "eval_items": {name: len(its) for name, its in sets.items()}}, record_dir=str(out_dir or ""))
 
     def run_eval() -> Dict[str, float]:
         if evals and evals[-1]["step"] == len(losses):
