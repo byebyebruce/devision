@@ -111,9 +111,11 @@ def _sha256(path: str) -> str:
 def eval_main(argv=None) -> None:
     """Evaluate a checkpoint on a JSONL of samples through decide(): a summary JSON (--out) and one record
     per question (--details, default <out without .json>.details.jsonl), from which every number of the
-    summary can be recomputed."""
+    summary can be recomputed. Questions about the same picture and text state go into one decide()
+    request (at most --max-questions), so each picture is encoded once; --no-group asks one question per
+    request (single-question latency)."""
     from ..model import Decider
-    from .evaluate import CONTROLS, evaluate
+    from .evaluate import CONTROLS, MAX_QUESTIONS, evaluate
 
     p = argparse.ArgumentParser(description=eval_main.__doc__)
     p.add_argument("--checkpoint", required=True)
@@ -125,6 +127,10 @@ def eval_main(argv=None) -> None:
                    help="mismatched: each picture's questions about another picture; reversed: choice options reversed")
     p.add_argument("--shuffle-images", action="store_true", help="same as --control mismatched")
     p.add_argument("--seed", type=int, default=0, help="seed of the mismatched-picture pairing")
+    p.add_argument("--max-questions", type=int, default=MAX_QUESTIONS,
+                   help="most questions per decide() request when grouping by picture")
+    p.add_argument("--no-group", action="store_true",
+                   help="one question per decide() request (to measure single-question latency; slower)")
     p.add_argument("--no-temperature", action="store_true",
                    help="evaluate the raw probabilities (all temperatures 1), to compare before / after calibration")
     p.add_argument("--role", choices=["unspecified", "heldout", "calibration_fit", "monitoring"], default="unspecified",
@@ -132,12 +138,15 @@ def eval_main(argv=None) -> None:
                         "Not given -> unspecified (nothing is claimed)")
     a = p.parse_args(argv)
     control = "mismatched" if a.shuffle_images else a.control
+    if a.max_questions < 1:
+        p.error("--max-questions must be >= 1")
 
     records: list = []
     decider = Decider.load(a.checkpoint)
     if a.no_temperature:
         decider.cfg.temperature = [1.0, 1.0, 1.0]
-    result = evaluate(decider, read_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records)
+    result = evaluate(decider, read_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records,
+                      max_questions=None if a.no_group else a.max_questions)
     result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
                      "temperature": "none (raw)" if a.no_temperature else "fitted",
                      "control": control, "seed": a.seed, "code": _code_version()}
