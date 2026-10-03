@@ -76,6 +76,10 @@ class VisionDecisionModel(nn.Module):
     def __init__(self, vision: SiglipVisionModel, decision: DecisionModel, cfg: ModelConfig):
         super().__init__()
         self.vision = vision
+        # only the patch features are used: skip SigLIP's pooling head (its weights stay, so checkpoints load as before)
+        holder = getattr(vision, "vision_model", vision)   # where `use_head` lives depends on the transformers version
+        if hasattr(holder, "use_head"):
+            setattr(holder, "use_head", False)
         self.decision = decision
         self.projector = Projector(vision.config.hidden_size, text_encoder(decision).config.hidden_size,
                                    cfg.visual_shuffle)

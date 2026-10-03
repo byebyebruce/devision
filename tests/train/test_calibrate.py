@@ -104,3 +104,25 @@ def test_calibrate_in_place_rewrites_the_checkpoint_config(checkpoint_and_data):
     calibrate_main(["--checkpoint", str(ckpt), "--data", str(val), "--data-root", str(root), "--in-place"])
 
     assert set(Decider.load(ckpt).cfg.temperature_by_options) == {"noul:2", "choice:3-5"}
+
+
+@pytest.mark.parametrize("mode", ["out", "in_place"])
+def test_calibrate_keeps_every_other_config_entry(checkpoint_and_data, tmp_path, mode):
+    """Only the temperatures change: e.g. the "training" record of a published checkpoint survives."""
+    ckpt, val, root = checkpoint_and_data
+    config = json.loads((ckpt / "devision_config.json").read_text())
+    config["training"] = {"round": "v9-x", "stage": "stage2"}
+    config["note"] = "kept"
+    (ckpt / "devision_config.json").write_text(json.dumps(config))
+    before = (ckpt / "devision_config.json").read_text()
+    args = ["--checkpoint", str(ckpt), "--data", str(val), "--data-root", str(root)]
+    target = tmp_path / "calibrated" if mode == "out" else ckpt
+    calibrate_main(args + (["--out", str(target)] if mode == "out" else ["--in-place"]))
+
+    after = json.loads((target / "devision_config.json").read_text())
+    changed = {k for k in set(config) | set(after) if config.get(k) != after.get(k)}
+    assert changed <= {"temperature", "temperature_by_options"} and "temperature_by_options" in changed
+    assert after["training"] == {"round": "v9-x", "stage": "stage2"} and after["note"] == "kept"
+    if mode == "out":
+        assert (ckpt / "devision_config.json").read_text() == before
+    assert set(Decider.load(target).cfg.temperature_by_options) == {"noul:2", "choice:3-5"}

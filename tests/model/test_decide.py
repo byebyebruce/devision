@@ -215,3 +215,12 @@ def test_a_bucket_temperature_changes_only_the_questions_in_that_bucket():
     assert after["three"] != before["three"]
     assert after["three"]["choice"] == before["three"]["choice"]   # a temperature never changes the answer
     assert {q: after[q] for q in ("noul", "two", "seven")} == {q: before[q] for q in ("noul", "two", "seven")}
+
+
+def test_options_that_become_identical_when_cut_to_fit_are_refused(decider):
+    # each option is longer than the head gives one option, and they differ only at the end
+    prefix = "the dog is sitting on the left side of the white cat in the picture " * 6
+    q = {"type": "choice", "instructions": "Which is it?",
+         "criteria": {prefix + "left": None, prefix + "right": None}}
+    with pytest.raises(InvalidRequest, match="identical"):
+        decider.decide(state=[{"type": "image", "base64": image_b64()}], questions={"q": q})

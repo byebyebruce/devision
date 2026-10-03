@@ -221,8 +221,14 @@ def calibrate_main(argv=None) -> None:
         for name in CHECKPOINT_FILES:
             copy = shutil.copytree if os.path.isdir(os.path.join(src, name)) else shutil.copyfile
             copy(os.path.join(src, name), os.path.join(a.out, name))
+    # rewrite only the temperatures: other entries (e.g. the "training" record of a published checkpoint)
+    # are not ModelConfig fields and would otherwise be lost
+    with open(os.path.join(target, CONFIG_FILE)) as f:
+        saved = json.load(f)
+    saved["temperature"] = list(decider.cfg.temperature)
+    saved["temperature_by_options"] = dict(decider.cfg.temperature_by_options)
     with open(os.path.join(target, CONFIG_FILE), "w") as f:
-        json.dump(decider.cfg.to_dict(), f, indent=2)
+        json.dump(saved, f, indent=2)
     with open(os.path.join(target, "calibrate_report.json"), "w") as f:
         json.dump(report, f, indent=2)
     print("wrote %s" % os.path.join(target, CONFIG_FILE))

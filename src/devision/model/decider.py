@@ -7,7 +7,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, NoReturn, Optional
+from typing import Any, Dict, List, NoReturn, Optional, cast
 
 import torch
 from laya.common import QTYPES, build_sequence, collate_items, serialize_state
@@ -106,8 +106,11 @@ def _option_count(q: Dict[str, Any]) -> int:
 def question_item(tok, cfg: ModelConfig, text_state: Any, q: Dict[str, Any]) -> Dict[str, Any]:
     """Tokenized sequence + option markers for one question; shared by training and inference."""
     laya_q = {"t": q["type"], "ins": serialize_state(q["instructions"]), "crit": q.get("criteria")}
-    ids, markers = build_sequence(tok, text_state, laya_q, cfg.max_len, cfg.head_max_len)[:2]
-    return {"ids": ids, "markers": markers, "qtype": QTYPES[q["type"]]}
+    out: tuple = build_sequence(tok, text_state, laya_q, cfg.max_len, cfg.head_max_len, return_stats=True)
+    ids, markers, stats = out[0], out[1], cast(Dict[str, Any], out[2])
+    # options cut to fit the head budget can end up as the same tokens: the model could not tell them apart
+    return {"ids": ids, "markers": markers, "qtype": QTYPES[q["type"]],
+            "options_distinct": stats.get("options_distinct", len(markers))}
 
 
 def image_tensor(img: Image.Image, cfg: ModelConfig) -> torch.Tensor:
@@ -169,6 +172,9 @@ class Decider:
             if len(it["markers"]) != _option_count(questions[qid]):
                 raise InvalidRequest("question %r: options do not fit the model's %d-token input; "
                                      "use fewer or shorter options" % (qid, self.cfg.max_len))
+            if it["options_distinct"] < len(it["markers"]):
+                raise InvalidRequest("question %r: some options are identical once cut to fit the input; "
+                                     "make them shorter or let them differ earlier" % qid)
         batch = collate_items([items], self.tok.pad_token_id)
         assert batch is not None
         dev = next(self.model.parameters()).device
