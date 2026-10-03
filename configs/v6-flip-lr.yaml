@@ -4,7 +4,6 @@
 # Data: scripts/data/v6_flip.py (and --dev), then scripts/data/v6_mix.py (out of the repo):
 # 12,000 pairs + 24,000 replayed questions from data-v3 without left/right ones, one pass.
 # Mirrored test sets: scripts/data/v6_flip.py --files test_position|test_relation --out <name>_flip.jsonl.
-# INIT: the current best when this runs -- runs/v5-data3/stage2 if round 5 is accepted, else runs/v3-data2/stage2.
 #   uv run devision-pipeline configs/v6-flip-lr.yaml
 name: v6-flip-lr
 device: mps
@@ -14,7 +13,7 @@ common:
 stages:
   - name: stage2
     kind: train
-    init: INIT
+    init: runs/v5-data3/stage2              # the current best (round 5)
     data: data/v6/train_flip_mix.jsonl      # 48,000 = 12,000 left/right pairs + 24,000 replayed
     val: data/v3/dev_mix.jsonl              # temperature fit (calibration_fit)
     eval: {lr_pairs: data/v6/dev_lr_pairs.jsonl}   # 772 dev left/right questions + their mirrors
