@@ -65,17 +65,17 @@ uv run devision-train --init runs/align --lr-new 5e-5 --lr-head 5e-5 --lr-lora 1
 uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data --out runs/x/pope.json --role heldout   # 另写 pope.details.jsonl（逐题明细）；--control mismatched|reversed 为对照
 uv run devision-compare runs/a/x.details.jsonl runs/b/x.details.jsonl --by source   # 同一批题上两个模型的差值，按图片配对重采样给 95% 区间
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
-uv run devision-pipeline configs/x.yaml [--dry-run] [--round N [--from STAGE]] [--force]   # 按 YAML 跑新的一轮（--round N 接着跑第 N 轮）
+uv run devision-pipeline configs/v3-x.yaml [--dry-run] [--from STAGE] [--force]   # 按 YAML 跑一轮训练（再跑同一个 YAML 是续跑）
 ```
 
-- **实验用 YAML 编排**（`configs/*.yaml`，`src/devision/train/pipeline.py`）：每个新实验复制一份 YAML 改参数，不要再写训练脚本。一个 YAML = `name` + 若干 `stages`（`kind: align|train`、`init` 指向前面的阶段或路径、`data` / `val` / `eval`、`params` 即训练 CLI 的参数名，`common` 是所有阶段共用的参数）+ `evaluate`（评测集和额外命令，`{checkpoint}` / `{name}` / `{eval_dir}` 会被替换）。启动前检查所有参数名、类型和数据文件。长任务用 `nohup uv run devision-pipeline configs/x.yaml > runs/x.out 2>&1 &`。
-- **训练按轮次编号**：每跑一次训练 YAML 就是新的一轮，编号接在 `runs/v<N>-*` 最大的后面：`runs/v<N>-<name>/` 下有 `run.json`（配置、开始时间、git commit、各阶段起点）、每个阶段一个子目录（checkpoint + 报告 + `swanlab_run.json`）、`eval/`（评测结果和逐题明细）、`logs/`；SwanLab run 名 `v<N>-<name>/<阶段>`。中断后用 `--round N` 接着跑（已完成的阶段和评测跳过，`--from STAGE` 从某阶段重跑）。只评测的 YAML（`stages: []`）不算新一轮，结果写进被评 checkpoint 所在轮次的 `eval/`。轮次（v1、v2、v3……）和数据版本（data-v1、data-v2）是两回事。第 1 轮 `v1-release-0.1`（发布的 0.1），第 2 轮 `v2-align-lora`；早期和失败的运行在 `runs/archive/`。`configs/example.yaml` 的轮次放在 `runs/example/`，不占编号。
+- **实验用 YAML 编排**（`configs/*.yaml`，`src/devision/train/pipeline.py`）：每个新实验复制一份 YAML 改参数和 `name`，不要再写训练脚本。一个 YAML = `name` + 若干 `stages`（`kind: align|train`、`init` 指向前面的阶段或路径、`data` / `val` / `eval`、`params` 即训练 CLI 的参数名，`common` 是所有阶段共用的参数）+ `evaluate`（评测集和额外命令，`{checkpoint}` / `{name}` / `{eval_dir}` 会被替换）。启动前检查所有参数名、类型和数据文件。长任务用 `nohup uv run devision-pipeline configs/v3-x.yaml > runs/v3-x.out 2>&1 &`。
+- **训练轮次 = YAML 的 `name`**，格式 `v<轮次>-<描述>`（如 `v3-data2`），文件名与之相同（`configs/v3-data2.yaml`）；轮次号由人来管理，不自动生成。输出在 `runs/<name>/`：`run.json`（配置、开始时间、git commit、各阶段起点）、每个阶段一个子目录（checkpoint + 报告 + `swanlab_run.json`）、`eval/`（评测结果和逐题明细）、`logs/`；SwanLab run 名 `<name>/<阶段>`。再跑同一个 YAML 就是续跑：已完成的阶段和评测跳过，`--from STAGE` 从某阶段重跑。新的一轮 = 新 YAML + 新 name。只评测的 YAML（`stages: []`）不算一轮，结果写进被评 checkpoint 所在轮次的 `eval/`。轮次（v1、v2、v3……）和数据版本（data-v1、data-v2）是两回事。第 1 轮 `v1-release-0.1`（发布的 0.1），第 2 轮 `v2-align-lora`；早期和失败的运行在 `runs/archive/`。
 
 - `data/`（数据集）、`runs/`（checkpoint）不进 git；`examples/` 里的少量示例图进 git，供 web demo 默认加载；`examples/train/` 是格式示例数据（含合成形状图），配 `configs/example.yaml` 端到端跑通，改样本格式时要同步更新它。
 - 训练默认上报 SwanLab（项目 `devision`），两个阶段同一套分组（`src/devision/train/tracking.py`），每 `--log-every` 步一行：`train/`（窗口内均值：loss、accuracy、grad_norm；阶段 2 另有 nll、sigma）、`lr/`（各参数组）、`perf/`（step_s、samples_per_s、progress_pct、eta_h）、`sys/`（cpu_pct、proc_cpu_pct、ram_used_pct、ram_available_gb、swap_used_gb、proc_rss_gb、gpu_util_pct、gpu_mem_gb、torch_mps_gb）。评测行另记：阶段 1 每 `--eval-every` 步记 val 上真实/错配图片的补词准确率与 nll 及两者之差（`val/mlm_acc_gap`）；阶段 2 从第 0 步起每 `--eval-every` 步和每个 epoch 末，在 val 和每个 `--eval` 集上记准确率（总体/noul/choice，混合来源时按来源拆分）、nll、ECE，结束时记拟合温度和套用温度后的指标（`final/...`）。只有训练（`devision-align` / `devision-train`）新建 SwanLab run；`devision-eval`、分析脚本和测试都不上报，结果写成 JSON / 文本文件。例外：`devision-pipeline` 评测完后把汇总（每个集合的准确率、NLL、ECE、配错图准确率、倒序翻转率）续写进训练这个 checkpoint 的那个 run（按阶段目录里的 `swanlab_run.json` 找到），heldout 集合记在 `test/<集合>/...`，其余记在 `ref/<集合>/...`；不新建 run，逐题明细只在文件里。先 `uv run swanlab login` 登录（API key 只存在本机用户目录，**不要写进仓库**）；`--swanlab-project ""` 关闭。本地缓存 `swanlog/` 不进 git。
 - 首次训练会从 Hub 下载 `convaiinnovations/laya` 与 `google/siglip2-base-patch16-256`；对齐阶段还会下载 `answerdotai/ModernBERT-large`（只取 MLM 头）。
 - 不做阶段 1 直接训决策题，nll 会停在 ln2（见 `docs/experiments/2026-09-30-rlcd-plateau.md`）。
-- 阶段 2 用默认学习率长训练（上万步）会塌缩成 50/50 输出；用上面命令里的低学习率加预热。发布的 checkpoint（`runs/v1-release-0.1/stage2b`）怎么训出来的见 `configs/release-0.1.yaml`。
+- 阶段 2 用默认学习率长训练（上万步）会塌缩成 50/50 输出；用上面命令里的低学习率加预热。发布的 checkpoint（`runs/v1-release-0.1/stage2b`）怎么训出来的见 `configs/v1-release-0.1.yaml`。
 - `--checkpoint` / `--init` / `Decider.load` 都接受本地目录或 Hugging Face 模型仓库 id。
 
 ## 评论（`critic/`）

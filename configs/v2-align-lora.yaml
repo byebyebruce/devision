@@ -1,7 +1,7 @@
-# release-0.1 with one change: stage 1 also adapts ModernBERT through a LoRA (r=16).
-# Round 2 (runs/v2-align-lora/), started 2026-10-02 as a shell script (its logs/pipeline.sh); this file is
-# the same experiment for reruns, each of which is a new round.
-name: align-lora
+# v1-release-0.1 with one change: stage 1 also adapts ModernBERT through a LoRA (r=16).
+# Round 2 (runs/v2-align-lora/), started 2026-10-02 as a shell script (its logs/pipeline.sh); running this
+# file continues that round. A changed experiment is a new YAML with a new name.
+name: v2-align-lora
 device: mps
 common:
   log_every: 50

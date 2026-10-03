@@ -1,15 +1,15 @@
 """devision-pipeline: run an experiment described by one YAML file.
 
-    uv run devision-pipeline configs/x.yaml                      # a new training round, runs/v<N>-<name>/
-    uv run devision-pipeline configs/x.yaml --dry-run            # print the commands only
-    uv run devision-pipeline configs/x.yaml --round 3            # continue round 3 (skips finished stages)
-    uv run devision-pipeline configs/x.yaml --round 3 --from stage2b   # rerun from a stage on
+    uv run devision-pipeline configs/v3-x.yaml                   # run it (skips what is already done)
+    uv run devision-pipeline configs/v3-x.yaml --dry-run         # print the commands only
+    uv run devision-pipeline configs/v3-x.yaml --from stage2b    # rerun from a stage on
 
-Every run of a training config is a new round, numbered after the highest runs/v<N>-* so far: round N of
-config `name` lives in runs/vN-<name>/ -- run.json (config, start time, git commit), one directory per
-stage, eval/ and logs/. A stage is one `devision-align` or `devision-train` run; `init:` names an
-earlier stage (or is a checkpoint path / hub id, e.g. a stage of an earlier round); its SwanLab run is
-called vN-<name>/<stage>. `params:` are the trainer's own options (AlignConfig / TrainConfig fields,
+The YAML's `name` is the training round, e.g. v3-x (round number + what it tries; keep it equal to the
+file name): it lives in runs/<name>/ -- run.json (config, start time, git commit), one directory per
+stage, eval/ and logs/. Running the same YAML again continues that round; a new round needs a new YAML
+with a new name. A stage is one `devision-align` or `devision-train` run; `init:` names an earlier
+stage (or is a checkpoint path / hub id, e.g. a stage of an earlier round); its SwanLab run is called
+<name>/<stage>. `params:` are the trainer's own options (AlignConfig / TrainConfig fields,
 plus laya / vision / visual_shuffle / model_name), checked before anything runs. See configs/*.yaml.
 
 After the stages, `evaluate:` runs devision-eval on each set (JSON in the round's eval/; sets already
@@ -30,7 +30,6 @@ also evaluated with mismatched pictures (<set>.mismatched.json) and with choice 
 import argparse
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -120,7 +119,7 @@ class Step:
 class Plan:
     name: str
     steps: List[Step] = field(default_factory=list)
-    round_dir: Optional[str] = None   # runs/v<N>-<name> for a training config
+    round_dir: Optional[str] = None   # runs/<name> for a training config
     checkpoint: Optional[str] = None
     eval_outputs: Dict[str, str] = field(default_factory=dict)
     control_outputs: Dict[str, Dict[str, str]] = field(default_factory=dict)
@@ -128,24 +127,6 @@ class Plan:
     overlaps: Dict[str, Dict[str, int]] = field(default_factory=dict)
     metric_names: Dict[str, str] = field(default_factory=dict)   # set -> name in SwanLab (prefix + set)
     config: Dict[str, Any] = field(default_factory=dict)
-
-
-ROUND = re.compile(r"^v(\d+)-")
-
-
-def next_round(runs: str) -> int:
-    """One more than the highest round number in `runs` (1 if there is none)."""
-    nums = [int(m.group(1)) for d in (os.listdir(runs) if os.path.isdir(runs) else [])
-            if (m := ROUND.match(d)) and os.path.isdir(os.path.join(runs, d))]
-    return max(nums, default=0) + 1
-
-
-def find_round(runs: str, number: int) -> str:
-    """The directory name of round `number` in `runs`."""
-    found = [d for d in (os.listdir(runs) if os.path.isdir(runs) else []) if d.startswith("v%d-" % number)]
-    if len(found) != 1:
-        raise PlanError("round %d: expected one runs/v%d-* directory, found %s" % (number, number, found or "none"))
-    return found[0]
 
 
 def _flags(params: Dict[str, Any]) -> List[str]:
@@ -175,10 +156,8 @@ def _check_args(kind: str, argv: List[str], where: str) -> None:
         raise PlanError("%s: unknown params %s" % (where, [u for u in unknown if u.startswith("--")] or unknown))
 
 
-def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: bool = True,
-               round_name: Optional[str] = None) -> Plan:
-    """Steps for a parsed YAML config; raises PlanError on anything that would fail later.
-    `round_name` (e.g. "v3-x") places a training config's outputs; default: the next round."""
+def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: bool = True) -> Plan:
+    """Steps for a parsed YAML config; raises PlanError on anything that would fail later."""
     unknown = set(cfg) - TOP_KEYS
     if unknown:
         raise PlanError("unknown top-level keys %s (allowed: %s)" % (sorted(unknown), sorted(TOP_KEYS)))
@@ -196,8 +175,7 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
     plan = Plan(name, config=cfg)
     outs: Dict[str, str] = {}
     if stages:
-        round_name = round_name or "v%d-%s" % (next_round(runs), name)
-        plan.round_dir = os.path.join(runs, round_name)
+        plan.round_dir = os.path.join(runs, name)
 
     def exists(path: str, where: str) -> None:
         if check_files and not os.path.exists(path):
@@ -218,10 +196,10 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
             raise PlanError("%s: kind must be one of %s" % (where, sorted(KINDS)))
         if kind == "align" and st.get("eval"):
             raise PlanError("%s: `eval` sets are only for kind: train" % where)
-        assert plan.round_dir and round_name
+        assert plan.round_dir
         out = os.path.join(plan.round_dir, sname)
         argv = ["--data", st.get("data") or "", "--data-root", data_root, "--out", out,
-                "--run-name", "%s/%s" % (round_name, sname), "--device", device, "--swanlab-project", project]
+                "--run-name", "%s/%s" % (name, sname), "--device", device, "--swanlab-project", project]
         exists(st.get("data") or "<missing data>", where)
         if st.get("val"):
             exists(st["val"], where)
@@ -378,7 +356,7 @@ def _git_commit() -> Optional[str]:
 
 
 def _write_round(plan: Plan) -> None:
-    """runs/v<N>-<name>/run.json: what this round is (written once, when it starts)."""
+    """runs/<name>/run.json: what this round is (written once, when it starts)."""
     assert plan.round_dir
     path = os.path.join(plan.round_dir, "run.json")
     if os.path.exists(path):
@@ -431,18 +409,14 @@ def pipeline_main(argv=None) -> None:
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("config")
-    p.add_argument("--round", type=int, help="continue this round (runs/v<N>-*) instead of starting a new one")
-    p.add_argument("--from", dest="start_from", help="rerun from this stage (later stages too); needs --round")
+    p.add_argument("--from", dest="start_from", help="rerun from this stage (later stages too)")
     p.add_argument("--force", action="store_true", help="rerun stages that are already done")
     p.add_argument("--dry-run", action="store_true", help="check the config and print the commands")
     a = p.parse_args(argv)
     with open(a.config) as f:
         cfg = yaml.safe_load(f)
-    if a.start_from and not a.round and cfg.get("stages"):
-        raise SystemExit("--from needs --round N (which round to rerun the stage in)")
     try:
-        round_name = find_round(cfg.get("runs_dir", "runs"), a.round) if a.round else None
-        plan = build_plan(cfg, round_name=round_name)
+        plan = build_plan(cfg)
     except PlanError as e:
         raise SystemExit("%s: %s" % (a.config, e)) from None
     if a.start_from and a.start_from not in [s.name for s in plan.steps]:

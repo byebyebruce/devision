@@ -1,5 +1,5 @@
 # Evaluation only: round 2 (runs/v2-align-lora, data-v1) on the data-v2 test sets, with the same controls
-# as configs/data2.yaml. The data-v2 eval_* sets hold no picture any data-v1 training file used. Its temperatures were fitted on
+# as configs/v3-data2.yaml. The data-v2 eval_* sets hold no picture any data-v1 training file used. Its temperatures were fitted on
 # data/val_mix.jsonl, and its training watched data/pope.jsonl and data/val_cocoqa.jsonl (history), so
 # sets sharing questions or pictures with those are labelled calibration_fit / monitoring, not heldout:
 # eval_pope shares 10 pictures with val_mix and 234 with the old pope.jsonl -> monitoring for this model.

@@ -9,7 +9,7 @@ from devision.train.pipeline import PlanError, build_plan, run_plan
 
 def config(**over):
     cfg = {
-        "name": "exp",
+        "name": "v3-exp",
         "device": "cpu",
         "common": {"log_every": 50},
         "stages": [
@@ -25,7 +25,7 @@ def config(**over):
 
 
 def plan(cfg):
-    return build_plan(cfg, python="python", check_files=False, round_name="v3-exp")
+    return build_plan(cfg, python="python", check_files=False)
 
 
 def test_a_stage_starts_from_the_checkpoint_of_the_stage_it_names():
@@ -88,7 +88,7 @@ def test_evaluation_runs_on_the_last_stage_and_fills_in_commands():
 
     assert p.checkpoint == "runs/v3-exp/decide"
     assert p.eval_outputs == {"pope": "runs/v3-exp/eval/pope.json"}
-    assert p.steps[-1].argv == ["echo runs/v3-exp/decide exp"]
+    assert p.steps[-1].argv == ["echo runs/v3-exp/decide v3-exp"]
 
 
 @pytest.mark.parametrize("cfg, message", [
@@ -113,11 +113,11 @@ def test_missing_data_files_are_reported_up_front(tmp_path):
 
 def test_finished_stages_are_skipped_and_everything_after_a_rerun_stage_reruns(tmp_path, capsys):
     cfg = config(runs_dir=str(tmp_path))
-    p = build_plan(cfg, python="python", check_files=False, round_name="v1-exp")
-    (tmp_path / "v1-exp" / "align").mkdir(parents=True)
-    (tmp_path / "v1-exp" / "align" / "align_report.json").write_text("{}")
-    (tmp_path / "v1-exp" / "decide").mkdir()
-    (tmp_path / "v1-exp" / "decide" / "train_report.json").write_text("{}")
+    p = build_plan(cfg, python="python", check_files=False)
+    (tmp_path / "v3-exp" / "align").mkdir(parents=True)
+    (tmp_path / "v3-exp" / "align" / "align_report.json").write_text("{}")
+    (tmp_path / "v3-exp" / "decide").mkdir()
+    (tmp_path / "v3-exp" / "decide" / "train_report.json").write_text("{}")
 
     run_plan(p, dry_run=True)
     out = capsys.readouterr().out
@@ -128,13 +128,13 @@ def test_finished_stages_are_skipped_and_everything_after_a_rerun_stage_reruns(t
     assert "align: already done" in out and "decide: already done" not in out
 
 
-def test_each_run_of_a_training_config_is_a_new_round(tmp_path):
-    (tmp_path / "v1-first").mkdir()
-    (tmp_path / "v2-second").mkdir()
-    (tmp_path / "archive").mkdir()
+def test_the_yaml_name_is_the_round_directory_and_a_rerun_continues_it(tmp_path, capsys):
     p = build_plan(config(runs_dir=str(tmp_path)), python="python", check_files=False)
     assert p.round_dir == str(tmp_path / "v3-exp")
-    assert p.steps[0].out == str(tmp_path / "v3-exp" / "align")
+    (tmp_path / "v3-exp" / "align").mkdir(parents=True)
+    (tmp_path / "v3-exp" / "align" / "align_report.json").write_text("{}")
+    run_plan(build_plan(config(runs_dir=str(tmp_path)), python="python", check_files=False), dry_run=True)
+    assert "align: already done" in capsys.readouterr().out
 
 
 def test_evaluating_a_checkpoint_of_a_round_writes_into_that_round(tmp_path):
@@ -148,13 +148,13 @@ def test_evaluating_a_checkpoint_of_a_round_writes_into_that_round(tmp_path):
 
 
 def test_finished_evaluations_are_skipped_on_a_rerun(tmp_path, capsys):
-    p = build_plan(config(runs_dir=str(tmp_path)), python="python", check_files=False, round_name="v1-exp")
+    p = build_plan(config(runs_dir=str(tmp_path)), python="python", check_files=False)
     for st in ("align", "decide"):
-        (tmp_path / "v1-exp" / st).mkdir(parents=True)
-    (tmp_path / "v1-exp" / "align" / "align_report.json").write_text("{}")
-    (tmp_path / "v1-exp" / "decide" / "train_report.json").write_text("{}")
-    (tmp_path / "v1-exp" / "eval").mkdir()
-    (tmp_path / "v1-exp" / "eval" / "pope.json").write_text("{}")
+        (tmp_path / "v3-exp" / st).mkdir(parents=True)
+    (tmp_path / "v3-exp" / "align" / "align_report.json").write_text("{}")
+    (tmp_path / "v3-exp" / "decide" / "train_report.json").write_text("{}")
+    (tmp_path / "v3-exp" / "eval").mkdir()
+    (tmp_path / "v3-exp" / "eval" / "pope.json").write_text("{}")
     run_plan(p, dry_run=True)
     assert "eval:pope: already done" in capsys.readouterr().out
 

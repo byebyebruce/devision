@@ -6,7 +6,7 @@
 uv run devision-pipeline configs/example.yaml    # CPU 上约 1–2 分钟；首次会下载基础模型（约 2.5 GB）
 ```
 
-它依次跑阶段 1（对齐）、阶段 2（决策题）和评测，产出 `runs/example/v<N>-example/`（每跑一次是新的一轮）。数据只有十几条，模型学不到东西，只用来确认格式和流程。真实训练的数据规模和配置见 `configs/release-0.1.yaml`。
+它依次跑阶段 1（对齐）、阶段 2（决策题）和评测，产出 `runs/example/`。数据只有十几条，模型学不到东西，只用来确认格式和流程。真实训练的数据规模和配置见 `configs/v1-release-0.1.yaml`。
 
 ## 文件
 

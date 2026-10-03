@@ -183,7 +183,7 @@ GQA 来自 Visual Genome 场景图，问题经常涉及很小或被遮挡的物�
 
 ### v2 训练实验计划（待执行）
 
-1. **起点**：`runs/v2-align-lora/align`（第 2 轮的 LoRA 对齐，见 `configs/data2.yaml`）。
+1. **起点**：`runs/v2-align-lora/align`（第 2 轮的 LoRA 对齐，见 `configs/v3-data2.yaml`）。
 2. **对照组**：同一对齐 checkpoint + v1 数据（今晚的 `align-lora-100k` → `align-lora-cocoqa`）。两组都在 `eval_*` 上测（eval 不含 v1 / v2 训练图片）。
 3. **混合比例**（约 15 万题，1 个 epoch，Mac 上约 6 小时）：VQAv2 是非 5 万、COCO 有没有 4 万、VQAv2 多选 3.6 万（全部）、GQA 非空间选择题 8 千、COCO 上下 / 大小各约 5 千、左右类（位置 lr、相对位置、GQA spatial）合计 **不超过 5%**；混合时每张图最多 6 题（目前跨文件最多 29 题）。空间题占比用一组 5% 对 15% 的受控对照决定，而不是现在定死。
 4. **划分**：`dev_*` 合并成一个 dev 集，用于训练中评测、选 checkpoint 和拟合温度；`eval_*` 只在最后测一次。

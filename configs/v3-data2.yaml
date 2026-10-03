@@ -1,8 +1,8 @@
 # Stage 2 on the data-v2 mix, from round 2's LoRA-aligned stage 1 (runs/v2-align-lora/align). Compare with
 # configs/v2-align-lora-testsets.yaml: the same stage 1 + data-v1, on the same test sets and controls.
-#   uv run devision-pipeline configs/data2.yaml          # a new round, runs/v<N>-data2/
+#   uv run devision-pipeline configs/v3-data2.yaml       # round 3, runs/v3-data2/
 # Data: scripts/data/v2_build.py then scripts/data/v2_mix.py (out of the repo); see docs/research/data-quality.md.
-name: data2
+name: v3-data2
 device: mps
 common:
   log_every: 50

@@ -1,8 +1,8 @@
 # The released checkpoint (deVision 0.1; round 1, runs/v1-release-0.1/stage2b): ~16 h on a Mac (MPS).
-#   uv run devision-pipeline configs/release-0.1.yaml
+#   uv run devision-pipeline configs/v1-release-0.1.yaml
 # Data files come from the converters in scripts/data/ and the analysis commands from runs/analysis/,
 # both kept out of the repo (see CLAUDE.md).
-name: release-0.1
+name: v1-release-0.1
 description: >
   Stage 1 aligns the projector on COCO captions; stage 2 trains decisions on GQA + VQAv2, then on
   questions generated from COCO instance boxes with replayed stage-2a questions.

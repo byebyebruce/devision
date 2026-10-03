@@ -5,7 +5,6 @@
 name: example
 data_root: examples          # image paths in the JSONL files are relative to this
 device: cpu
-runs_dir: runs/example      # its own round numbers, apart from real training rounds
 swanlab_project: ""          # don't log this run
 
 stages:
