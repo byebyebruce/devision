@@ -121,9 +121,9 @@ def results_md(res):
 
 def plots(round_dir, prefix, res, out):
     try:
-        import matplotlib
+        import matplotlib  # pyright: ignore[reportMissingImports]  (run with `uv run --with matplotlib`)
         matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
     except ImportError:
         print("matplotlib not available: no plots (run with `uv run --with matplotlib`)")
         return
