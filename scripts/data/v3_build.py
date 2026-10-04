@@ -203,6 +203,8 @@ def main(argv=None) -> None:
     out_dir = os.path.join(a.root, "v3")
     os.makedirs(out_dir, exist_ok=True)
     rng = random.Random(a.seed)
+    from v2_common import require_benchmarks
+    require_benchmarks(a.root)
     held = held_out_hashes(a.root)
     report: dict = {"held_out_pictures_hashed": len(held), "sets": {}, "files": {}}
     train_new, dev_all = [], []

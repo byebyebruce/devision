@@ -144,6 +144,8 @@ def main(argv=None) -> None:
     p.add_argument("--cap", type=int, default=40, help="per name pair and answer")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args(argv)
+    from v2_common import require_benchmarks
+    require_benchmarks(a.root)
     mapping = vg_to_coco(a.root)
     evals = [f for f in glob.glob(os.path.join(a.root, "*.jsonl")) + glob.glob(os.path.join(a.root, "v2", "*.jsonl"))
              + glob.glob(os.path.join(a.root, "lv_bench", "*.jsonl"))

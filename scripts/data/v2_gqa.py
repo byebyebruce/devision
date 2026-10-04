@@ -52,6 +52,10 @@ def tag(sample: dict) -> dict:
     return sample
 
 
+# The pictures the project's GQA pools came from: 3 of the 21 train shards of lmms-lab/GQA.
+TRAIN_SHARDS = ["train-%05d-of-00021.parquet" % i for i in range(3)]
+
+
 def main(argv=None) -> None:
     import glob
     import os
@@ -69,15 +73,17 @@ def main(argv=None) -> None:
     p.add_argument("--spatial-share", type=float, default=0.25, help="left/right questions, as a share of --limit")
     p.add_argument("--exclude", nargs="*", default=[], help="more JSONL files whose images must not be used")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--train-shards", nargs="+", default=TRAIN_SHARDS,
+                   help="lmms-lab/GQA train_balanced_images shards to take pictures from (downloaded if missing)")
     a = p.parse_args(argv)
-    with zipfile.ZipFile(os.path.join(a.root, "raw", "gqa", "sceneGraphs.zip")) as z:
+    from fetch import GQA_SCENE_GRAPHS_URL, ensure_file
+    with zipfile.ZipFile(ensure_file(GQA_SCENE_GRAPHS_URL, os.path.join(a.root, "raw", "gqa", "sceneGraphs.zip"))) as z:
         graphs: Dict[str, dict] = json.load(z.open("%s_sceneGraphs.json" % a.split))
     evals = [f for f in glob.glob(os.path.join(a.root, "*.jsonl")) + glob.glob(os.path.join(a.root, "v2", "*.jsonl"))
              if os.path.basename(f).startswith(("val", "pope", "eval", "dev", "test_", "bench_"))]
     held_out = same_images({s["image_id"] for f in evals + a.exclude for s in read_jsonl(f)}, vg_to_coco(a.root))
     if a.split == "train":
-        shards = sorted(os.path.basename(f) for f in glob.glob(os.path.join(
-            a.root, "raw", "hf", "datasets--lmms-lab--GQA", "snapshots", "*", "train_balanced_images", "*.parquet")))
+        shards = list(a.train_shards)   # a fixed list, not whatever happens to be cached
     else:
         from huggingface_hub import list_repo_files
         shards = sorted(os.path.basename(f) for f in list_repo_files("lmms-lab/GQA", repo_type="dataset")
@@ -100,6 +106,8 @@ def main(argv=None) -> None:
         share = a.limit if kind == "gqa" else int(a.limit * a.spatial_share)
         out += select([s for s in samples if s["kind"] == kind], share, held_out, a.seed)
     rng.shuffle(out)
+    if not out:   # an empty GQA pool would quietly change every mix built from it
+        raise SystemExit("v2_gqa: no question left for %s (shards %s); check the downloads" % (a.out, shards))
     print("%s: %d questions (%s); %d of %d convertible questions refer only to visible objects (%d shards)" % (
         a.out, _write_jsonl(a.out, out), dict(Counter(s["kind"] for s in out)), kept, seen, len(shards)))
 

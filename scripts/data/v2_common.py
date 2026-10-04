@@ -68,6 +68,8 @@ def split_dev(rows: List[Sample], picture: Callable[[str], str], share: float):
 def check(rows: List[Sample], name: str, balance: str) -> List[str]:
     """Acceptance problems of a finished file: duplicate ids, and the balance it promises."""
     out = []
+    if not rows:
+        return ["%s: empty" % name]
     dup = [i for i, n in Counter(r["id"] for r in rows).items() if n > 1]
     if dup:
         out.append("%s: %d duplicate ids, e.g. %s" % (name, len(dup), dup[:3]))
@@ -86,6 +88,17 @@ def check(rows: List[Sample], name: str, balance: str) -> List[str]:
         if bad:
             out.append("%s: %d groups with a dominant answer, e.g. %s" % (name, len(bad), [(g, dict(by[g])) for g in bad[:3]]))
     return out
+
+
+BENCHMARK_FILES = ["lv_bench/vqav2_yesno.jsonl", "lv_bench/aokvqa.jsonl", "lv_bench/scienceqa.jsonl", "lv_bench/pope.jsonl"]
+
+
+def require_benchmarks(root: str) -> None:
+    """Stop unless laya-vision's benchmark is built: training data built before it would not exclude its
+    pictures (ScienceQA reuses the same pictures across its splits)."""
+    missing = [f for f in BENCHMARK_FILES if not os.path.exists(os.path.join(root, f))]
+    if missing:
+        raise SystemExit("build lv_bench.py first: missing %s (its pictures must be excluded from training)" % missing)
 
 
 def write(path: str, rows: Iterable[Sample]) -> int:
