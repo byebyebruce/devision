@@ -21,7 +21,7 @@ evaluate:
   image_identity: data/v2/image_identity.json
   controls: true                           # + mismatched pictures and reversed options for every set
   sets:
-    dev_mix: data/v3/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    dev_mix: data/v4/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
     bench_pope: data/v2/bench_pope.jsonl
     test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
     test_vqa_choice: data/v2/test_vqa_choice.jsonl
