@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `src/devision/model/`：网络、预处理、checkpoint、`Decider.decide`；不依赖其他子包。数据流：图片 letterbox 256 → 冻结的 SigLIP2 → 2×2 pixel shuffle + MLP 投影层 → 64 个视觉 token 插在 `[CLS]` 之后 → ModernBERT-large（Laya 权重）→ Laya 决策头在每个选项的 `[MASK]` 上打分 → 按温度 softmax（先查（题型, 选项数）桶的温度 `temperature_by_options`，没有就用题型温度 `temperature`；旧 checkpoint 没有分桶，行为不变）。训练和推理共用 `question_item` / `image_tensor`，序列构造不要另写一份。
 - `src/devision/train/`：样本格式（`samples.py`）、阶段 1 对齐（`align.py`，带图完形填空，训投影层，`--lora-r` 时 ModernBERT 也加 LoRA）、阶段 2 RLCD 训练（`rlcd.py`）、评测（`evaluate.py`，走 `decide`）、SwanLab 上报（`tracking.py`）、YAML 实验编排（`pipeline.py`），依赖 model。
-- 准备训练数据的代码（下载、转换、混合、转换器测试）在 `scripts/data/`，**在仓库里**（2026-10-04 起，为了在别的机器上从零复现）；下载的原始数据和生成的数据（`data/`）不进仓库。`bash scripts/data/build_all.sh [data]` 按顺序从原始来源生成 data-v2 及以后的配置（`configs/scratch.yaml` 与第 3–6 轮及其 `*-lvbench`）用到的全部数据，最后逐个核对这些配置引用的文件都存在且非空（首次会下载几十 GB、跑几个小时；第 1–2 轮的旧数据不在内）；laya-vision 评测集先于需要排除其图片的训练数据生成，缺了它 `v2_vg_relation` / `v3_build` 会拒绝运行；规则和比例与本机生成的一致，不保证逐字节相同。训练代码只认 `samples.py` 里约定的 JSONL 格式。
+- 准备训练数据的代码（下载、转换、混合、转换器测试）在 `scripts/data/`，**在仓库里**（2026-10-04 起，为了在别的机器上从零复现）；下载的原始数据和生成的数据（`data/`）不进仓库。`bash scripts/data/build_all.sh [data]` 按顺序从原始来源生成 data-v2 及以后的配置（`configs/scratch.yaml` 与第 3–6 轮及其评测）用到的全部数据，最后逐个核对这些配置引用的文件都存在且非空（首次会下载几十 GB、跑几个小时；第 1–2 轮的旧数据不在内）；laya-vision 评测集先于需要排除其图片的训练数据生成，缺了它 `v2_vg_relation` / `v3_build` 会拒绝运行；规则和比例与本机生成的一致，不保证逐字节相同。训练代码只认 `samples.py` 里约定的 JSONL 格式。
 - `src/devision/serve/`：`/v1/systemone` API，依赖 model。
 - `src/devision/demo/`：web demo 页面和示例图路由，只通过 HTTP 调 API，不 import model、train、serve。
 - 依赖只能单向，不要让 model 反向引用 train/serve/demo，也不要让 train、serve、demo 互相引用。
@@ -72,6 +72,7 @@ uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；�
 uv run devision-pipeline configs/v3-x.yaml [--dry-run] [--from STAGE] [--force]   # 按 YAML 跑一轮训练（再跑同一个 YAML 是续跑）
 ```
 
+- **每轮的评测集合**：训练 YAML 的 `evaluate.sets` 同时包含我们的 `test_*` / `bench_pope` 和 laya-vision 的四个 `bench_lv_*`（2026-10-04 起，从 v6 开始；之前的轮次用单独的 `*-lvbench.yaml` 只评测配置）。新一轮复制上一轮的 YAML 时保留这些集合。
 - **实验用 YAML 编排**（`configs/*.yaml`，`src/devision/train/pipeline.py`）：每个新实验复制一份 YAML 改参数和 `name`，不要再写训练脚本。一个 YAML = `name` + 若干 `stages`（`kind: align|train`、`init` 指向前面的阶段或路径、`data` / `val` / `eval`、`params` 即训练 CLI 的参数名，`common` 是所有阶段共用的参数）+ `evaluate`（评测集和额外命令，`{checkpoint}` / `{name}` / `{eval_dir}` 会被替换）。启动前检查所有参数名、类型和数据文件。长任务用 `nohup uv run devision-pipeline configs/v3-x.yaml > runs/v3-x.out 2>&1 &`。
 - **训练轮次 = YAML 的 `name`**，格式 `v<轮次>-<描述>`（如 `v3-data2`），文件名与之相同（`configs/v3-data2.yaml`）；轮次号由人来管理，不自动生成。输出在 `runs/<name>/`：`run.json`（配置、开始时间、git commit、各阶段起点）、每个阶段一个子目录（checkpoint + 报告 + `swanlab_run.json`）、`eval/`（评测结果和逐题明细）、`logs/`；SwanLab run 名 `<name>/<阶段>`。再跑同一个 YAML 就是续跑：已完成的阶段和评测跳过，`--from STAGE` 从某阶段重跑；阶段 2 每 `--save-every` 步（默认 1000）把训练状态写到阶段目录的 `resume.pt`，中断后再跑会从那里接着训（设置不同会拒绝，`--force` 会删掉它从头来），训完自动删除。同一 seed 在 CPU 上逐位可复现；MPS 上有 1e-7 量级的浮点差异，不保证逐位一致。新的一轮 = 新 YAML + 新 name。只评测的 YAML（`stages: []`）不算一轮，结果写进被评 checkpoint 所在轮次的 `eval/`。轮次（v1、v2、v3……）和数据版本（data-v1、data-v2）是两回事。第 1 轮 `v1-release-0.1`（发布的 0.1），第 2 轮 `v2-align-lora`；早期和失败的运行在 `runs/archive/`。
 

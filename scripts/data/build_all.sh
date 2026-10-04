@@ -45,7 +45,7 @@ run v6_flip.py --files test_relation --out test_relation_flip.jsonl
 run v6_mix.py
 
 # every data file the supported configs use exists and is not empty
-uv run python scripts/data/check_configs.py --root "$ROOT" configs/scratch.yaml configs/scratch-lvbench.yaml \
+uv run python scripts/data/check_configs.py --root "$ROOT" configs/scratch.yaml \
     configs/v3-data2.yaml configs/v3-data2-lvbench.yaml configs/v4-relation-tb.yaml configs/v5-data3.yaml \
     configs/v5-data3-lvbench.yaml configs/v6-flip-lr.yaml
 echo "== done: data under $ROOT; counts in $ROOT/v2/MANIFEST.json and $ROOT/v3/MANIFEST.json"

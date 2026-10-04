@@ -45,5 +45,7 @@ evaluate:
     test_position: data/v2/test_position.jsonl
     test_relation: data/v2/test_relation.jsonl
     test_size: data/v2/test_size.jsonl
-  commands:
-    - uv run devision-pipeline configs/scratch-lvbench.yaml
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl   # laya-vision's benchmark: their questions,
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl             # compare with their published rows
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl       # (scripts/data/lv_bench.py, devision-compare)
+    bench_lv_pope: data/lv_bench/pope.jsonl

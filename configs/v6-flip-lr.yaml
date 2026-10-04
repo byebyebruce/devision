@@ -36,3 +36,7 @@ evaluate:
     test_size: data/v2/test_size.jsonl
     test_position_flip: data/v6/test_position_flip.jsonl   # left/right test questions on mirrored pictures:
     test_relation_flip: data/v6/test_relation_flip.jsonl   # right on both a question and its mirror = grounded
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl   # laya-vision's benchmark: their questions,
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl             # compare with their published rows
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl       # (scripts/data/lv_bench.py, devision-compare)
+    bench_lv_pope: data/lv_bench/pope.jsonl
