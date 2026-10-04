@@ -1,0 +1,38 @@
+# Round 7: ScienceQA. data-v4 matches diagram pictures against the evaluation pictures by identical pixels
+# instead of a 64-bit perceptual hash, which keeps 2,095 ScienceQA training questions data-v3 had dropped
+# (state capitals, geography, economics -- where round 6 trails laya-vision most). Continue round 6 on all
+# data-v4 ScienceQA questions + a minimum per ability + 3,000 left/right pairs from round 6, one pass.
+# Data: scripts/data/v3_build.py --version v4 --match exact, then scripts/data/v7_mix.py.
+#   uv run devision-pipeline configs/v7-sqa.yaml
+name: v7-sqa
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v6-flip-lr/stage2            # the current best (round 6)
+    data: data/v4/train_sqa_mix.jsonl       # 27,969 = 4,948 ScienceQA + 17,000 replayed + 3,000 left/right pairs
+    val: data/v4/dev_mix.jsonl              # temperature fit (calibration_fit); its ScienceQA dev is 173 questions
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 300, eval_every: 1000}
+
+evaluate:
+  image_identity: data/v2/image_identity.json
+  controls: true                           # + mismatched pictures and reversed options for every set
+  sets:
+    dev_mix: data/v3/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl   # left/right test questions on mirrored pictures:
+    test_relation_flip: data/v6/test_relation_flip.jsonl   # right on both a question and its mirror = grounded
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl   # laya-vision's benchmark: their questions,
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl             # compare with their published rows
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl       # (scripts/data/lv_bench.py, devision-compare)
+    bench_lv_pope: data/lv_bench/pope.jsonl
