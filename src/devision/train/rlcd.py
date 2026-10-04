@@ -429,6 +429,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
                    == batch["target"].to(device).argmax(-1)).float().mean()
             log.add(len(chunk), loss=loss.item(), nll=nll.item(), accuracy=hit.item(),
+                    batch_tokens=float(batch["input_ids"].shape[1]),   # padded length; long batches drive memory
                     grad_norm=grad_norm.item(), sigma=sigma)
             means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
                                                        "head": optimizer.param_groups[1]["lr"],

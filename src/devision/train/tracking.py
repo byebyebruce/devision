@@ -4,7 +4,7 @@ One row every `log_every` steps, grouped by prefix so SwanLab draws one panel gr
   train/  window means of the per-step metrics (single batches are too noisy to read)
   lr/     learning rate per parameter group
   perf/   step time, samples/s, progress and estimated time left
-  sys/    CPU, RAM, swap and accelerator load, sampled at log time
+  sys/    CPU, RAM, swap and accelerator load (MPS: allocated incl. cache, and live tensors), sampled at log time
 Evaluations go in their own rows (val/, pope/, ...) from the training loops.
 """
 import json
@@ -109,7 +109,8 @@ def system_stats(device: torch.device) -> Dict[str, float]:
              "sys/swap_used_gb": swap.used / GB,
              "sys/proc_rss_gb": proc.memory_info().rss / GB}
     if device.type == "mps":
-        stats["sys/torch_mps_gb"] = torch.mps.driver_allocated_memory() / GB
+        stats["sys/torch_mps_gb"] = torch.mps.driver_allocated_memory() / GB        # incl. the allocator's cache
+        stats["sys/torch_mps_live_gb"] = torch.mps.current_allocated_memory() / GB  # tensors actually alive
         stats.update(_apple_gpu())
     elif device.type == "cuda":
         stats["sys/gpu_mem_gb"] = torch.cuda.memory_allocated(device) / GB
@@ -139,6 +140,8 @@ class TrainLog:
         now = time.perf_counter()
         n = len(next(iter(self.window.values()), [])) or 1
         means = {"train/" + k: sum(v) / len(v) for k, v in self.window.items() if v}
+        if self.window.get("batch_tokens"):   # the longest batch of the window, next to the mean
+            means["train/batch_tokens_max"] = max(self.window["batch_tokens"])
         elapsed = now - self.t_start
         row = dict(means, epoch=epoch,
                    **{"lr/" + k: v for k, v in lrs.items()},
