@@ -7,7 +7,9 @@ left/right pairs (kept as data, built here):
 - every data-v4 ScienceQA training question and the TQA questions data-v4 added (as round 7), each once;
 - replay with round 7's minimum per ability plus counting +1,000 and GQA +500 (QUOTAS);
 - --pairs left/right pairs from round 6's mix.
-Replay never repeats a question already in the mix and never uses a picture of data-v5's test or dev sets.
+Replay never repeats a question already in the mix and never uses a held-out picture (every evaluation, monitoring
+or calibration set, align_val included, and data-v5's test and dev); a replay ability below its minimum stops
+the build.
 Writes data/v5/train_mix.jsonl, data/v5/dev_mix.jsonl (data-v4's dev_mix + dev_vsr + dev_v7w),
 data/v5/image_identity.json (data-v2's VG -> COCO map plus data-v5's VG pictures) and data/v5/MIX.json (counts per part and ability, unique questions and pictures, questions per picture).
 """
@@ -19,7 +21,8 @@ import sys
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from convert import picture  # noqa: E402
+from convert import picture, same_images  # noqa: E402
+from v5_build import held_files, ids_of  # noqa: E402
 from v6_mix import MAX_TOKENS, group_of, is_lr, shorten_hints  # noqa: E402
 from v7_mix import QUOTAS as V7_QUOTAS  # noqa: E402
 
@@ -30,6 +33,23 @@ QUOTAS = [(name, n + EXTRA.get(name, 0)) for name, n in V7_QUOTAS]
 def read(path):
     with open(path) as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def held_pictures(root, v2c):
+    """Every picture training must not use: all evaluation / monitoring / calibration sets (the same list
+    data-v5 is built against, align_val included) and data-v5's new test and dev sets, by picture identity."""
+    ids = ids_of(held_files(root)) | ids_of(os.path.join(root, "v5", n + ".jsonl")
+                                            for n in ("test_vsr", "test_v7w", "dev_vsr", "dev_v7w"))
+    return {picture(i, v2c) for i in same_images(ids, v2c)}
+
+
+def check_quotas(replay, quotas):
+    """Round 7's minimum per ability is a floor: stop if a replay pool cannot fill it."""
+    got = Counter(group_of(r) for r in replay)
+    short = {name: (got[name], n) for name, n in quotas if got[name] < n}
+    if short:
+        raise SystemExit("replay below its minimum (got, wanted): %s" % short)
+    return got
 
 
 def replay_pool(rows, have, held, v2c):
@@ -60,8 +80,7 @@ def main(argv=None):
     v5 = os.path.join(a.root, "v5")
     from fetch import vg_to_coco
     v2c = vg_to_coco(a.root)
-    held = {picture(r["image_id"], v2c) for n in ("test_vsr", "test_v7w", "dev_vsr", "dev_v7w")
-            for r in read(os.path.join(v5, n + ".jsonl"))}
+    held = held_pictures(a.root, v2c)
 
     vsr, v7w = read(os.path.join(v5, "vsr.jsonl")), read(os.path.join(v5, "v7w.jsonl"))
     rng.shuffle(vsr)
@@ -73,6 +92,7 @@ def main(argv=None):
     have = {r["id"] for r in vsr + v7w + sqa + tqa_new}
     pool = replay_pool(read(os.path.join(a.root, "v4", "train_mix.jsonl")), have, held, v2c)
     replay = pick_replay(pool, QUOTAS, rng)
+    got = check_quotas(replay, QUOTAS)
     v6 = read(os.path.join(a.root, "v6", "train_flip_mix.jsonl"))
     by_id = {r["id"]: r for r in v6}
     originals = [r for r in v6 if r.get("axis") == "lr" and r.get("kind") in ("position", "relation")
@@ -83,7 +103,8 @@ def main(argv=None):
     out = vsr + v7w + sqa + tqa_new + replay + pairs
     rng.shuffle(out)
     assert len({r["id"] for r in out}) == len(out), "duplicate ids"
-    assert not {picture(r["image_id"], v2c) for r in out} & held, "a test / dev picture in training"
+    leak = {picture(r["image_id"], v2c) for r in out} & held
+    assert not leak, "held-out pictures in training: %s" % sorted(leak)[:5]
     with open(os.path.join(v5, "train_mix.jsonl"), "w") as f:
         f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in out)
     dev = read(os.path.join(a.root, "v4", "dev_mix.jsonl")) + read(os.path.join(v5, "dev_vsr.jsonl")) \
@@ -101,14 +122,12 @@ def main(argv=None):
     with open(os.path.join(v5, "image_identity.json"), "w") as f:
         json.dump(identity, f)
 
-    got = Counter(group_of(r) for r in replay)
-    short = {name: (got[name], n) for name, n in QUOTAS if got[name] < n}
     per_pic = Counter(picture(r["image_id"], v2c) for r in out)
     report = {"questions": len(out), "unique_ids": len({r["id"] for r in out}), "pictures": len(per_pic),
               "max_questions_per_picture": max(per_pic.values()),
               "parts": {"vsr": len(vsr), "v7w": len(v7w), "scienceqa": len(sqa), "tqa_new": len(tqa_new),
                         "replay": len(replay), "left_right_pair_questions": len(pairs)},
-              "replay_by_ability": dict(got), "replay_quotas": dict(QUOTAS), "replay_short_of_quota": short,
+              "replay_by_ability": dict(got), "replay_quotas": dict(QUOTAS), "held_out_pictures": len(held),
               "hints_cut": cut, "max_hint_tokens": MAX_TOKENS, "dev_mix": len(dev),
               "steps_at_micro_batch_8": -(-len(out) // 8)}
     with open(os.path.join(v5, "MIX.json"), "w") as f:

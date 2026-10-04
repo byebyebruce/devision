@@ -86,6 +86,13 @@ def meta_categories(text: str) -> Dict[str, str]:
     return out
 
 
+def coco_train2014_ids(annotations_zip: str) -> Set[int]:
+    """The official train2014 image ids (from the COCO 2014 captions file), so a picture's split never depends
+    on which images happen to be on disk."""
+    with zipfile.ZipFile(annotations_zip) as z:
+        return {im["id"] for im in json.load(z.open("annotations/captions_train2014.json"))["images"]}
+
+
 def coco_path(coco_id: int, train2014: Set[int]) -> str:
     split = "train2014" if coco_id in train2014 else "val2014"
     return "coco/%s/COCO_%s_%012d.jpg" % (split, split, coco_id)
@@ -290,14 +297,14 @@ def main(argv=None) -> None:
     a = p.parse_args(argv)
     root, out_dir = a.root, os.path.join(a.root, "v5")
     require_benchmarks(root)
-    from fetch import _download_json_zip, download_coco_images, ensure_file, hf_dataset_files, VG_IMAGE_DATA_URL
+    from fetch import _download_json_zip, coco_annotations, download_coco_images, ensure_file, hf_dataset_files, VG_IMAGE_DATA_URL
     rng = random.Random(a.seed)
     report: dict = {"steps": {}}
 
     vg_data: List[dict] = list(_download_json_zip(VG_IMAGE_DATA_URL, os.path.join(root, "raw", "vg")))  # type: ignore[arg-type]
     vg2coco = {"vg:%d" % r["image_id"]: "coco:%d" % r["coco_id"] for r in vg_data if r.get("coco_id")}
     vg_url = {"vg:%d" % r["image_id"]: r["url"] for r in vg_data}
-    train2014 = {int(f[-16:-4]) for f in os.listdir(os.path.join(root, "coco", "train2014")) if f.endswith(".jpg")}
+    train2014 = coco_train2014_ids(coco_annotations(root))
     key = lambda r: picture_key(r["image_id"], vg2coco)  # noqa: E731
 
     # held-out and history pictures
