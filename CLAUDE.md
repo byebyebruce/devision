@@ -72,7 +72,7 @@ uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；�
 uv run devision-pipeline configs/v3-x.yaml [--dry-run] [--from STAGE] [--force]   # 按 YAML 跑一轮训练（再跑同一个 YAML 是续跑）
 ```
 
-- **每轮的评测集合**：训练 YAML 的 `evaluate.sets` 同时包含我们的 `test_*` / `bench_pope` 和 laya-vision 的四个 `bench_lv_*`（2026-10-04 起，从 v6 开始；之前的轮次用单独的 `*-lvbench.yaml` 只评测配置）。新一轮复制上一轮的 YAML 时保留这些集合。
+- **laya-vision 评测集按需要加**：要和 laya-vision 比、或要判断新任务能力（如是否取代当前最佳）时，把四个 `bench_lv_*` 放进 YAML 的 `evaluate.sets`（如 `v6-flip-lr.yaml`、`scratch.yaml`），或用单独的 `*-lvbench.yaml` 只评测配置；只看某项专项能力的实验不必加。
 - **实验用 YAML 编排**（`configs/*.yaml`，`src/devision/train/pipeline.py`）：每个新实验复制一份 YAML 改参数和 `name`，不要再写训练脚本。一个 YAML = `name` + 若干 `stages`（`kind: align|train`、`init` 指向前面的阶段或路径、`data` / `val` / `eval`、`params` 即训练 CLI 的参数名，`common` 是所有阶段共用的参数）+ `evaluate`（评测集和额外命令，`{checkpoint}` / `{name}` / `{eval_dir}` 会被替换）。启动前检查所有参数名、类型和数据文件。长任务用 `nohup uv run devision-pipeline configs/v3-x.yaml > runs/v3-x.out 2>&1 &`。
 - **训练轮次 = YAML 的 `name`**，格式 `v<轮次>-<描述>`（如 `v3-data2`），文件名与之相同（`configs/v3-data2.yaml`）；轮次号由人来管理，不自动生成。输出在 `runs/<name>/`：`run.json`（配置、开始时间、git commit、各阶段起点）、每个阶段一个子目录（checkpoint + 报告 + `swanlab_run.json`）、`eval/`（评测结果和逐题明细）、`logs/`；SwanLab run 名 `<name>/<阶段>`。再跑同一个 YAML 就是续跑：已完成的阶段和评测跳过，`--from STAGE` 从某阶段重跑；阶段 2 每 `--save-every` 步（默认 1000）把训练状态写到阶段目录的 `resume.pt`，中断后再跑会从那里接着训（设置不同会拒绝，`--force` 会删掉它从头来），训完自动删除。同一 seed 在 CPU 上逐位可复现；MPS 上有 1e-7 量级的浮点差异，不保证逐位一致。新的一轮 = 新 YAML + 新 name。只评测的 YAML（`stages: []`）不算一轮，结果写进被评 checkpoint 所在轮次的 `eval/`。轮次（v1、v2、v3……）和数据版本（data-v1、data-v2）是两回事。第 1 轮 `v1-release-0.1`（发布的 0.1），第 2 轮 `v2-align-lora`；早期和失败的运行在 `runs/archive/`。
 
