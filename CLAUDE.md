@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `src/devision/model/`：网络、预处理、checkpoint、`Decider.decide`；不依赖其他子包。数据流：图片 letterbox 256 → 冻结的 SigLIP2 → 2×2 pixel shuffle + MLP 投影层 → 64 个视觉 token 插在 `[CLS]` 之后 → ModernBERT-large（Laya 权重）→ Laya 决策头在每个选项的 `[MASK]` 上打分 → 按温度 softmax（先查（题型, 选项数）桶的温度 `temperature_by_options`，没有就用题型温度 `temperature`；旧 checkpoint 没有分桶，行为不变）。训练和推理共用 `question_item` / `image_tensor`，序列构造不要另写一份。
 - `src/devision/train/`：样本格式（`samples.py`）、阶段 1 对齐（`align.py`，带图完形填空，训投影层，`--lora-r` 时 ModernBERT 也加 LoRA）、阶段 2 RLCD 训练（`rlcd.py`）、评测（`evaluate.py`，走 `decide`）、SwanLab 上报（`tracking.py`）、YAML 实验编排（`pipeline.py`），依赖 model。
-- 准备训练数据的代码（下载、转换、转换器测试）**不进仓库**：放在 `scripts/data/`（已 gitignore）。仓库只认 `samples.py` 里约定的 JSONL 格式。
+- 准备训练数据的代码（下载、转换、混合、转换器测试）在 `scripts/data/`，**在仓库里**（2026-10-04 起，为了在别的机器上从零复现）；下载的原始数据和生成的数据（`data/`）不进仓库。`bash scripts/data/build_all.sh [data]` 按顺序从原始来源生成训练配置用到的全部数据（首次会下载几十 GB、跑几个小时）；规则和比例与本机生成的一致，不保证逐字节相同。训练代码只认 `samples.py` 里约定的 JSONL 格式。
 - `src/devision/serve/`：`/v1/systemone` API，依赖 model。
 - `src/devision/demo/`：web demo 页面和示例图路由，只通过 HTTP 调 API，不 import model、train、serve。
 - 依赖只能单向，不要让 model 反向引用 train/serve/demo，也不要让 train、serve、demo 互相引用。
@@ -53,15 +53,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv run pytest -q                      # 全部测试（含 tiny 模型端到端冒烟，CPU 上几秒）
 uv run pyright                        # 类型检查
 uv run pytest tests/train/test_pipeline.py -k aligned -q   # 只跑一个测试（-k 按名字筛）
-uv run pytest scripts/data -q          # 仓库外数据生成脚本的测试
-uv run python scripts/data/prepare.py fetch --root data ...   # 仓库外：生成 data/{train,val,pope}.jsonl
-uv run python scripts/data/captions.py --root data --exclude data/val.jsonl data/pope.jsonl   # 仓库外：生成 data/align_{train,val}.jsonl（COCO caption）
-uv run python scripts/data/evalsets.py --root data --gqa 1000 --vqav2 1000   # 仓库外：生成 data/val_{gqa,vqav2,mix}.jsonl，并从 train.jsonl 剔除评测图
-uv run python scripts/data/bigtrain.py --root data --gqa 60000 --vqav2 40000 --out data/train_100k.jsonl   # 仓库外：更大的阶段 2 训练集
-uv run python scripts/data/cocoqa.py --root data --split train2014 --limit 60000 --out data/cocoqa_train.jsonl   # 仓库外：从 COCO 实例框出题（val2014 + --out data/val_cocoqa.jsonl 是评测集）
-uv run python scripts/data/v2_build.py --root data   # 仓库外：一条命令重建 v2 数据集（data/v2/：训练、dev_*、dev_mix、test_*、bench_pope、MANIFEST.json），任何验收失败即中止；见 docs/research/data-quality.md
-uv run python scripts/data/v2_mix.py --root data     # 仓库外：按能力配额混合成 data/v2/train_mix.jsonl（左右类 ≤5%，每图 ≤6 题，混合后重新配平验收）
-uv run python scripts/data/lv_bench.py --root data   # 仓库外：按 laya-vision 公开的逐题预测重建他们的评测集到 data/lv_bench/（VQAv2 是非 / A-OKVQA / ScienceQA / POPE，含我们训练没见过的 *.unseen 子集），并把他们的逐题预测转成我们的明细格式；不安装、不运行他们的模型。用 configs/*-lvbench.yaml 评测我们的模型（集合名 bench_lv_<集合>），再用 devision-compare [--only *.unseen.jsonl] 逐题配对比较
+uv run pytest scripts/data -q          # 数据生成脚本的测试
+bash scripts/data/build_all.sh data    # 新机器：从原始来源生成全部训练 / 评测数据（下载几十 GB、几个小时）
+uv run python scripts/data/prepare.py fetch --root data ...   # 数据脚本：生成 data/{train,val,pope}.jsonl
+uv run python scripts/data/captions.py --root data --exclude data/val.jsonl data/pope.jsonl   # 数据脚本：生成 data/align_{train,val}.jsonl（COCO caption）
+uv run python scripts/data/evalsets.py --root data --gqa 1000 --vqav2 1000   # 数据脚本：生成 data/val_{gqa,vqav2,mix}.jsonl，并从 train.jsonl 剔除评测图
+uv run python scripts/data/bigtrain.py --root data --gqa 60000 --vqav2 40000 --out data/train_100k.jsonl   # 数据脚本：更大的阶段 2 训练集
+uv run python scripts/data/cocoqa.py --root data --split train2014 --limit 60000 --out data/cocoqa_train.jsonl   # 数据脚本：从 COCO 实例框出题（val2014 + --out data/val_cocoqa.jsonl 是评测集）
+uv run python scripts/data/v2_build.py --root data   # 数据脚本：一条命令重建 v2 数据集（data/v2/：训练、dev_*、dev_mix、test_*、bench_pope、MANIFEST.json），任何验收失败即中止；见 docs/research/data-quality.md
+uv run python scripts/data/v2_mix.py --root data     # 数据脚本：按能力配额混合成 data/v2/train_mix.jsonl（左右类 ≤5%，每图 ≤6 题，混合后重新配平验收）
+uv run python scripts/data/lv_bench.py --root data   # 数据脚本：按 laya-vision 公开的逐题预测重建他们的评测集到 data/lv_bench/（VQAv2 是非 / A-OKVQA / ScienceQA / POPE，含我们训练没见过的 *.unseen 子集），并把他们的逐题预测转成我们的明细格式；不安装、不运行他们的模型。用 configs/*-lvbench.yaml 评测我们的模型（集合名 bench_lv_<集合>），再用 devision-compare [--only *.unseen.jsonl] 逐题配对比较
 uv run devision-align --data data/align_train.jsonl --val data/align_val.jsonl --data-root data --out runs/align --run-name align   # 阶段 1
 uv run devision-train --init runs/align --lr-new 5e-5 --lr-head 5e-5 --lr-lora 1e-4 --warmup 500 --data data/train_100k.jsonl --val data/val_mix.jsonl --data-root data --eval pope=data/pope.jsonl --out runs/x --run-name x   # 阶段 2；Mac 上加 --device mps
 uv run devision-calibrate --checkpoint runs/x --data data/val_mix.jsonl --data-root data --out runs/x-calib   # 不训练，只重拟合温度（按题型 + 按选项数分桶），打印各桶校准前后的 NLL / ECE；--out 写副本，--in-place 改原 checkpoint，都不给只打印；不上报 SwanLab。--in-place 之后，该 checkpoint 已有的评测结果属于校准前的温度，流水线仍会当作已完成而跳过；要报告校准后的效果，用 --out 的副本另跑只评测 YAML
