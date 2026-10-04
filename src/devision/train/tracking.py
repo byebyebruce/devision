@@ -26,11 +26,12 @@ class Tracker:
     and last step are written to <record_dir>/swanlab_run.json, so evaluations can be added to it later."""
 
     def __init__(self, project: str, run_name: str, config: Dict[str, Any], record_dir: str = "",
-                 resume: bool = False):
-        """`resume`: continue the run recorded in record_dir (training picked up from a resume state)."""
+                 resume: bool = False, record_name: str = RECORD):
+        """`resume`: continue the run recorded in record_dir/record_name (training picked up from a resume
+        state, or an evaluation rerun)."""
         self.swanlab = None
         self.record: Dict[str, Any] = {}
-        self.record_path = os.path.join(record_dir, RECORD) if record_dir else ""
+        self.record_path = os.path.join(record_dir, record_name) if record_dir else ""
         if project:
             import swanlab
 
@@ -62,19 +63,6 @@ class Tracker:
         if self.swanlab:
             self._save()
             self.swanlab.finish()
-
-
-def log_to_finished_run(record_path: str, data: Dict[str, float]) -> str:
-    """Add `data` to the SwanLab run recorded in `record_path` (resumed by id), at its last step.
-    Used for evaluation summaries, which belong to the run that trained the checkpoint."""
-    import swanlab
-
-    with open(record_path) as f:
-        rec = json.load(f)
-    swanlab.init(project=rec["project"], id=rec["id"], resume="must")
-    swanlab.log(data, step=int(rec.get("last_step") or 0))
-    swanlab.finish()
-    return rec.get("url") or rec["id"]
 
 
 _IOREG = {"Device Utilization %": "sys/gpu_util_pct", "In use system memory": "sys/gpu_mem_gb"}

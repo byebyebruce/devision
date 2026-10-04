@@ -14,9 +14,11 @@ plus laya / vision / visual_shuffle / model_name), checked before anything runs.
 
 After the stages, `evaluate:` runs devision-eval on each set (JSON in the round's eval/; sets already
 evaluated are skipped unless rerun) and any extra shell commands, with {checkpoint} and {name}
-substituted (and {eval_dir}), then prints a summary and adds it to the SwanLab run that trained the checkpoint
-(heldout sets under test/<set>/..., or bench/<set>/... when the name starts with bench_; the others under
-ref/<set>/...), found through the swanlab_run.json the trainer left in the stage directory. Set names:
+substituted (and {eval_dir}), then prints a summary. The evaluation has its own SwanLab run, <round>/test (or <round>/<config name>
+for an evaluation-only config), next to the training run: every set's results as soon as it is done,
+the progress (sets / steps done, ETA) and the machine's load every 30 s; a rerun continues that run.
+Groups: heldout sets under test/<set>/..., or bench/<set>/... when the name starts with bench_; the others
+under ref/<set>/.... Set names:
 test_* for our own held-out splits, bench_* for external public benchmarks. An evaluation-only config (`stages: []`) is
 not a round: it writes into the eval/ of the round the checkpoint belongs to. Every set is
 labelled by what it shares -- sample ids or pictures, not file paths -- with the data the checkpoint
@@ -127,6 +129,8 @@ class Plan:
     roles: Dict[str, str] = field(default_factory=dict)
     overlaps: Dict[str, Dict[str, int]] = field(default_factory=dict)
     metric_names: Dict[str, str] = field(default_factory=dict)   # set -> name in SwanLab (prefix + set)
+    eval_dir: Optional[str] = None
+    eval_run_name: Optional[str] = None   # SwanLab run of the evaluation: <round>/test, or <round>/<config name>
     config: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -239,8 +243,11 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
         home = plan.round_dir or os.path.dirname(os.path.normpath(ckpt))
         if plan.round_dir or os.path.exists(os.path.join(home, "run.json")):
             eval_dir, log = os.path.join(home, "eval"), os.path.join(home, "logs", "eval-%s.log" % name)
+            plan.eval_run_name = "%s/%s" % (os.path.basename(os.path.normpath(home)), "test" if plan.round_dir else name)
         else:   # a checkpoint from before rounds: results next to it, as they always were
             eval_dir, log = ckpt, os.path.join(runs, "logs", "%s-eval.log" % name)
+            plan.eval_run_name = "%s/%s" % (os.path.basename(os.path.normpath(ckpt)), name)
+        plan.eval_dir = eval_dir
         entry = "import sys; from devision.train.cli import eval_main; eval_main(sys.argv[1:])"
         watched = {p for st in stages for p in [st.get("val")] + list((st.get("eval") or {}).values()) if p}
         watched |= set(ev.get("history") or [])
@@ -341,28 +348,76 @@ def swanlab_metrics(plan: Plan, only: Optional[Set[str]] = None) -> Dict[str, fl
     return out
 
 
-def report_to_swanlab(plan: Plan, only: Optional[Set[str]] = None) -> None:
-    """Add the evaluation summary to the SwanLab run that trained the checkpoint, if one is recorded.
-    Called after every evaluation step with `only` = that set, so results show up as they come in."""
-    from .tracking import RECORD, log_to_finished_run
+class EvalRun:
+    """The SwanLab run of an evaluation (<round>/test, or <round>/<config> for an evaluation-only config): its
+    own run next to the training run, with the results of every set as they come in, the progress, and the
+    machine's load while each set is being evaluated. A rerun continues the same run (its id is kept in
+    <eval dir>/swanlab_<name>.json). No-op without a SwanLab project, or for a dry run."""
 
-    record = os.path.join(plan.checkpoint or "", RECORD)
-    if not plan.checkpoint or not os.path.exists(record):
-        print("   (no %s next to the checkpoint: evaluation not added to SwanLab)" % RECORD, flush=True)
-        return
-    if (plan.config.get("swanlab_project", "devision")) == "":
-        return
-    metrics = swanlab_metrics(plan, only)
-    if not metrics:
-        return
-    done = sum(os.path.exists(p) for p in plan.eval_outputs.values())
-    metrics["eval_progress/sets_done"] = float(done)
-    metrics["eval_progress/sets_total"] = float(len(plan.eval_outputs))
-    try:
-        where = log_to_finished_run(record, metrics)
-        print("   %d evaluation numbers added to SwanLab run %s" % (len(metrics), where), flush=True)
-    except Exception as e:  # results are on disk either way; a SwanLab problem must not fail the run
-        print("   could not add the evaluation to SwanLab: %s" % e, flush=True)
+    POLL_S = 30
+
+    def __init__(self, plan: Plan):
+        self.plan, self.t0 = plan, time.time()
+        self.tracker: Optional[Any] = None   # a tracking.Tracker once started
+        self.disabled = False
+        self.steps_total = sum(1 for s in plan.steps if s.name.partition(":")[0] in ("eval", "mismatched", "reversed"))
+        self.steps_done = 0
+
+    def _start(self) -> None:
+        if self.tracker is not None or self.disabled:
+            return
+        from .tracking import Tracker
+        project = self.plan.config.get("swanlab_project", "devision")
+        if not project or not self.plan.eval_run_name or not self.plan.eval_dir:
+            self.disabled = True
+            return
+        record = "swanlab_%s.json" % self.plan.eval_run_name.split("/")[-1]
+        os.makedirs(self.plan.eval_dir, exist_ok=True)
+        try:
+            self.tracker = Tracker(project, self.plan.eval_run_name,
+                                   {"checkpoint": self.plan.checkpoint, "sets": dict(self.plan.eval_outputs),
+                                    "roles": dict(self.plan.roles), "git_commit": _git_commit()},
+                                   record_dir=self.plan.eval_dir, record_name=record,
+                                   resume=os.path.exists(os.path.join(self.plan.eval_dir, record)))
+        except Exception as e:  # results are on disk either way; a SwanLab problem must not fail the run
+            print("   could not start the SwanLab evaluation run: %s" % e, flush=True)
+            self.disabled = True
+
+    def _log(self, data: Dict[str, float]) -> None:
+        self._start()
+        if self.tracker is None:
+            return
+        done = sum(os.path.exists(p) for p in self.plan.eval_outputs.values())
+        elapsed = (time.time() - self.t0) / 60
+        data = dict(data, **{"eval_progress/sets_done": float(done),
+                             "eval_progress/sets_total": float(len(self.plan.eval_outputs)),
+                             "eval_progress/steps_done": float(self.steps_done),
+                             "eval_progress/steps_total": float(self.steps_total),
+                             "eval_progress/elapsed_min": elapsed})
+        if self.steps_done:
+            data["eval_progress/eta_min"] = elapsed / self.steps_done * (self.steps_total - self.steps_done)
+        try:
+            self.tracker.log(data, step=self.tracker.record.get("last_step", 0) + 1)
+        except Exception as e:
+            print("   could not log to SwanLab: %s" % e, flush=True)
+
+    def machine(self) -> None:
+        """Machine load now (called every POLL_S seconds while a set is being evaluated)."""
+        import torch
+        from .tracking import _apple_gpu, system_stats
+        self._log(dict(system_stats(torch.device("cpu")), **_apple_gpu()))
+
+    def finished(self, set_name: str) -> None:
+        self.steps_done += 1
+        self._log(swanlab_metrics(self.plan, only={set_name}))
+
+    def close(self) -> None:
+        """Every result once more (also what a rerun with all sets done reports), then finish the run."""
+        self._log(swanlab_metrics(self.plan))
+        if self.tracker is not None:
+            self.tracker.finish()
+            print("   evaluation in SwanLab run %s" % (self.tracker.record.get("url") or self.plan.eval_run_name),
+                  flush=True)
 
 
 def _git_commit() -> Optional[str]:
@@ -392,6 +447,7 @@ def _write_round(plan: Plan) -> None:
 def run_plan(plan: Plan, start_from: Optional[str] = None, force: bool = False, dry_run: bool = False) -> None:
     rerun = force
     env = dict(os.environ, PYTORCH_ENABLE_MPS_FALLBACK="1")
+    evals = EvalRun(plan)
     if plan.round_dir:
         print("== round %s" % plan.round_dir, flush=True)
         if not dry_run:
@@ -415,18 +471,25 @@ def run_plan(plan: Plan, start_from: Optional[str] = None, force: bool = False, 
             print("   role %s, overlap %s" % (plan.roles[step.name[5:]], plan.overlaps[step.name[5:]]), flush=True)
         if dry_run:
             continue
+        kind, _, set_name = step.name.partition(":")
+        evaluating = kind in ("eval", "mismatched", "reversed") and set_name in plan.eval_outputs
         os.makedirs(os.path.dirname(step.log), exist_ok=True)
         with open(step.log, "a") as log:
-            code = subprocess.run(step.argv[0] if step.shell else step.argv, shell=step.shell, env=env,
-                                  stdout=log, stderr=subprocess.STDOUT).returncode
+            proc = subprocess.Popen(step.argv[0] if step.shell else step.argv, shell=step.shell, env=env,
+                                    stdout=log, stderr=subprocess.STDOUT)
+            while True:
+                try:
+                    code = proc.wait(timeout=EvalRun.POLL_S if evaluating else None)
+                    break
+                except subprocess.TimeoutExpired:
+                    evals.machine()
         if code:
             raise SystemExit("%s failed (exit %d); see %s" % (step.name, code, step.log))
-        kind, _, set_name = step.name.partition(":")
-        if kind in ("eval", "mismatched", "reversed") and set_name in plan.eval_outputs:
-            report_to_swanlab(plan, only={set_name})   # visible now, not only when every set is done
+        if evaluating:
+            evals.finished(set_name)   # visible now, not only when every set is done
     if not dry_run and plan.eval_outputs:
         print("== done %s\n%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), _summary(plan)), flush=True)
-        report_to_swanlab(plan)
+        evals.close()
 
 
 def pipeline_main(argv=None) -> None:
