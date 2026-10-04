@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 __version__ = "0.1.0"
 
 
-def load(model_id_or_path: str, device: str = "cpu", revision: Optional[str] = None,
+def load(model_id_or_path: str, device: str = "auto", revision: Optional[str] = None,
          token: Optional[str] = None) -> "Decider":
     """A `Decider` from a checkpoint directory or a Hugging Face model repo id.
 

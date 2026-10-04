@@ -194,7 +194,7 @@ def test_a_checkpoint_saved_before_bucket_temperatures_answers_with_its_per_type
     del config["temperature_by_options"]   # as written before the field existed
     (tmp_path / "ckpt" / "devision_config.json").write_text(json.dumps(config))
 
-    old = Decider.load(tmp_path / "ckpt")
+    old = Decider.load(tmp_path / "ckpt", device="cpu")   # the in-memory model is on the CPU: exact equality
     untempered = tiny_decider()
 
     state = [{"type": "image", "base64": image_b64()}]

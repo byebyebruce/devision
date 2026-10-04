@@ -18,6 +18,7 @@ def serve_main(argv=None) -> None:
     p.add_argument("--examples", default="examples", help="directory of demo images")
     p.add_argument("--no-demo", action="store_true", help="API only, no page at /")
     p.add_argument("--threads", type=int, help="CPU threads for inference (default: torch's choice)")
+    p.add_argument("--device", default="auto", help="auto (default: the fastest available, CPU if there is no GPU), cpu, cuda or mps")
     p.add_argument("--revision", help="hub commit, tag or branch when --checkpoint is a repo id")
     a = p.parse_args(argv)
     if a.threads:
@@ -25,7 +26,7 @@ def serve_main(argv=None) -> None:
 
         torch.set_num_threads(a.threads)
 
-    app = create_app(Decider.load(a.checkpoint, revision=a.revision))
+    app = create_app(Decider.load(a.checkpoint, device=a.device, revision=a.revision))
     if not a.no_demo:
         from ..demo import demo_router
 

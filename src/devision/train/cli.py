@@ -133,6 +133,7 @@ def eval_main(argv=None) -> None:
                    help="one question per decide() request (to measure single-question latency; slower)")
     p.add_argument("--no-temperature", action="store_true",
                    help="evaluate the raw probabilities (all temperatures 1), to compare before / after calibration")
+    p.add_argument("--device", default="auto", help="cpu, cuda, mps, or auto (the fastest available; default)")
     p.add_argument("--role", choices=["unspecified", "heldout", "calibration_fit", "monitoring"], default="unspecified",
                    help="what this set was used for; heldout = never used to fit temperatures or choose. "
                         "Not given -> unspecified (nothing is claimed)")
@@ -142,12 +143,13 @@ def eval_main(argv=None) -> None:
         p.error("--max-questions must be >= 1")
 
     records: list = []
-    decider = Decider.load(a.checkpoint)
+    decider = Decider.load(a.checkpoint, device=a.device)
     if a.no_temperature:
         decider.cfg.temperature, decider.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}
     result = evaluate(decider, read_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records,
                       max_questions=None if a.no_group else a.max_questions)
     result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
+                     "device": str(next(decider.model.parameters()).device),
                      "temperature": "none (raw)" if a.no_temperature else "fitted",
                      "control": control, "seed": a.seed, "code": _code_version()}
     text = json.dumps(result, indent=2)
@@ -184,7 +186,7 @@ def calibrate_main(argv=None) -> None:
     where = p.add_mutually_exclusive_group()
     where.add_argument("--out", help="new directory: a copy of the checkpoint with the refitted temperatures")
     where.add_argument("--in-place", action="store_true", help="overwrite the checkpoint's devision_config.json")
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto", help="cpu, cuda, mps, or auto (the fastest available; default)")
     p.add_argument("--min-bucket", type=int, default=MIN_BUCKET_ITEMS,
                    help="fewer questions than this in a bucket: no bucket temperature, the type's is used")
     a = p.parse_args(argv)
@@ -193,8 +195,9 @@ def calibrate_main(argv=None) -> None:
     if a.out and os.path.exists(a.out):
         raise SystemExit("%s already exists" % a.out)
 
-    decider = Decider.load(a.checkpoint)
-    report = calibrate(decider, read_jsonl(a.data), a.data_root, device=a.device, min_bucket=a.min_bucket)
+    decider = Decider.load(a.checkpoint, device=a.device)
+    device = str(next(decider.model.parameters()).device)
+    report = calibrate(decider, read_jsonl(a.data), a.data_root, device=device, min_bucket=a.min_bucket)
     report["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data),
                      "code": _code_version()}
     print("temperature (choice, score, noul): %s -> %s" % (

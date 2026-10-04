@@ -29,6 +29,7 @@ from PIL import Image
 from .samples import Sample
 from .tracking import Tracker, TrainLog
 from ..model import Decider, ModelConfig, image_tensor, option_bucket, pick_temperature, question_item, text_encoder
+from ..model.decider import best_device
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
 MIN_TYPE_ITEMS = 10      # fewer val questions of a type: its temperature is not fitted
@@ -62,7 +63,7 @@ class TrainConfig:
 
 def _device(name: str) -> torch.device:
     if name == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device(best_device())
     return torch.device(name)
 
 
@@ -250,7 +251,7 @@ def bucket_metrics(logits, items, temperature: Sequence[float],
     return out
 
 
-def calibrate(decider: Decider, samples: Sequence[Sample], data_root, device: str = "cpu",
+def calibrate(decider: Decider, samples: Sequence[Sample], data_root, device: str = "auto",
               min_bucket: int = MIN_BUCKET_ITEMS) -> Dict[str, Any]:
     """Refit `decider`'s temperatures (per type and per bucket, `fit_temperatures`) on `samples` without
     training; the weights are untouched. Returns the temperatures and `bucket_metrics` before (the

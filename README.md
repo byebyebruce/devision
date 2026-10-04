@@ -58,6 +58,7 @@ devision-serve --checkpoint runs/v1-release-0.1/stage2b --port 8000
 | `--checkpoint` | 本地目录或 Hugging Face 仓库 id |
 | `--revision` | 仓库 id 时固定的 commit、tag 或分支 |
 | `--host` / `--port` | 默认 `127.0.0.1:8000` |
+| `--device` | `auto`（默认：有 CUDA / Apple GPU 就用，没有就用 CPU）、`cuda`、`mps` 或 `cpu` |
 | `--threads` | CPU 推理线程数 |
 | `--no-demo` | 只开接口，不挂 web demo |
 
@@ -67,7 +68,7 @@ devision-serve --checkpoint runs/v1-release-0.1/stage2b --port 8000
 - `GET /health`：返回 `{"status": "ok", "model": "devision-0.1"}`。
 - `GET /`：web demo，可以上传图片、填题目、看概率（`--no-demo` 关闭）。
 
-只跑 CPU，Mac 上单题大约 0.2 秒；同一请求里的多道题共用一次图片编码。
+自动用最快的设备，没有 GPU 的机器用 CPU 也能跑（Mac CPU 上单题大约 0.2 秒）；同一请求里的多道题共用一次图片编码。
 
 ### 请求
 
@@ -194,7 +195,7 @@ laya-vision 是目前唯一公开的、能看图的 System One 模型。我们�
 src/devision/
 ├── model/     模型：网络结构、图片预处理、checkpoint 读写、Decider.decide（推理入口）
 ├── train/     训练：样本格式、对齐（阶段 1）、RLCD 训练（阶段 2，SwanLab 可视化）、评测；命令 devision-align / train / eval
-├── serve/     服务：POST /v1/systemone API（CPU）；命令 devision-serve
+├── serve/     服务：POST /v1/systemone API（自动选设备，CPU 也能跑）；命令 devision-serve
 └── demo/      Web demo：页面与示例图路由，由 devision-serve 挂载（--no-demo 可关）
 examples/      demo 默认加载的示例图
 ```

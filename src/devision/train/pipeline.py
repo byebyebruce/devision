@@ -268,7 +268,7 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
             plan.eval_outputs[set_name] = out_json
             plan.metric_names[set_name] = ev.get("prefix", "") + set_name
             base = [python, "-c", entry, "--checkpoint", plan.checkpoint, "--data", path, "--data-root", data_root,
-                    "--role", role]
+                    "--role", role, "--device", device]
             plan.steps.append(Step("eval:" + set_name, base + ["--out", out_json], log, done_marker=out_json))
             if ev.get("controls"):
                 plan.control_outputs[set_name] = {}

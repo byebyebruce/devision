@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **API 与 Jev `/v1/systemone` 兼容**：唯一扩展是 `state` 数组可含 `{type:"image", base64|url}`。响应结构不得偏离 Jev。
 - **`confidence = (n·p_max−1)/(n−1)`**（Jev 口径），不用 Laya 的熵式定义。
-- 推理只跑 **CPU**；训练在本地 Mac（MPS）。
+- 交付的模型必须能**只用 CPU** 推理（没有 GPU 的机器也能跑），有 GPU 时也能用（`devision.load(device=...)`、`devision-serve --device`，默认 `auto`）。**我们自己的训练和评测用最快的设备**：训练在本地 Mac（MPS），`devision-eval` / `devision-calibrate` 默认 `--device auto`（CUDA > MPS > CPU），流水线把 YAML 的 `device` 传给评测；延迟数字只在要验证部署时用 `--device cpu` 单独测。
 - 当前仅：英文、单图、letterbox 到 256×256、题型 `noul`/`choice`（`score` 返回 422）。
 - **非商用项目**：可用 laya-vision（CC BY-NC-SA）做 baseline；许可相关改动需先确认。
 

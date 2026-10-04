@@ -117,6 +117,15 @@ def image_tensor(img: Image.Image, cfg: ModelConfig) -> torch.Tensor:
     return to_pixel_values(img, cfg.image_size)
 
 
+def best_device() -> str:
+    """The fastest device torch can use here: "cuda", then "mps" (Apple GPU), then "cpu"."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 class Decider:
     def __init__(self, model: VisionDecisionModel, tokenizer, cfg: ModelConfig):
         self.model = model.eval()
@@ -136,10 +145,12 @@ class Decider:
             json.dump(self.cfg.to_dict(), f, indent=2)
 
     @classmethod
-    def load(cls, path, device: str = "cpu", revision: Optional[str] = None,
+    def load(cls, path, device: str = "auto", revision: Optional[str] = None,
              token: Optional[str] = None) -> "Decider":
         """`path` is a checkpoint directory (as written by `save`) or a Hugging Face model repo id;
-        `revision` and `token` apply to the latter."""
+        `revision` and `token` apply to the latter. `device`: "auto" (default: the fastest available --
+        CUDA, then MPS, then CPU, so it also runs on machines without a GPU), or "cuda" / "mps" / "cpu"."""
+        device = best_device() if device == "auto" else device
         path = str(path)
         if not os.path.isdir(path):
             from huggingface_hub import snapshot_download
