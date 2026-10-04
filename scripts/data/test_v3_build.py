@@ -42,3 +42,30 @@ def test_a_hint_becomes_state_text():
     s = make_sample("scienceqa", "1", "img:1", "x.jpg", "Which is north?", ["x", "y"], 0, rng, state_text=" Look at the map. ")
     assert s["state_text"] == "Look at the map."
     assert "state_text" not in make_sample("scienceqa", "2", "img:1", "x.jpg", "?", ["x", "y"], 0, rng, state_text="")
+
+
+def _png(dot=None, size=(256, 256)):
+    """A map-like picture: a strong gradient, optionally with one small region recoloured."""
+    import io
+    from PIL import Image
+    im = Image.new("RGB", size)
+    im.putdata([(x, (x + y) // 2, 255 - y) for y in range(size[1]) for x in range(size[0])])
+    if dot:
+        for dx in range(4):
+            for dy in range(4):
+                im.putpixel((dot[0] + dx, dot[1] + dy), (255, 0, 0))
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_diagrams_match_by_identical_pixels_photos_by_perceptual_hash():
+    from v3_build import dhash_bytes, is_held_out, pixel_hash_bytes
+    held_map = _png()
+    other_state = _png(dot=(100, 120))                         # same map, another spot marked
+    assert dhash_bytes(held_map) == dhash_bytes(other_state)   # what data-v3 could not tell apart
+    held = ({dhash_bytes(held_map)}, {pixel_hash_bytes(held_map)})
+    assert is_held_out("scienceqa", held_map, held, "exact")
+    assert not is_held_out("scienceqa", other_state, held, "exact")
+    assert is_held_out("scienceqa", other_state, held, "dhash")   # data-v3 behaviour unchanged
+    assert is_held_out("aokvqa", other_state, held, "exact")      # photos keep the perceptual hash

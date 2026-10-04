@@ -1,6 +1,7 @@
 """data-v3: common-sense reasoning and textbook-diagram questions, plus the data-v2 mix (kept out of the repo).
 
-    uv run python scripts/data/v3_build.py --root data
+    uv run python scripts/data/v3_build.py --root data                                  # data-v3
+    uv run python scripts/data/v3_build.py --root data --version v4 --match exact      # data-v4
 
 Adds four sources the earlier data never had (laya-vision is trained on them; we are 4 points behind it
 on A-OKVQA and 34 behind on ScienceQA):
@@ -19,6 +20,12 @@ A dev share (by picture) goes to data/v3/dev_<set>.jsonl.
 Writes data/v3/{aokvqa,scienceqa,ai2d,tqa}.jsonl, dev_*.jsonl, dev_mix.jsonl (dev of the new sets plus
 data/v2/dev_mix_half.jsonl), train_mix.jsonl (data-v2 train_mix + the above/below relation questions of
 round 4 + the new sets) and MANIFEST.json (counts, sha256, answer-position and option-count baselines).
+
+data-v4 differs from data-v3 only in how diagram pictures (ScienceQA / AI2D / TQA) are matched against the
+evaluation pictures: identical pixels instead of an equal 64-bit perceptual hash, which could not tell one
+US map with a state highlighted from the same map with another state highlighted and so dropped 3,259
+ScienceQA questions. Photos (A-OKVQA) keep the perceptual hash, since a photo may be re-encoded. Pictures
+are saved under v3/images either way (shared; the data-v3 files are not touched).
 """
 import argparse
 import glob
@@ -29,7 +36,7 @@ import os
 import random
 import re
 from collections import Counter
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 SETS = ("aokvqa", "scienceqa", "ai2d", "tqa")
 DEV_SHARE = 0.03
@@ -93,22 +100,49 @@ def dhash_bytes(data: bytes) -> int:
         return dhash(im)
 
 
-def held_out_hashes(root: str) -> Set[int]:
-    """Perceptual hashes of every picture of the evaluation, dev and laya-vision benchmark sets."""
+DIAGRAM_SETS = ("scienceqa", "ai2d", "tqa")   # drawn diagrams and maps, the same files in every split
+
+
+def pixel_hash(im) -> str:
+    """Identity of the decoded pixels: two files are the same picture only if every pixel is the same."""
+    rgb = im.convert("RGB")
+    return hashlib.sha1(("%dx%d:" % rgb.size).encode() + rgb.tobytes()).hexdigest()
+
+
+def pixel_hash_bytes(data: bytes) -> str:
+    from PIL import Image
+    with Image.open(io.BytesIO(data)) as im:
+        return pixel_hash(im)
+
+
+def is_held_out(name: str, data: bytes, held, match: str) -> bool:
+    """Whether a training picture is one of the evaluation pictures. Photos (A-OKVQA, from COCO) match by
+    perceptual hash, since the same photo may be re-encoded. With match="exact", diagrams match only by
+    identical pixels: a 64-bit perceptual hash cannot tell one US map with a state highlighted from the
+    same map with another state highlighted, so data-v3 (match="dhash") dropped such questions wholesale."""
+    hashes, pixels = held
+    if match == "exact" and name in DIAGRAM_SETS:
+        return pixel_hash_bytes(data) in pixels
+    return dhash_bytes(data) in hashes
+
+
+def held_out_hashes(root: str) -> Tuple[Set[int], Set[str]]:
+    """Perceptual hashes and pixel hashes of every picture of the evaluation, dev and laya-vision benchmark sets."""
     from PIL import Image
     from lv_bench import dhash
     files = [f for f in glob.glob(os.path.join(root, "*.jsonl")) + glob.glob(os.path.join(root, "v2", "*.jsonl"))
              + glob.glob(os.path.join(root, "lv_bench", "*.jsonl"))
              if os.path.basename(f).startswith(("val", "pope", "eval", "dev", "test_", "bench_", "vqav2_yesno", "aokvqa", "scienceqa"))]
     paths = {json.loads(l)["image"] for f in files for l in open(f) if l.strip()}
-    out = set()
+    out, pixels = set(), set()
     for p in sorted(paths):
         try:
             with Image.open(os.path.join(root, p)) as im:
                 out.add(dhash(im))
+                pixels.add(pixel_hash(im))
         except OSError:
             pass
-    return out
+    return out, pixels
 
 
 def save_image(root: str, rel: str, data: bytes) -> None:
@@ -137,7 +171,7 @@ HF_SOURCES = {"aokvqa": ("HuggingFaceM4/A-OKVQA", "data/train-*.parquet"),
               "tqa": ("HuggingFaceM4/the_cauldron", "tqa/train-*.parquet")}
 
 
-def build_set(root: str, name: str, held: Set[int], rng: random.Random, report: dict) -> List[dict]:
+def build_set(root: str, name: str, held, rng: random.Random, report: dict, match: str = "dhash") -> List[dict]:
     from fetch import hf_dataset_files
     hf_dataset_files(root, *HF_SOURCES[name])   # into data/raw/hf on first use
     hf = os.path.join(root, "raw", "hf")
@@ -145,7 +179,7 @@ def build_set(root: str, name: str, held: Set[int], rng: random.Random, report: 
     dropped = Counter()
 
     def add(qid, data, question, options, answer, state_text="", extra=None):
-        if dhash_bytes(data) in held:
+        if is_held_out(name, data, held, match):
             dropped["picture in an evaluation set"] += 1
             return
         pic = picture_id(data)
@@ -199,17 +233,20 @@ def main(argv=None) -> None:
     p.add_argument("--root", default="data")
     p.add_argument("--per-picture", type=int, default=6, help="at most this many questions of a picture in the mix")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--version", default="v3", help="output directory under --root: v3, or v4 with --match exact")
+    p.add_argument("--match", default="dhash", choices=["dhash", "exact"],
+                   help="how diagram pictures (ScienceQA / AI2D / TQA) are matched against evaluation pictures")
     a = p.parse_args(argv)
-    out_dir = os.path.join(a.root, "v3")
+    out_dir = os.path.join(a.root, a.version)
     os.makedirs(out_dir, exist_ok=True)
     rng = random.Random(a.seed)
     from v2_common import require_benchmarks
     require_benchmarks(a.root)
     held = held_out_hashes(a.root)
-    report: dict = {"held_out_pictures_hashed": len(held), "sets": {}, "files": {}}
+    report: dict = {"held_out_pictures_hashed": len(held[0]), "match": a.match, "sets": {}, "files": {}}
     train_new, dev_all = [], []
     for name in SETS:
-        rows = build_set(a.root, name, held, rng, report["sets"])
+        rows = build_set(a.root, name, held, rng, report["sets"], a.match)
         dev = [r for r in rows if in_dev(r["image_id"], DEV_SHARE)]
         train = [r for r in rows if not in_dev(r["image_id"], DEV_SHARE)]
         write(os.path.join(out_dir, name + ".jsonl"), train)
@@ -244,7 +281,7 @@ def main(argv=None) -> None:
     report["mix"] = {"data_v2_train_mix": len(v2), "relation_above_below": len([r for r in tb if r["id"] not in have]),
                      "new_reasoning_and_diagrams": len(extra), "total": len(mix),
                      "new_share": round(len(extra) / len(mix), 4)}
-    report["settings"] = {"seed": a.seed, "per_picture": a.per_picture, "dev_share": DEV_SHARE}
+    report["settings"] = {"seed": a.seed, "per_picture": a.per_picture, "dev_share": DEV_SHARE, "match": a.match}
     with open(os.path.join(out_dir, "MANIFEST.json"), "w") as f:
         json.dump(report, f, indent=1)
     print(json.dumps({k: report[k] for k in ("held_out_pictures_hashed", "sets", "mix")}, indent=1))
