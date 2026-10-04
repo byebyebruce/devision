@@ -168,7 +168,7 @@ class Decider:
         """Same as `decide`, under Laya's name."""
         return self.decide(state, questions)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def decide(self, state: Any, questions: Any) -> Dict[str, Any]:
         """Jev answers. Each question's probabilities are softmax(option logits / T), T being its
         (type, option count) bucket's temperature, or its type's when the bucket has none."""
