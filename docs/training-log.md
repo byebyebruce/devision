@@ -2,7 +2,7 @@
 
 每一轮训练一节（轮次 = YAML 的 `name`，目录 `runs/<name>/`），写清改了什么、结果、和上一轮比涨了多少。过程细节和失败的尝试在 `experiments/2026-09-30-rlcd-plateau.md`。
 
-**当前最佳：`v7-sqa`**（`runs/v7-sqa/stage2`）。2026-10-04 由项目负责人决定取代 v6（见 v7 一节）；已知短板：左右关系仍未学会（原图与镜像同时答对 10–19%，低于随机），ScienceQA 仍比 laya-vision 低 11.5 个点且自然科学题没进步，计数比 v6 低 3.7（区间含 0），拟合温度偏高（choice 1.72 / noul 1.61）。
+**当前最佳：`v8-vsr-v7w`**（`runs/v8-vsr-v7w/stage2`）。2026-10-05 由项目负责人决定取代 v7（见 v8 一节）；已知短板：左右关系仍未学会（原图与镜像同时答对 12–23%，不高于随机），ScienceQA 仍比 laya-vision 低 8.4 个点，Visual7W 的提高主要是文字先验，POPE 比 v7 低 0.7 个点（答"有"更保守），拟合温度 choice 1.54 / noul 1.54。
 
 | 轮次 | 日期 | 配置 | 相对上一轮改了什么 | 状态 |
 |---|---|---|---|---|
@@ -12,10 +12,10 @@
 | v4-relation-tb | 2026-10-03 | `configs/v4-relation-tb.yaml` | 从 v3 接着训 2 个 epoch：上下相对位置题 3,186 道（COCO + 场景图）+ 3 倍回放 | 上下题修好，GQA 退步；未取代 v3 |
 | v5-data3 | 2026-10-04 | `configs/v5-data3.yaml` | 从 v3 接着训一遍：新增常识推理与教材插图（A-OKVQA / ScienceQA / AI2D / TQA）+ 上下相对位置题共 32,164 道，回放 30,000 道 | 被 v6 取代（曾为当前最佳：负责人决定取代 v3） |
 | v6-flip-lr | 2026-10-04 | `configs/v6-flip-lr.yaml` | 从 v5 接着训一遍：左右镜像成对题 12,000 对 + 按能力保底的回放 24,000 道 | 被 v7 取代（曾为当前最佳：负责人决定取代 v5） |
-| v7-sqa | 2026-10-04 | `configs/v7-sqa.yaml` | 从 v6 接着训一遍：data-v4 的 ScienceQA 4,948 道（示意图按像素比对，找回 2,095 道）+ 回放 17,000 + 左右镜像 3,000 对 | **当前最佳**（负责人决定取代 v6） |
-| v8-vsr-v7w | 2026-10-05 | `configs/v8-vsr-v7w.yaml` | 从 v7 接着训一遍：data-v5 的 VSR 6,411 + Visual7W telling 7,500 + v7 的 ScienceQA + 回放 18,500（计数 +1,000、GQA +500）+ 左右镜像 3,000 对 | 待负责人决定（建议取代 v7） |
+| v7-sqa | 2026-10-04 | `configs/v7-sqa.yaml` | 从 v6 接着训一遍：data-v4 的 ScienceQA 4,948 道（示意图按像素比对，找回 2,095 道）+ 回放 17,000 + 左右镜像 3,000 对 | 被 v8 取代（曾为当前最佳：负责人决定取代 v6） |
+| v8-vsr-v7w | 2026-10-05 | `configs/v8-vsr-v7w.yaml` | 从 v7 接着训一遍：data-v5 的 VSR 6,411 + Visual7W telling 7,500 + v7 的 ScienceQA + 回放 18,500（计数 +1,000、GQA +500）+ 左右镜像 3,000 对 | **当前最佳**（负责人决定取代 v7） |
 
-## v8-vsr-v7w（待负责人决定是否取代 v7；验收规则在训练前写下）
+## v8-vsr-v7w（当前最佳；验收规则在训练前写下）
 
 **改动**：从 v7 接着训一遍，`data/v5/train_mix.jsonl` 43,380 题、34,077 张图、5,423 步（比 v7 多约 55%）= VSR 6,411 + Visual7W telling 7,500 + ScienceQA 4,948 + 新增 TQA 21 + 回放 18,500（v7 的保底 17,000，计数 3,000、GQA 1,500）+ 左右镜像 3,000 对；dev 为 `data/v5/dev_mix.jsonl`（5,178）。数据与剔除见 `research/data-quality.md`（data-v5）。方案与评审在 `critic/`（DV5-01 至 06）。
 
@@ -68,12 +68,14 @@
 
 **与 laya-vision 201M 逐题配对**（v8）：VQAv2 是非 0.733 对 0.717，+1.5 [−0.1, +3.0]；A-OKVQA 0.613 对 0.598，+1.5 [−1.8, +4.8]；**ScienceQA 0.740 对 0.824，−8.4 [−10.5, −6.2]**（v7 −11.5）；POPE random / popular / adversarial 0.852 / 0.836 / 0.808，对方公开 0.836 / 0.819 / 0.777。
 
-**建议**：取代 v7。新增的两项能力按规则通过，其中 VSR 的提高确实来自看图；同时 ScienceQA +3.1、相对位置 +4.0、计数 +5.1 都显著，校准也更好。代价：POPE 显著下降 0.7 个点（答"有"更保守）；A-OKVQA −1.1 和两个镜像集合的区间下界越过 −2（点估计接近 0）；Visual7W 的增量大部分是文字先验。由项目负责人决定。
+**建议**：取代 v7。新增的两项能力按规则通过，其中 VSR 的提高确实来自看图；同时 ScienceQA +3.1、相对位置 +4.0、计数 +5.1 都显著，校准也更好。代价：POPE 显著下降 0.7 个点（答"有"更保守）；A-OKVQA −1.1 和两个镜像集合的区间下界越过 −2（点估计接近 0）；Visual7W 的增量大部分是文字先验。
+
+**决定（2026-10-05，项目负责人）**：v8 取代 v7 成为当前最佳。
 
 **产物**：checkpoint `runs/v8-vsr-v7w/stage2`；评测 `runs/v8-vsr-v7w/eval/`（含配错图 / 倒序对照）、对比 `runs/v8-vsr-v7w/eval/compare/`；v7 在新集合上的对照 `runs/v7-sqa/eval/test_{vsr,v7w}.*`（`configs/v7-sqa-v5sets.yaml`）；SwanLab `v8-vsr-v7w/stage2`、`v8-vsr-v7w/eval`。
 
 
-## v7-sqa（当前最佳）
+## v7-sqa（被 v8 取代）
 
 **改动**：从 v6 接着训一遍（3,497 步，15:54–17:37，内存平稳），`data/v4/train_sqa_mix.jsonl` 27,969 道 = data-v4 全部 ScienceQA 训练题 4,948（示意图按像素完全相同才剔除，比 data-v3 多 2,095 道：州首府、大洋洲地理、经济原理、磁铁……）+ 新增 TQA 21 + 按能力保底的回放 17,000 + v6 的左右镜像 3,000 对。dev 为 `data/v4/dev_mix.jsonl`。拟合温度 choice 1.72、noul 1.61（v6 1.77 / 1.51）。数据见 `research/data-quality.md`。
 
