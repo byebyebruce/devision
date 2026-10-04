@@ -203,7 +203,7 @@ def test_roles_follow_shared_questions_and_pictures_not_file_names(tmp_path):
 
 def test_an_evaluation_gets_its_own_swanlab_run_named_after_the_round(tmp_path):
     p = plan(config())
-    assert p.eval_run_name == "v3-exp/test"
+    assert p.eval_run_name == "v3-exp/eval"
     (tmp_path / "v2-old" / "decide").mkdir(parents=True)
     (tmp_path / "v2-old" / "run.json").write_text("{}")
     only = plan(config(name="lvbench", stages=[],

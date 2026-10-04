@@ -14,7 +14,7 @@ plus laya / vision / visual_shuffle / model_name), checked before anything runs.
 
 After the stages, `evaluate:` runs devision-eval on each set (JSON in the round's eval/; sets already
 evaluated are skipped unless rerun) and any extra shell commands, with {checkpoint} and {name}
-substituted (and {eval_dir}), then prints a summary. The evaluation has its own SwanLab run, <round>/test (or <round>/<config name>
+substituted (and {eval_dir}), then prints a summary. The evaluation has its own SwanLab run, <round>/eval (or <round>/<config name>
 for an evaluation-only config), next to the training run: every set's results as soon as it is done,
 the progress (sets / steps done, ETA) and the machine's load every 30 s; a rerun continues that run.
 Groups: heldout sets under test/<set>/..., or bench/<set>/... when the name starts with bench_; the others
@@ -130,7 +130,7 @@ class Plan:
     overlaps: Dict[str, Dict[str, int]] = field(default_factory=dict)
     metric_names: Dict[str, str] = field(default_factory=dict)   # set -> name in SwanLab (prefix + set)
     eval_dir: Optional[str] = None
-    eval_run_name: Optional[str] = None   # SwanLab run of the evaluation: <round>/test, or <round>/<config name>
+    eval_run_name: Optional[str] = None   # SwanLab run of the evaluation: <round>/eval, or <round>/<config name>
     config: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -243,7 +243,7 @@ def build_plan(cfg: Dict[str, Any], python: str = sys.executable, check_files: b
         home = plan.round_dir or os.path.dirname(os.path.normpath(ckpt))
         if plan.round_dir or os.path.exists(os.path.join(home, "run.json")):
             eval_dir, log = os.path.join(home, "eval"), os.path.join(home, "logs", "eval-%s.log" % name)
-            plan.eval_run_name = "%s/%s" % (os.path.basename(os.path.normpath(home)), "test" if plan.round_dir else name)
+            plan.eval_run_name = "%s/%s" % (os.path.basename(os.path.normpath(home)), "eval" if plan.round_dir else name)
         else:   # a checkpoint from before rounds: results next to it, as they always were
             eval_dir, log = ckpt, os.path.join(runs, "logs", "%s-eval.log" % name)
             plan.eval_run_name = "%s/%s" % (os.path.basename(os.path.normpath(ckpt)), name)
@@ -349,7 +349,7 @@ def swanlab_metrics(plan: Plan, only: Optional[Set[str]] = None) -> Dict[str, fl
 
 
 class EvalRun:
-    """The SwanLab run of an evaluation (<round>/test, or <round>/<config> for an evaluation-only config): its
+    """The SwanLab run of an evaluation (<round>/eval, or <round>/<config> for an evaluation-only config): its
     own run next to the training run, with the results of every set as they come in, the progress, and the
     machine's load while each set is being evaluated. A rerun continues the same run (its id is kept in
     <eval dir>/swanlab_<name>.json). No-op without a SwanLab project, or for a dry run."""
