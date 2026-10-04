@@ -1,12 +1,12 @@
-# Round 7: round 5's model trained from scratch in one run (for a fresh machine, e.g. an NVIDIA GPU):
+# Round 5's model trained from scratch in one run (for a fresh machine, e.g. an NVIDIA GPU):
 #   align   = round 2's stage 1 (COCO captions, projector + LoRA on ModernBERT)
 #   stage2a = round 3 (one pass over the data-v2 mix)
 #   stage2b = round 5 (what data-v3 adds -- reasoning, diagrams, above/below -- plus 30,000 replayed)
 # Same data files and settings as those rounds (micro_batch 8, seed 0), so the result is comparable with v5;
 # a larger batch on a GPU is a separate experiment. device: auto picks cuda (bf16 autocast) when present.
 # Data: the prepared files under data/ (scripts/data/ builds them; see docs/research/data-quality.md).
-#   uv run devision-pipeline configs/v7-scratch.yaml
-name: v7-scratch
+#   uv run devision-pipeline configs/scratch.yaml
+name: scratch
 device: auto
 common:
   log_every: 50
@@ -46,4 +46,4 @@ evaluate:
     test_relation: data/v2/test_relation.jsonl
     test_size: data/v2/test_size.jsonl
   commands:
-    - uv run devision-pipeline configs/v7-scratch-lvbench.yaml
+    - uv run devision-pipeline configs/scratch-lvbench.yaml
