@@ -2,7 +2,8 @@
 # 2026-09-30-rlcd-plateau.md); here each left/right question comes with the same question on the mirrored
 # picture and the answer swapped, so names and option order cannot answer it (docs/research/data-quality.md).
 # Data: scripts/data/v6_flip.py (and --dev), then scripts/data/v6_mix.py (out of the repo):
-# 12,000 pairs + 24,000 replayed questions from data-v3 without left/right ones, one pass.
+# 12,000 pairs + 24,000 replayed questions from data-v3 without left/right ones (minimum per ability first:
+# counting and colour 3,000 each, above/below relations 3,000, the reasoning and diagram sets 5,000), one pass.
 # Mirrored test sets: scripts/data/v6_flip.py --files test_position|test_relation --out <name>_flip.jsonl.
 #   uv run devision-pipeline configs/v6-flip-lr.yaml
 name: v6-flip-lr
