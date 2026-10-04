@@ -1,0 +1,22 @@
+# Our model on laya-vision's public benchmark (rebuilt by scripts/data/lv_bench.py, out of the repo):
+# the exact questions of their published per-question predictions (VQAv2 yes/no without the 113
+# annotator ties, A-OKVQA val, ScienceQA image val with hints as text) plus all of POPE. Evaluation only.
+#   uv run devision-pipeline configs/v7-scratch-lvbench.yaml
+# Then pair with their published rows, on all questions and on the ones our training never saw:
+#   uv run devision-compare data/lv_bench/laya-vision-201m.aokvqa.details.jsonl \
+#       runs/v5-data3/eval/bench_lv_aokvqa.details.jsonl [--only data/lv_bench/aokvqa.unseen.jsonl]
+name: lvbench
+stages: []
+
+evaluate:
+  checkpoint: runs/v7-scratch/stage2b
+  calibration_fit: data/v3/dev_mix.jsonl
+  history: []
+  image_identity: data/v2/image_identity.json
+  controls: true                           # mismatched pictures (and reversed options for choice sets): does the new
+                                           # reasoning / diagram ability use the picture? (docs/experiments/2026-10-03-v5-acceptance-plan.md)
+  sets:
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl

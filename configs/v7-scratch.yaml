@@ -1,0 +1,49 @@
+# Round 7: round 5's model trained from scratch in one run (for a fresh machine, e.g. an NVIDIA GPU):
+#   align   = round 2's stage 1 (COCO captions, projector + LoRA on ModernBERT)
+#   stage2a = round 3 (one pass over the data-v2 mix)
+#   stage2b = round 5 (what data-v3 adds -- reasoning, diagrams, above/below -- plus 30,000 replayed)
+# Same data files and settings as those rounds (micro_batch 8, seed 0), so the result is comparable with v5;
+# a larger batch on a GPU is a separate experiment. device: auto picks cuda (bf16 autocast) when present.
+# Data: the prepared files under data/ (scripts/data/ builds them; see docs/research/data-quality.md).
+#   uv run devision-pipeline configs/v7-scratch.yaml
+name: v7-scratch
+device: auto
+common:
+  log_every: 50
+
+stages:
+  - name: align
+    kind: align
+    data: data/align_full_train.jsonl
+    val: data/align_val.jsonl
+    params: {epochs: 2, eval_every: 500, lora_r: 16, lr_lora: 1.0e-4}
+
+  - name: stage2a
+    kind: train
+    init: align
+    data: data/v2/train_mix.jsonl           # 134,556 questions
+    val: data/v2/dev_mix_half.jsonl
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 2000}
+
+  - name: stage2b
+    kind: train
+    init: stage2a
+    data: data/v3/train_cont.jsonl          # 62,164 = 32,164 new + 30,000 replayed
+    val: data/v3/dev_mix.jsonl
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 2000}
+
+evaluate:
+  image_identity: data/v2/image_identity.json
+  controls: true
+  sets:
+    dev_mix: data/v3/dev_mix.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+  commands:
+    - uv run devision-pipeline configs/v7-scratch-lvbench.yaml
