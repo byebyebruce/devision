@@ -1,0 +1,16 @@
+# Round 7 (the starting point of round 8) on data-v5's new test sets, so round 8 can be paired with it on the
+# same questions, pictures and control assignment. Evaluation only; results in runs/v7-sqa/eval/.
+#   uv run devision-pipeline configs/v7-sqa-v5sets.yaml
+#   uv run devision-compare runs/v7-sqa/eval/test_vsr.details.jsonl runs/v8-vsr-v7w/eval/test_vsr.details.jsonl --by axis
+name: v5sets
+stages: []
+
+evaluate:
+  checkpoint: runs/v7-sqa/stage2
+  calibration_fit: data/v4/dev_mix.jsonl
+  history: []
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl

@@ -246,3 +246,32 @@ v6 在 ScienceQA 上比 laya-vision 低 24 个点，差距集中在州首府（0
 
 第 7 轮训练数据 `scripts/data/v7_mix.py` → `data/v4/train_sqa_mix.jsonl`：data-v4 全部 ScienceQA 训练题 4,948 + 新增 TQA 21 + 按能力保底的回放 17,000（计数、颜色、上下相对位置各 2,000，A-OKVQA 2,500，AI2D / TQA 各 1,500 …）+ 第 6 轮的左右镜像 3,000 对，共 27,969 道、一遍；297 道过长的提示截到约 150 token。
 
+
+## data-v5：真实照片上的关系与指代（2026-10-04，为第 8 轮）
+
+方案经评审修订（DV5-01 至 06）后实施。`scripts/data/v5_build.py` → `data/v5/`，`scripts/data/v8_mix.py` → `data/v5/train_mix.jsonl`；数量与各步剩余见 `data/v5/MANIFEST.json`、`data/v5/MIX.json`。
+
+**来源**：
+- VSR（`cambridgeltl/vsr_random` 三个划分合并，10,972 条）：COCO 图上关于两个物体的陈述，标真假；陈述改写为是非题（"The cat is inside the refrigerator." → "Is the cat inside the refrigerator?"）；记录关系和 VSR 自己的 7 个大类（`rel_meta_category_dict.txt`），左右 4 种关系打 `axis: lr`。
+- Visual7W telling（139,868 题）：what / where / who / how / why / when 四选一，三个错误选项是人工写的；图片是 Visual Genome id，约一半能对上 COCO。
+
+**剔除与留出**（两个来源和所有回放共用一套图片身份：COCO id，VG id 经 `image_data.json` 映射；A-OKVQA 的图没有 id，用感知哈希）：
+1. 所有评测、监测、校准集合的图（`test_*`、`dev*`、`bench_*`、`lv_bench`、`val*`、`pope*`、`align_val`）从全部数据里剔除：VSR 剩 8,938，Visual7W 剩 131,368；再按 A-OKVQA 评测图的感知哈希剔除后 8,893 / 130,391。
+2. 严格测试集和 dev 只用 v7 从没训练过的图：caption 对齐（82,583 张 COCO train2014 图）和第 3、5、6、7 轮的决策数据都算见过，A-OKVQA 训练图按感知哈希也算。COCO train2014 几乎都在 caption 对齐里见过，所以 VSR 的严格可用池只有 1,562 题。
+3. 先定 test 和 dev（按图片整张取），再从训练池里去掉它们的图。
+
+| 文件 | 题数 | 图数 | 说明 |
+|---|---|---|---|
+| `test_vsr` | 904 | 552 | 严格未见图；全集合真假各半（不按关系配平，保留关系的自然分布）；左右类 92 题 |
+| `test_v7w` | 1,000 | 1,000 | 取自官方 test 划分，严格未见图；按类型 what 300 / where 200 / who 150 / how 150 / why 100 / when 100，每图 1 题 |
+| `dev_vsr` / `dev_v7w` | 280 / 300 | 165 / 300 | 同上规则；并入 `data/v5/dev_mix.jsonl`（data-v4 的 dev_mix + 这两份，5,178 题） |
+| `vsr`（训练池） | 6,411 | 4,177 | 去掉 test/dev 图后 7,593 → 每种关系真假配平 7,176 → 每图 ≤3 题 6,411；左右类 771 |
+| `v7w`（训练池） | 7,500 | 6,175 | 官方 train 划分；每图 ≤3 题后按类型取 what 2,600 / where 1,800 / how 1,100 / who 1,000 / why 500 / when 500 |
+
+**只看文字的基线**（在训练池拟合、在 dev 上测，只作诊断，没有按它删题）：VSR 按关系多数答案 0.479、全局 0.5——关系本身不泄露答案。Visual7W 选最长选项 0.263、最短 0.290、选训练里最常作答案的文字 0.380（随机 0.25）；按类型，when 0.633、why 0.467、who / how 0.422 偏高，where 0.183。when / why 的文字先验最强，在训练中只占 1,000 / 7,500，测试里单独报告。
+
+**抽查**（`runs/analysis/v5_check/`，按 VSR 大类 × 真假、Visual7W 类型分层各 16 题）：VSR 14 题标签明确正确，2 题有歧义（"dining table across the suitcase"、"hot dog in the sandwich"），属于 VSR 自带的标注噪声；Visual7W 多数正确，why 题出现近义的错误选项（"It's chilly" 与正确答案 "It's cold outside"），属于原数据的已知问题，未额外处理。
+
+**第 8 轮训练混合** `data/v5/train_mix.jsonl`：43,380 题、34,111 张图、每图最多 10 题、5,423 步（micro_batch 8）= VSR 6,411 + Visual7W 7,500 + ScienceQA 4,948（不重复）+ data-v4 新增 TQA 21 + 回放 18,500（v7 的 17,000 保底，计数 2,000 → 3,000、GQA 1,000 → 1,500，全部配额足额）+ 左右镜像 3,000 对。回放不重复已在混合里的题，也不使用 data-v5 test / dev 的图。297 道过长的 ScienceQA 提示截到约 150 token。
+
+以 v7 为对照，先用 `configs/v7-sqa-v5sets.yaml` 在两个新测试集上评 v7，第 8 轮（`configs/v8-vsr-v7w.yaml`）评完后同题配对比较。

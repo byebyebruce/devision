@@ -1,0 +1,41 @@
+# Round 8: real-photo relations and grounded questions. data-v5 adds VSR (true / false statements about two
+# objects, 66 relations) and Visual7W telling (four-option what / where / who / how / why / when questions with
+# human-written wrong answers); test and dev pictures are ones round 7 never trained on, chosen before training.
+# Continue round 7 on them + round 7's ScienceQA + replay (round 7's minimum per ability, counting +1,000,
+# GQA +500) + 3,000 left/right pairs, one pass. Plan and review: docs/research/data-quality.md (data-v5).
+# Data: scripts/data/v5_build.py, then scripts/data/v8_mix.py. Round 7 on the new sets: configs/v7-sqa-v5sets.yaml.
+#   uv run devision-pipeline configs/v8-vsr-v7w.yaml
+name: v8-vsr-v7w
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v7-sqa/stage2                # the current best (round 7)
+    data: data/v5/train_mix.jsonl           # VSR + Visual7W + ScienceQA + replay + left/right pairs (data/v5/MIX.json)
+    val: data/v5/dev_mix.jsonl              # temperature fit (calibration_fit): data-v4's dev_mix + dev_vsr + dev_v7w
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 300, eval_every: 1000}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  controls: true                           # + mismatched pictures and reversed options for every set
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    test_vsr: data/v5/test_vsr.jsonl       # new: pictures round 7 never trained on
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl   # left/right test questions on mirrored pictures:
+    test_relation_flip: data/v6/test_relation_flip.jsonl   # right on both a question and its mirror = grounded
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl   # laya-vision's benchmark: their questions,
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl             # compare with their published rows
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl       # (scripts/data/lv_bench.py, devision-compare)
+    bench_lv_pope: data/lv_bench/pope.jsonl

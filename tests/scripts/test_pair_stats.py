@@ -4,6 +4,7 @@ import os
 
 spec = importlib.util.spec_from_file_location(
     "pair_stats", os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "pair_stats.py"))
+assert spec is not None and spec.loader is not None
 pair_stats = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pair_stats)
 
