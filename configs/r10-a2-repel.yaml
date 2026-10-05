@@ -1,0 +1,28 @@
+# Round 10 screen A2 (critic/plan-round10.md section 4, stage A; not a round). A1 (real attract / repel questions)
+# was "uncertain": accuracy +23.1 [+3.8, +40.4] but picture-gain change +17.3 [-7.7, +42.3]. A2 trains on 2,400
+# synthetic attract / repel scenes drawn by the label rule (scripts/data/v10_diagrams.py; data/v10/LABEL_RULES.md),
+# one pass = 300 steps, same budget, rates and warmup as A1, from v9b. Judged on the same monitoring questions
+# (ScienceQA test split, 52) by the same rule; the synthetic test sets (orig / flip one magnet / mirror) only
+# tell "not learnt" from "learnt but not transferred".
+#   uv run devision-pipeline configs/r10-a2-repel.yaml
+name: r10-a2-repel
+device: mps
+common:
+  log_every: 25
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v9b-lr-replay/stage2
+    data: data/v10/syn_repel_train.jsonl
+    val: data/v10/dev_sqa_repel.jsonl
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 30, eval_every: 100}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_sqa_repel: {path: data/v10/dev_sqa_repel.jsonl, role: monitoring}
+    syn_repel_test: {path: data/v10/syn_repel_test.jsonl, role: monitoring}
+    syn_repel_test_flip_one: {path: data/v10/syn_repel_test_flip_one.jsonl, role: monitoring}
+    syn_repel_test_mirror: {path: data/v10/syn_repel_test_mirror.jsonl, role: monitoring}
