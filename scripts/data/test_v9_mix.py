@@ -52,3 +52,15 @@ def test_diagrams_are_not_photos():
     from v9_mix import is_photo
     assert is_photo("coco/train2014/a.jpg") and is_photo("v3/images/aokvqa/x.jpg")
     assert not is_photo("v3/images/scienceqa/x.jpg") and not is_photo("lv_bench/images/scienceqa/1.png")
+
+
+def test_a_fixed_pair_list_drops_whole_pairs_on_held_or_near_duplicate_pictures():
+    from v9_mix import fixed_pairs
+
+    def row(i, pic, flip=False):
+        return {"id": ("flip:" if flip else "") + "o%d" % i, "kind": "position", "image": "coco/p%d.jpg" % pic,
+                "image_id": "coco:%d" % pic + (":flip" if flip else ""), "questions": {"q": {"type": "choice"}}}
+    rows = [row(1, 1), row(1, 1, True), row(2, 2), row(2, 2, True), row(3, 3), row(3, 3, True)]
+    keep, report = fixed_pairs(rows, held={"coco:2"}, v2c={}, off=lambda r: r["image"] == "coco/p3.jpg")
+    assert [r["id"] for r in keep] == ["o1", "flip:o1"]
+    assert report["fixed_list"]["dropped_ids"] == ["flip:o2", "flip:o3", "o2", "o3"]

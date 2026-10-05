@@ -27,7 +27,7 @@ import os
 import random
 import sys
 from collections import Counter
-from typing import Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from convert import picture  # noqa: E402
@@ -130,6 +130,24 @@ def pick_pairs(flips: List[dict], originals: Dict[str, dict], wanted: Dict[Tuple
     return rows, report
 
 
+def fixed_pairs(rows: List[dict], held: set, v2c: Dict[str, str], off):
+    """(rows, report) for a fixed list of left/right questions: a pair (original + "flip:" mirror) on a held-out
+    picture or a near-duplicate of one is dropped whole; counts per subtask and the dropped ids are reported."""
+    by_id = {r["id"]: r for r in rows}
+    keep, dropped = [], []
+    for r in rows:
+        if r["id"].startswith("flip:"):
+            continue
+        group = [r] + ([by_id["flip:" + r["id"]]] if "flip:" + r["id"] in by_id else [])
+        bad = any(picture(origin(x["image_id"]), v2c) in held or off(x) for x in group)
+        (dropped if bad else keep).extend(group)
+    report: Dict[str, Any] = {"%s/%s" % k: {"questions": n}
+                              for k, n in sorted(Counter(subtask(r) for r in keep).items())}
+    report["fixed_list"] = {"questions_in": len(rows), "questions_kept": len(keep),
+                            "dropped_ids": sorted(r["id"] for r in dropped)}
+    return keep, report
+
+
 def pick_replay(pools: Dict[str, List[dict]], quotas: Sequence[Tuple[str, int]], rng: random.Random):
     """(replay, count per ability); stops the build when an ability's pool cannot fill its share."""
     out, got, short = [], Counter(), {}
@@ -150,9 +168,12 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--root", default="data")
     p.add_argument("--out", required=True)
-    p.add_argument("--position", type=int, required=True, help="position pairs (question + mirror)")
-    p.add_argument("--rel-choice", type=int, required=True, help="relation choice pairs")
-    p.add_argument("--rel-noul", type=int, required=True, help="relation yes/no pairs")
+    p.add_argument("--position", type=int, default=0, help="position pairs (question + mirror)")
+    p.add_argument("--rel-choice", type=int, default=0, help="relation choice pairs")
+    p.add_argument("--rel-noul", type=int, default=0, help="relation yes/no pairs")
+    p.add_argument("--pairs-file", help="use exactly these left/right questions (a JSONL of originals and mirrors, "
+                                        "e.g. an earlier run's training set) instead of sampling; pairs on a "
+                                        "held-out or near-duplicate picture are dropped whole and reported")
     p.add_argument("--replay", type=int, required=True, help="replay questions, REPLAY_QUOTAS scaled to this")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args(argv)
@@ -176,8 +197,13 @@ def main(argv=None):
     used = {r["id"] for m in EARLIER_MIXES for r in read(os.path.join(a.root, m))}
     wanted = dict(zip(SUBTASKS, (a.position, a.rel_choice, a.rel_noul)))
     flips = [f for f in flips if not off(f) and not off(originals.get(f["id"][5:], f))]
-    pairs, pair_report = pick_pairs(flips, originals,
-                                    {k: n for k, n in wanted.items() if n}, used, held, v2c, rng)
+    if a.pairs_file:
+        if any(wanted.values()):
+            p.error("--pairs-file replaces --position / --rel-choice / --rel-noul")
+        pairs, pair_report = fixed_pairs(read(a.pairs_file), held, v2c, off)
+    else:
+        pairs, pair_report = pick_pairs(flips, originals,
+                                        {k: n for k, n in wanted.items() if n}, used, held, v2c, rng)
 
     have = {r["id"] for r in pairs}
     ok = lambda rows: [r for r in rows if picture(r["image_id"], v2c) not in held and r["id"] not in have and not off(r)]
