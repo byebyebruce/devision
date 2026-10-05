@@ -1,0 +1,25 @@
+# Round 9 screen X1 (docs/experiments/2026-10-05-v9b-lr-replay-plan.md, section 3; not a round, run once): does
+# R's own left/right training set keep its gain with replay added on top? From v8: R's 2,500 questions
+# (data/v9/r_pairs.jsonl, minus 12 on near-duplicate pictures = 2,488) + 2,500 replay (branch B of step 0d), two
+# passes, R's learning rates and warmup (scripts/data/v9_mix.py --pairs-file, data/v9/x1_r2500/MIX.json).
+# Monitored on dev_lr_pairs like R and S-mix; dev_mix at the end. Gates (plan section 3): position both-right
+# vs v8 >= +22.05 points with lower bound > 0, old-ability slice of dev_mix >= -1 point, no source alarm.
+#   uv run devision-pipeline configs/r9-x1.yaml
+name: r9-x1
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v8-vsr-v7w/stage2
+    data: data/v9/x1_r2500/train.jsonl
+    val: data/v6/dev_lr_pairs.jsonl
+    params: {epochs: 2, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 50, eval_every: 150}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  sets:
+    dev_lr_pairs: data/v6/dev_lr_pairs.jsonl
+    dev_mix: data/v5/dev_mix.jsonl
