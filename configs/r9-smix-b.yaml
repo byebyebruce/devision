@@ -1,0 +1,25 @@
+# Round 9 screen S-mix (docs/experiments/2026-10-05-v9-lr-focus-plan.md, step 0; not a round): does the gain of a focused left/right run
+# survive a mix with replay, one pass? From v8, 7,200 questions = 3,600 left/right (1,200 position + 600 relation choice pairs) + 3,600 replay
+# (scripts/data/v9_mix.py, data/v9/smix_b/MIX.json). Relation yes/no is left out: its focused run (0b) gained
+# -1.5 [-10.6, +7.6] points, and the plan keeps subtasks with a focused gain <= 0 out of v9; its questions go to
+# replay. Monitored every 150 steps on dev_lr_pairs (the temperature fit there is a side effect, the decision uses both-right on argmax); dev_mix only at the end, against v8's
+# existing records. Go / stop: plan section 5, computed with scripts/pair_stats.py --base.
+#   uv run devision-pipeline configs/r9-smix-b.yaml
+name: r9-smix-b
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v8-vsr-v7w/stage2
+    data: data/v9/smix_b/train.jsonl
+    val: data/v6/dev_lr_pairs.jsonl
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 50, eval_every: 150}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  sets:
+    dev_lr_pairs: data/v6/dev_lr_pairs.jsonl
+    dev_mix: data/v5/dev_mix.jsonl
