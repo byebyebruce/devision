@@ -27,7 +27,7 @@ import os
 import random
 import sys
 from collections import Counter
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from convert import picture  # noqa: E402
@@ -103,6 +103,16 @@ def scale(quotas: Sequence[Tuple[str, int]], total: int) -> List[Tuple[str, int]
     return [(name, n) for (name, _), n in zip(quotas, out)]
 
 
+def replay_quotas(total: int, count_share: Optional[float] = None) -> List[Tuple[str, int]]:
+    """REPLAY_QUOTAS scaled to `total`; with `count_share`, counting gets round(total * share) and the other
+    abilities share the rest in their table proportions (largest remainder). Order kept."""
+    if count_share is None:
+        return scale(REPLAY_QUOTAS, total)
+    count = round(total * count_share)
+    rest = dict(scale([(n, q) for n, q in REPLAY_QUOTAS if n != "count"], total - count))
+    return [(n, count if n == "count" else rest[n]) for n, _ in REPLAY_QUOTAS]
+
+
 def subtask(r: dict) -> Tuple[str, str]:
     return r["kind"], r["questions"]["q"]["type"]
 
@@ -175,6 +185,8 @@ def main(argv=None):
                                         "e.g. an earlier run's training set) instead of sampling; pairs on a "
                                         "held-out or near-duplicate picture are dropped whole and reported")
     p.add_argument("--replay", type=int, required=True, help="replay questions, REPLAY_QUOTAS scaled to this")
+    p.add_argument("--count-share", type=float, help="counting's share of the replay (round 10); the rest keeps "
+                                                       "REPLAY_QUOTAS' proportions. Unset: REPLAY_QUOTAS as is")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args(argv)
     rng = random.Random(a.seed)
@@ -210,7 +222,7 @@ def main(argv=None):
     pools: Dict[str, List[dict]] = {name: ok(rows) for name, rows in sources.items()}
     for r in replay_pool([r for r in mix4 if not off(r)], have, held, v2c):
         pools.setdefault(group_of(r), []).append(r)
-    quotas = scale(REPLAY_QUOTAS, a.replay)
+    quotas = replay_quotas(a.replay, a.count_share)
     replay, got = pick_replay(pools, quotas, rng)
     cut = shorten_hints(replay)
 
@@ -228,7 +240,7 @@ def main(argv=None):
               "parts": {"left_right_pair_questions": len(pairs), "replay": len(replay)},
               "left_right_share": round(len(pairs) / len(out), 4), "pairs": pair_report,
               "replay_by_ability": dict(got),
-              "replay_quotas": dict(quotas), "held_out_pictures": len(held), "held_out_overlap": len(leak),
+              "replay_quotas": dict(quotas), "count_share": a.count_share, "held_out_pictures": len(held), "held_out_overlap": len(leak),
               "near_duplicate_bits": NEAR_BITS, "held_out_photo_hashes": len(held_hash),
               "candidate_pictures_near_held_out": len(near),
               "near_held_out_in_mix": sum(1 for r in out if off(r)),

@@ -1,0 +1,27 @@
+# Round 10, counting (critic/plan-round10-count.md, review passed; the diagram route stopped at stage A, see the
+# experiment record). v9b lost counting (test_vqa_choice count -5.1 vs v8) with only 281 counting questions in its
+# replay; here v9b continues two passes on R's left/right questions (2,488, as in v9b) + 2,488 replay of which
+# counting is 50% (scripts/data/v9_mix.py --pairs-file data/v9/r_pairs.jsonl --replay 2488 --count-share 0.5;
+# data/v10/count_mix/MIX.json), 1,244 steps, warmup 124. Only the monitoring sets are evaluated here; gates (plan
+# section 4) before the full evaluation (configs/v10-count-eval.yaml): dev_mix counting (288) vs v9b >= 0,
+# dev_lr_pairs position both-right >= -5, dev_mix slice without left/right and counting (4,490) >= -1, no source alarm.
+#   uv run devision-pipeline configs/v10-count.yaml
+name: v10-count
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v9b-lr-replay/stage2         # the current best (round 9)
+    data: data/v10/count_mix/train.jsonl
+    val: data/v5/dev_mix.jsonl              # temperature fit (calibration_fit)
+    eval: {lr_pairs: data/v6/dev_lr_pairs.jsonl}
+    params: {epochs: 2, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 124, eval_every: 1000}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl
+    dev_lr_pairs: data/v6/dev_lr_pairs.jsonl

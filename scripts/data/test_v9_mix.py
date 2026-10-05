@@ -64,3 +64,11 @@ def test_a_fixed_pair_list_drops_whole_pairs_on_held_or_near_duplicate_pictures(
     keep, report = fixed_pairs(rows, held={"coco:2"}, v2c={}, off=lambda r: r["image"] == "coco/p3.jpg")
     assert [r["id"] for r in keep] == ["o1", "flip:o1"]
     assert report["fixed_list"]["dropped_ids"] == ["flip:o2", "flip:o3", "o2", "o3"]
+
+
+def test_count_share_gives_counting_its_share_and_keeps_the_rest_proportional():
+    from v9_mix import replay_quotas
+    assert replay_quotas(4800) == scale(REPLAY_QUOTAS, 4800)          # unset: round 9's behaviour
+    q = dict(replay_quotas(2488, 0.5))
+    assert q["count"] == 1244 and sum(q.values()) == 2488
+    assert (q["vsr"], q["scienceqa"], q["v7w"]) == (210, 184, 132)
