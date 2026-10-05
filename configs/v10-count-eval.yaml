@@ -1,0 +1,32 @@
+# Round 10 (counting) full evaluation (critic/plan-round10-count.md section 5): run only after the four gates passed
+# (runs/v10-count/eval/count_gates.json: counting +3.82 [+0.71, +7.17], left/right position +11.9, slice +0.02, no
+# source alarm). Same sets and controls as v9b's evaluation, on the trained checkpoint; results join
+# runs/v10-count/eval/. dev_mix is the temperature fit, dev_lr_pairs was watched during training.
+#   uv run devision-pipeline configs/v10-count-eval.yaml
+name: full
+stages: []
+
+evaluate:
+  checkpoint: runs/v10-count/stage2
+  calibration_fit: data/v5/dev_mix.jsonl
+  history: [data/v6/dev_lr_pairs.jsonl]
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl   # left/right on mirrored pictures: both right = grounded
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl   # laya-vision's benchmark
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
