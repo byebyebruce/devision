@@ -122,7 +122,7 @@ class TrainLog:
             self.window[k].append(float(v))
 
     def flush(self, step: int, epoch: int, lrs: Dict[str, float]) -> Dict[str, float]:
-        """At every `every`-th step: log and return the window means (train/<metric>); else {}."""
+        """At every `every`-th step: log and return the window means (train/<metric>) with perf/ and sys/; else {}."""
         if step % self.every:
             return {}
         now = time.perf_counter()
@@ -142,4 +142,4 @@ class TrainLog:
         self.window.clear()
         self.samples = 0
         self.t_window = now
-        return means
+        return dict(means, **{k: v for k, v in row.items() if k.startswith(("perf/", "sys/"))})

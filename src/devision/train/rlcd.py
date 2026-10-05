@@ -57,6 +57,7 @@ class TrainConfig:
     log_every: int = 10
     eval_every: int = 500        # steps between evaluations (plus step 0 and each epoch end); 0: epoch ends only
     save_every: int = 1000       # steps between resume states (<out>/resume.pt); 0: none
+    amp: str = "cuda"            # bf16 autocast of the forward pass: "cuda" (on CUDA only), "mps" (on CUDA or MPS), "off"
     swanlab_project: str = ""    # "" disables SwanLab; the CLI defaults to "devision"
     run_name: str = ""
 
@@ -355,7 +356,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     steps = c.epochs * max(1, -(-len(train_items) // c.micro_batch))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
-    use_amp = device.type == "cuda"
+    use_amp = device.type in {"cuda": ("cuda",), "mps": ("cuda", "mps"), "off": ()}[c.amp]
 
     losses: List[float] = []
     val_accuracy: List[float] = []
@@ -417,7 +418,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
             pixels = torch.stack([images(it["image"]) for it in chunk])
-            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+            with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
                 logits = _forward(model, batch, pixels, device).float()
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
                               batch["qtype"].to(device), sigma, c.group_size)
@@ -438,9 +439,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                                                        **({"encoder": optimizer.param_groups[3]["lr"]}
                                                           if len(optimizer.param_groups) > 3 else {})})
             if means:
-                print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f" % (
+                print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f" % (
                     epoch + 1, len(losses), steps, means["train/loss"], means["train/nll"],
-                    means["train/accuracy"]), flush=True)
+                    means["train/accuracy"], means["perf/step_s"]), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:
