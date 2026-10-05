@@ -37,3 +37,18 @@ def test_a_replay_ability_below_its_share_stops_the_build():
     assert len(replay) == 4 and got == {"count": 3, "color": 1}
     with pytest.raises(SystemExit):
         pick_replay(pools, [("count", 4)], random.Random(0))
+
+
+def test_a_training_picture_near_a_held_out_hash_is_excluded():
+    from v9_mix import near_held, original_image
+    held = {"v3/images/aokvqa/x.jpg": 0b1111, "coco/val2014/a.jpg": 0xFF00}
+    train = {"coco/train2014/same.jpg": 0b1111, "coco/train2014/close.jpg": 0b1100, "coco/train2014/far.jpg": 0xF0F0F0}
+    assert near_held(train, held) == {"coco/train2014/same.jpg", "coco/train2014/close.jpg"}
+    assert original_image("v6/images/flip/COCO_train2014_000000000009.jpg") == \
+        "coco/train2014/COCO_train2014_000000000009.jpg"
+
+
+def test_diagrams_are_not_photos():
+    from v9_mix import is_photo
+    assert is_photo("coco/train2014/a.jpg") and is_photo("v3/images/aokvqa/x.jpg")
+    assert not is_photo("v3/images/scienceqa/x.jpg") and not is_photo("lv_bench/images/scienceqa/1.png")
