@@ -27,3 +27,23 @@ def test_only_questions_right_on_both_sides_count_as_both():
 
 def test_a_mirrored_record_without_its_original_is_ignored():
     assert pair_stats.pairs([rec("a", True, "coco:1")], [rec("flip:z", True, "coco:9:flip")]) == []
+
+
+def test_paired_difference_counts_only_pairs_both_models_answered():
+    new = pair_stats.pairs([rec("a", True, "coco:1"), rec("b", True, "coco:2"), rec("c", True, "coco:3")],
+                           [rec("flip:a", True, "coco:1:flip"), rec("flip:b", True, "coco:2:flip"),
+                            rec("flip:c", True, "coco:3:flip")])
+    base = pair_stats.pairs([rec("a", True, "coco:1"), rec("b", False, "coco:2")],
+                            [rec("flip:a", True, "coco:1:flip"), rec("flip:b", True, "coco:2:flip")])
+    d = pair_stats.paired_diff(new, base, resamples=50)
+    assert (d["pairs"], d["new_both"], d["base_both"], d["diff"]) == (2, 1.0, 0.5, 0.5)
+    assert d["diff_ci95"][0] <= d["diff"] <= d["diff_ci95"][1]
+
+
+def test_picture_gain_change_is_a_difference_of_differences():
+    qs = [rec("a", True, "coco:1"), rec("b", True, "coco:2")]
+    new_real, new_mis = qs, [rec("a", False, "coco:1"), rec("b", False, "coco:2")]       # gain 1.0
+    base_real = [rec("a", True, "coco:1"), rec("b", False, "coco:2")]
+    base_mis = [rec("a", True, "coco:1"), rec("b", False, "coco:2")]                      # gain 0.0
+    g = pair_stats.gain_change(qs, new_real, new_mis, base_real, base_mis, resamples=50)
+    assert (g["questions"], g["new_gain"], g["base_gain"], g["gain_change"]) == (2, 1.0, 0.0, 1.0)
