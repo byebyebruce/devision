@@ -10,6 +10,7 @@
   decoded pixels equal any train or validation picture is dropped (diagrams match by identical pixels only; a
   perceptual hash cannot tell template maps apart). Every held-out file we keep comes from those two splits, so
   this also keeps it apart from dev_mix, dev_scienceqa and the training pool.
+- data/v10/dev_sqa_<type>.jsonl: the same questions, one file per type.
 - data/v10/MANIFEST.json: kept / dropped per type, answers per type, the pixel-isolation counts.
 """
 import argparse
@@ -84,6 +85,9 @@ def main(argv=None) -> None:
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "dev_sqa_diagram.jsonl"), "w") as f:
         f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+    for kind in TYPES:   # one file per type: the val set of that type's focused screen
+        with open(os.path.join(out, "dev_sqa_%s.jsonl" % kind), "w") as f:
+            f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows if r["diagram_type"] == kind)
     manifest = {"dev_sqa_diagram": {"role": "monitoring (selects recipes; never a held-out result)",
                                     "source": "ScienceQA official test split",
                                     "kept": dict(kept), "questions": len(rows), "dropped": dict(dropped),

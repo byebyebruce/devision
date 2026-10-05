@@ -1,0 +1,18 @@
+# Round 10 baseline: the current best (v9b) on the monitoring set dev_sqa_diagram (ScienceQA official test split,
+# the four diagram types; scripts/data/v10_build.py), one file per type, with mismatched and reversed controls,
+# so every round 10 screen is paired with v9b on the same questions and control assignment. Evaluation only;
+# results in runs/v9b-lr-replay/eval/. Plan: critic/plan-round10.md (revision 1, review passed).
+#   uv run devision-pipeline configs/v9b-sqa-diagram.yaml
+name: sqa-diagram
+stages: []
+
+evaluate:
+  checkpoint: runs/v9b-lr-replay/stage2
+  calibration_fit: data/v5/dev_mix.jsonl
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_sqa_repel: {path: data/v10/dev_sqa_repel.jsonl, role: monitoring}
+    dev_sqa_force: {path: data/v10/dev_sqa_force.jsonl, role: monitoring}
+    dev_sqa_temp: {path: data/v10/dev_sqa_temp.jsonl, role: monitoring}
+    dev_sqa_conc: {path: data/v10/dev_sqa_conc.jsonl, role: monitoring}
