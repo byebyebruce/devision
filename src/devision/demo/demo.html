@@ -1,221 +1,66 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>devision demo</title>
-<style>
-  :root {
-    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e3e2dd;
-    --accent: #2f6fdb; --accent-soft: #dfe9fb; --bar: #c9d8f5; --good: #2e8b57; --bad: #c0392b;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #161615; --panel: #1f1f1d; --text: #ecebe6; --muted: #9a9993; --line: #33332f;
-      --accent: #6ea0ff; --accent-soft: #23304a; --bar: #2c3e63; --good: #5cc18a; --bad: #ef6f5f;
-    }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
-  header { padding: 20px 16px 8px; max-width: 1100px; margin: 0 auto; }
-  header h1 { margin: 0; font-size: 20px; }
-  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
-  main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px;
-         display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-  @media (max-width: 800px) { main { grid-template-columns: minmax(0, 1fr); } }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
-  h2 { margin: 0 0 12px; font-size: 15px; }
-  #drop { border: 1.5px dashed var(--line); border-radius: 8px; min-height: 220px; display: grid;
-          place-items: center; cursor: pointer; color: var(--muted); text-align: center; overflow: hidden; }
-  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
-  #drop img { max-width: 100%; max-height: 360px; display: block; }
-  #examples img { height: 56px; border-radius: 6px; border: 2px solid transparent; cursor: pointer; }
-  #examples img.on { border-color: var(--accent); }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .q { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; }
-  .q .row + .row { margin-top: 8px; }
-  input[type=text], select { font: inherit; color: var(--text); background: var(--bg);
-         border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
-  input[type=text] { flex: 1; }
-  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
-           border-radius: 6px; padding: 6px 12px; cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  button:disabled { opacity: .5; cursor: default; }
-  .muted { color: var(--muted); font-size: 13px; }
-  .presets button { font-size: 13px; padding: 3px 8px; }
-  .ans { margin-top: 14px; }
-  .ans h3 { margin: 0 0 6px; font-size: 14px; }
-  .bar { position: relative; height: 26px; border-radius: 5px; background: var(--bg); margin: 4px 0;
-         overflow: hidden; border: 1px solid var(--line); }
-  .bar > div { position: absolute; inset: 0 auto 0 0; background: var(--bar); }
-  .bar.top > div { background: var(--accent); opacity: .55; }
-  .bar span { position: relative; padding: 0 8px; line-height: 26px; font-size: 13px;
-              display: flex; justify-content: space-between; }
-  .err { color: var(--bad); white-space: pre-wrap; }
-  details { margin-top: 16px; }
-  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px;
-        overflow: auto; font-size: 12px; max-height: 320px; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="用图片、问题与概率，探索 deVision 的视觉决策能力。">
+  <title>deVision · 视觉决策体验</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%2322382d'/%3E%3Ccircle cx='20' cy='20' r='9' fill='%23d2ed8b'/%3E%3Ccircle cx='22' cy='18' r='4' fill='%2322382d'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/demo-assets/demo.css">
+  <script defer src="/demo-assets/scenes.js"></script>
+  <script defer src="/demo-assets/demo.js"></script>
 </head>
 <body>
-<header>
-  <h1>devision · 视觉决策 demo</h1>
-  <p id="meta">图片 + 问题 → 校准概率（Jev <code>/v1/systemone</code> 格式）</p>
-</header>
-<main>
-  <section>
-    <h2>1. 图片</h2>
-    <div id="drop" tabindex="0">点击或拖入一张图片</div>
-    <input id="file" type="file" accept="image/*" hidden>
-    <div id="examples" class="row" style="margin-top:8px"></div>
-    <p class="muted">服务端会保持比例缩放并补灰边到 256×256。不传图则按纯文本请求处理。</p>
-
-    <h2 style="margin-top:18px">2. 问题（英文）</h2>
-    <div class="row presets">
-      <span class="muted">示例：</span>
-      <button data-preset="dog">有没有狗</button>
-      <button data-preset="pose">站着还是坐着</button>
-      <button data-preset="color">主色</button>
-    </div>
-    <div id="questions"></div>
-    <div class="row" style="margin-top:10px">
-      <button id="add-noul">+ 是/否题</button>
-      <button id="add-choice">+ 选择题</button>
-      <span style="flex:1"></span>
-      <button id="run" class="primary">提交</button>
-    </div>
-  </section>
-
-  <section>
-    <h2>3. 结果</h2>
-    <div id="status" class="muted">还没有提交。</div>
-    <div id="answers"></div>
-    <details><summary class="muted">原始请求 / 响应</summary><pre id="raw"></pre></details>
-  </section>
-</main>
-
-<script>
-const $ = (s) => document.querySelector(s);
-let imageB64 = null;
-
-// ---- image ----
-const drop = $("#drop"), file = $("#file");
-drop.onclick = () => file.click();
-drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") file.click(); };
-drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
-drop.ondragleave = () => drop.classList.remove("over");
-drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); };
-file.onchange = () => file.files[0] && load(file.files[0]);
-function load(f) {
-  const r = new FileReader();
-  r.onload = () => {
-    imageB64 = String(r.result).split(",")[1];
-    drop.innerHTML = "";
-    const img = new Image(); img.src = r.result; img.alt = f.name; drop.appendChild(img);
-  };
-  r.readAsDataURL(f);
-}
-
-// ---- example images: thumbnails, the first one preloaded ----
-async function loadExample(name, thumb) {
-  const blob = await (await fetch("/examples/" + encodeURIComponent(name))).blob();
-  load(new File([blob], name, { type: blob.type }));
-  document.querySelectorAll("#examples img").forEach((t) => t.classList.toggle("on", t === thumb));
-}
-fetch("/examples").then((r) => r.json()).then((names) => {
-  if (!names.length) return;
-  const box = $("#examples");
-  box.innerHTML = '<span class="muted">示例：</span>';
-  names.forEach((n, i) => {
-    const t = new Image(); t.src = "/examples/" + encodeURIComponent(n); t.alt = n; t.title = n;
-    t.onclick = () => loadExample(n, t);
-    box.appendChild(t);
-    if (i === 0) loadExample(n, t);
-  });
-}).catch(() => {});
-
-// ---- questions ----
-const list = $("#questions");
-function addQuestion(type, text = "", options = "") {
-  const el = document.createElement("div");
-  el.className = "q"; el.dataset.type = type;
-  el.innerHTML = `
-    <div class="row">
-      <strong style="font-size:13px">${type === "noul" ? "是/否" : "选择"}</strong>
-      <input type="text" class="ins" placeholder="${type === "noul" ? "Is there a dog in the image?" : "Is the person standing or sitting?"}">
-      <button class="rm" title="删除">✕</button>
-    </div>
-    ${type === "choice" ? `<div class="row"><span class="muted">选项</span>
-      <input type="text" class="opts" placeholder="standing, sitting, lying（逗号分隔）"></div>` : ""}`;
-  el.querySelector(".ins").value = text;
-  if (type === "choice") el.querySelector(".opts").value = options;
-  el.querySelector(".rm").onclick = () => el.remove();
-  list.appendChild(el);
-}
-const PRESETS = {
-  dog: ["noul", "Is there a dog in the image?"],
-  pose: ["choice", "Is the person standing or sitting?", "standing, sitting"],
-  color: ["choice", "What is the main color of the image?", "red, green, blue, black, white"],
-};
-document.querySelectorAll("[data-preset]").forEach((b) => b.onclick = () => addQuestion(...PRESETS[b.dataset.preset]));
-$("#add-noul").onclick = () => addQuestion("noul");
-$("#add-choice").onclick = () => addQuestion("choice");
-addQuestion(...PRESETS.dog); addQuestion(...PRESETS.pose);
-
-function buildRequest() {
-  const questions = {};
-  [...list.children].forEach((el, i) => {
-    const q = { type: el.dataset.type, instructions: el.querySelector(".ins").value.trim() };
-    if (q.type === "choice") {
-      q.criteria = {};
-      el.querySelector(".opts").value.split(",").map((s) => s.trim()).filter(Boolean)
-        .forEach((o) => q.criteria[o] = null);
-    }
-    questions["q" + (i + 1)] = q;
-  });
-  const state = imageB64 ? [{ type: "image", base64: imageB64 }] : "";
-  return { model: "devision", state, questions };
-}
-
-// ---- submit ----
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-function bar(label, p, top) {
-  return `<div class="bar ${top ? "top" : ""}"><div style="width:${(p * 100).toFixed(1)}%"></div>
-    <span><b>${esc(label)}</b><span>${(p * 100).toFixed(1)}%</span></span></div>`;
-}
-$("#run").onclick = async () => {
-  const body = buildRequest();
-  if (!Object.keys(body.questions).length) { $("#status").textContent = "至少加一个问题。"; return; }
-  $("#run").disabled = true; $("#status").textContent = "推理中…"; $("#answers").innerHTML = "";
-  const shown = JSON.parse(JSON.stringify(body));
-  if (imageB64) shown.state[0].base64 = `<${imageB64.length} chars>`;
-  const t0 = performance.now();
-  try {
-    const res = await fetch("/v1/systemone", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const data = await res.json();
-    const ms = performance.now() - t0;
-    $("#raw").textContent = "// request\n" + JSON.stringify(shown, null, 2) + "\n\n// response\n" + JSON.stringify(data, null, 2);
-    if (!res.ok) { $("#status").innerHTML = `<span class="err">${res.status}: ${esc(data.error || JSON.stringify(data))}</span>`; return; }
-    $("#status").textContent = `${ms.toFixed(0)} ms（含网络与图片上传）· input_tokens ${data.usage.input_tokens} · ${data.model}`;
-    $("#answers").innerHTML = Object.entries(data.answers).map(([id, a]) => {
-      const q = body.questions[id];
-      if (a.type === "noul") {
-        return `<div class="ans"><h3>${esc(q.instructions)}</h3>${bar("yes", a.noul, a.noul >= .5)}${bar("no", 1 - a.noul, a.noul < .5)}</div>`;
-      }
-      const rows = Object.entries(a.probabilities).sort((x, y) => y[1] - x[1])
-        .map(([o, p]) => bar(o, p, o === a.choice)).join("");
-      return `<div class="ans"><h3>${esc(q.instructions)}</h3>${rows}
-        <div class="muted">choice: <b>${esc(a.choice)}</b> · confidence ${a.confidence.toFixed(3)}</div></div>`;
-    }).join("");
-  } catch (e) {
-    $("#status").innerHTML = `<span class="err">${esc(e)}</span>`;
-  } finally {
-    $("#run").disabled = false;
-  }
-};
-
-fetch("/health").then((r) => r.json()).then((h) => $("#meta").innerHTML += ` · 模型 <b>${esc(h.model)}</b>`).catch(() => {});
-</script>
+  <a class="skip" href="#workspace">跳到体验区</a>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="deVision 首页"><span class="brand-icon" aria-hidden="true"><i></i></span>de<span>Vision</span><small>PLAYGROUND</small></a>
+    <div class="header-right"><a href="#results">查看结果 ↗</a><button id="connection" class="connection" type="button" title="点击重新检查连接"><span class="status-dot"></span><span id="connection-label">正在连接</span></button></div>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="page-title">
+      <div><p class="eyebrow"><span></span> SEE. ASK. DECIDE.</p><h1 id="page-title">一张图，<span>探索多种判断。</span></h1><p class="intro-copy">从「看到了什么」到「有多确定」。选一个场景，看看模型如何做选择。</p></div>
+      <div class="intro-aside"><span class="orbit" aria-hidden="true">↗</span><span>图片 × 问题<br><b>答案 + 概率</b></span></div>
+    </section>
+    <section class="scene-section" aria-labelledby="scene-heading">
+      <div class="section-heading"><h2 id="scene-heading">从一个场景开始 <span id="scene-count" class="count"></span></h2><div class="filters" role="group" aria-label="筛选示例"><button type="button" class="active" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="photo" aria-pressed="false">真实照片</button><button type="button" data-filter="diagram" aria-pressed="false">合成示例</button></div></div>
+      <div id="scenes" class="scenes" aria-label="示例场景"></div>
+      <p id="scene-note" class="small-note">示例用于探索，预测结果将在运行后展示。</p>
+    </section>
+    <form id="workspace" novalidate>
+      <fieldset id="editor">
+        <div class="workspace-grid">
+          <section class="panel image-panel" aria-labelledby="image-heading">
+            <div class="panel-heading"><h2 id="image-heading"><span class="step">01</span> 观察图片</h2><span id="image-kind" class="tag">单张图片</span></div>
+            <button id="drop" class="image-stage" type="button" aria-label="点击上传或拖入图片"><img id="preview" alt="" hidden><span id="upload-empty"><span class="upload-icon" aria-hidden="true">↥</span><b>放一张图片进来</b><span>点击选择，也可以直接拖入</span><small>JPG、PNG、WebP · 最大 10 MB</small></span><span class="image-hover">点击更换图片 ↗</span></button>
+            <input id="file" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+            <div class="image-caption"><div><h3 id="image-title">你的观察对象</h3><p id="image-caption">选择示例或上传自己的图片。</p></div><span id="image-size" class="mono"></span></div>
+            <div class="image-toolbar"><button id="upload" type="button" class="button secondary">↥ 上传图片</button><button id="flip" type="button" class="button quiet" disabled>↔ 水平镜像</button><button id="clear-image" type="button" class="button quiet" disabled>移除</button></div>
+            <div class="image-footnote"><span aria-hidden="true">↳</span><p id="scene-description">一张图可以同时回答多个问题。英文提问，中文界面。</p></div>
+          </section>
+          <section class="panel question-panel" aria-labelledby="question-heading">
+            <div class="panel-heading"><h2 id="question-heading"><span class="step">02</span> 提出问题</h2><span class="tag">英文输入</span></div>
+            <div id="questions" class="questions"></div>
+            <div class="add-row"><button id="add-noul" class="button secondary" type="button">＋ 是非题</button><button id="add-choice" class="button secondary" type="button">＋ 选择题</button><span id="question-count" class="small-note"></span></div>
+            <details class="context-details"><summary>补充背景信息 <span>可选</span></summary><label class="sr-only" for="context">英文背景信息</label><textarea id="context" rows="2" placeholder="Add context in English, if needed…"></textarea></details>
+            <div class="compare-options"><div><strong>多看一个角度</strong><span>同样的问题，再做一次对照</span></div><label for="compare-mode" class="sr-only">对照方式</label><select id="compare-mode"><option value="none">仅当前输入</option><option value="mirror">＋ 水平镜像对照</option><option value="text">＋ 无图对照</option></select></div>
+            <div class="run-row"><button id="run" type="submit" class="button primary"><span id="run-label">开始分析</span><span aria-hidden="true">↗</span></button><span class="keyboard-hint">⌘ / Ctrl + Enter</span></div>
+          </section>
+        </div>
+      </fieldset>
+      <div id="input-notice" class="notice" role="alert" hidden></div>
+    </form>
+    <section id="results" class="results-section" aria-labelledby="results-heading" aria-busy="false">
+      <div class="section-heading"><h2 id="results-heading"><span class="step">03</span> 看见模型的判断</h2><div class="result-actions"><button id="cancel" type="button" class="button secondary" hidden>取消等待</button><button id="export" type="button" class="button quiet" disabled>↓ 导出结果</button></div></div>
+      <p id="status" class="result-status" role="status" aria-live="polite">准备就绪，运行后查看每个答案的概率。</p>
+      <div id="stale" class="stale" hidden>输入已修改，下方保留的是上一次的结果。重新分析即可更新。</div>
+      <div id="results-empty" class="results-empty"><div class="empty-mark" aria-hidden="true"><span></span><span></span><span></span></div><div><h3>答案之外，还有确定的程度。</h3><p>选好图片与问题，点击「开始分析」。<br>这里会展示模型的选择、概率分布，以及你设置的对照。</p></div><span class="empty-arrow" aria-hidden="true">↗</span></div>
+      <div id="answers" class="answers"></div>
+      <p id="probability-note" class="small-note" hidden>概率表示模型对当前候选答案的倾向，不是答案正确的保证。对照中问题与选项保持不变。</p>
+      <details id="api-details" class="api-details"><summary><span class="mono">{ }</span> 请求与响应 <span class="small-note">API 视图</span></summary><p class="small-note">图片 Base64 在此省略；导出文件保留本次响应与输入说明，不含原始图片。</p><pre id="raw">运行后显示本次请求与响应。</pre></details>
+    </section>
+    <footer><span class="footer-brand">deVision <span>视觉决策，不止一个答案。</span></span><span>单图 · 英文 · 研究演示</span></footer>
+  </main>
+  <noscript><p class="notice">此体验页需要启用 JavaScript。</p></noscript>
 </body>
 </html>

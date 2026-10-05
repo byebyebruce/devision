@@ -4,9 +4,10 @@ from importlib.resources import files
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+DEMO_ASSETS = {"demo.css": "text/css", "demo.js": "text/javascript", "scenes.js": "text/javascript"}
 
 
 def demo_router(examples_dir: Optional[str] = None) -> APIRouter:
@@ -17,6 +18,13 @@ def demo_router(examples_dir: Optional[str] = None) -> APIRouter:
     @router.get("/", response_class=HTMLResponse)
     def demo_page() -> str:
         return page
+
+    @router.get("/demo-assets/{name}")
+    def demo_asset(name: str) -> Response:
+        if name not in DEMO_ASSETS:
+            raise HTTPException(404)
+        content = (files("devision.demo") / name).read_text(encoding="utf-8")
+        return Response(content, media_type=DEMO_ASSETS[name])
 
     def example_names():
         if not examples_dir or not os.path.isdir(examples_dir):

@@ -66,7 +66,18 @@ devision-serve --checkpoint runs/v1-release-0.1/stage2b --port 8000
 
 - `POST /v1/systemone`：做决策，见下文。
 - `GET /health`：返回 `{"status": "ok", "model": "devision-0.1"}`。
-- `GET /`：web demo，可以上传图片、填题目、看概率（`--no-demo` 关闭）。
+- `GET /`：web demo，包含照片与合成示例场景、图片上传、多题编辑和概率卡片（`--no-demo` 关闭）。支持水平镜像／无图对照、查看请求响应与导出结果；对照会顺序发送两次请求，不是自动评测。
+
+Demo 的中文界面提供物体、动作、计数、颜色、大小、空间关系及磁铁示意图等探索入口；问题和选项仍使用英文。运行后才展示模型实际返回的结果，修改输入会标记已有结果过期。左右关系和科学示意图用于观察能力边界，不保证示例答对。
+
+本地体验当前 V8 checkpoint：
+
+```bash
+uv run devision-serve --checkpoint runs/v8-vsr-v7w/stage2 --port 8000
+# 浏览器打开 http://127.0.0.1:8000
+```
+
+`--examples <目录>` 可以替换照片示例（默认 `examples/`）；目录不存在或为空时仍可使用内置合成示例和上传功能。纯前端资源随 Python 包分发，不需要 Node 构建或访问外部 CDN。
 
 自动用最快的设备，没有 GPU 的机器用 CPU 也能跑（Mac CPU 上单题大约 0.2 秒）；同一请求里的多道题共用一次图片编码。
 
