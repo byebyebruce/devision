@@ -246,8 +246,10 @@ def read(path: str) -> List[dict]:
 
 def held_files(root: str) -> List[str]:
     out = []
-    for d in ("", "v2", "v3", "v4", "v6", "lv_bench"):
+    for d in ("", "v2", "v3", "v4", "v6", "v10", "lv_bench"):   # v10: round 10's monitoring set (dev_sqa_diagram)
         base = os.path.join(root, d)
+        if not os.path.isdir(base):
+            continue
         for f in sorted(os.listdir(base)):
             if f.endswith(".jsonl") and (d == "lv_bench" or f.startswith(HELD_PREFIXES)):
                 out.append(os.path.join(base, f))
