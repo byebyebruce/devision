@@ -11,10 +11,11 @@ Images are written under the data root at the paths the converters expect
 import io
 import json
 import os
+import time
 import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, Iterator, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Sequence, Tuple
 
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
@@ -34,11 +35,44 @@ def ensure_file(url: str, path: str) -> str:
     """`path`, downloaded from `url` first if it is not there (written to a temporary name, then moved)."""
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        print("downloading", url, flush=True)
-        tmp = path + ".part"
-        urllib.request.urlretrieve(url, tmp)
-        os.replace(tmp, path)
+        retrieve(url, path)
     return path
+
+
+def retrieve(url: str, path: str) -> None:
+    """Download `url` to `path` (through a temporary name), printing progress about every 10%."""
+    print("downloading", url, flush=True)
+    start, shown = time.time(), [-1]
+
+    def hook(blocks: int, block_size: int, total: int) -> None:
+        got = blocks * block_size
+        step = got * 10 // total if total > 0 else got // (200 << 20)   # tenths, or every 200 MB if size unknown
+        if step > shown[0]:
+            shown[0] = step
+            of = " / %.0f MB" % (total / 1e6) if total > 0 else ""
+            print("  %s: %.0f MB%s, %.0f s" % (os.path.basename(path), got / 1e6, of, time.time() - start), flush=True)
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    urllib.request.urlretrieve(url, path + ".part", hook)
+    os.replace(path + ".part", path)
+
+
+def run_with_progress(label: str, items: Sequence[Any], one: Callable[[Any], str], workers: int = 16) -> List[str]:
+    """`one(item)` for every item in a thread pool; returns the non-empty results (the failures). Prints how
+    many are done about every 5% and every 60 s, so a long download is visibly alive."""
+    total, done, failed = len(items), 0, []
+    print("%s: %d to check" % (label, total), flush=True)
+    start = last = time.time()
+    with ThreadPoolExecutor(workers) as pool:
+        for r in pool.map(one, items):
+            done += 1
+            if r:
+                failed.append(r)
+            now = time.time()
+            if done == total or done % max(1, total // 20) == 0 or now - last >= 60:
+                last = now
+                print("  %s: %d / %d (%d failed), %.0f s" % (label, done, total, len(failed), now - start), flush=True)
+    return failed
 
 
 def coco_annotations(root: str) -> str:
@@ -94,9 +128,7 @@ def _download_json_zip(url: str, cache: str) -> Dict[str, Any]:
     """The single JSON file inside a zip at `url`, cached under `cache`."""
     path = os.path.join(cache, os.path.basename(url))
     if not os.path.exists(path):
-        os.makedirs(cache, exist_ok=True)
-        urllib.request.urlretrieve(url, path + ".part")
-        os.replace(path + ".part", path)
+        retrieve(url, path)
     with zipfile.ZipFile(path) as z:
         (name,) = [n for n in z.namelist() if n.endswith(".json")]
         return json.load(io.TextIOWrapper(z.open(name), encoding="utf-8"))
@@ -132,5 +164,4 @@ def download_coco_images(root: str, samples: Sequence[Dict[str, Any]], workers: 
         except OSError:
             return s["id"]
 
-    with ThreadPoolExecutor(workers) as pool:
-        return [sid for sid in pool.map(one, samples) if sid]
+    return run_with_progress("COCO images", samples, one, workers)

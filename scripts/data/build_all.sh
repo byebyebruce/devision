@@ -15,6 +15,9 @@
 set -euo pipefail
 ROOT="${1:-data}"
 cd "$(dirname "$0")/../.."
+mkdir -p "$ROOT"
+export PYTHONUNBUFFERED=1                              # print each step's output as it happens
+exec > >(tee -a "$ROOT/build_all.log") 2>&1            # and keep a copy in <root>/build_all.log
 run() { echo "== $(date '+%F %T') $*"; uv run python "scripts/data/$@" --root "$ROOT"; }
 
 # stage 1: image-conditioned captions, all COCO train2014 images (val 200)

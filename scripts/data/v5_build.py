@@ -288,8 +288,8 @@ def fetch_vg_images(root: str, rows: List[dict], urls: Dict[str, str], workers: 
             return ""
         except (OSError, KeyError):
             return r["id"]
-    with ThreadPoolExecutor(workers) as pool:
-        return [x for x in pool.map(one, rows) if x]
+    from fetch import run_with_progress
+    return run_with_progress("Visual Genome images", rows, one, workers)
 
 
 def main(argv=None) -> None:

@@ -13,7 +13,7 @@ import os
 import random
 import zipfile
 
-from fetch import download_coco_images
+from fetch import download_coco_images, retrieve
 from prepare import _write_jsonl, read_jsonl
 
 ANNOTATIONS_URL = "http://images.cocodataset.org/annotations/annotations_trainval2014.zip"
@@ -44,9 +44,7 @@ def main(argv=None) -> None:
     if not os.path.exists(captions_json):
         zpath = os.path.join(raw, "annotations_trainval2014.zip")
         if not os.path.exists(zpath):
-            import urllib.request
-            os.makedirs(raw, exist_ok=True)
-            urllib.request.urlretrieve(ANNOTATIONS_URL, zpath)
+            retrieve(ANNOTATIONS_URL, zpath)
         with zipfile.ZipFile(zpath) as z, open(captions_json, "wb") as f:
             f.write(z.read("annotations/captions_train2014.json"))
 
