@@ -77,6 +77,8 @@ def download(url: str, path: str, retries: int = 5) -> str:
                             shown = step
                             print("  %s: %.0f / %s MB, %.0f s" % (os.path.basename(path), got / 1e6,
                                   "%.0f" % (total / 1e6) if total else "?", time.time() - start), flush=True)
+            if total and got < total:            # the connection closed early: resume on the next attempt
+                raise OSError("short read: %d of %d bytes" % (got, total))
             os.replace(part, path)
             return path
         except OSError as e:
@@ -113,16 +115,21 @@ def save_bytes(path: str, data: bytes) -> None:
 
 
 def fetch_pictures(root: str, items: Sequence[Any], url_of: Callable[[Any], str], rel_of: Callable[[Any], str],
-                   label: str, workers: int = 16) -> set:
+                   label: str, workers: int = 16, retry_dead: bool = False) -> set:
     """Download each item's picture (`url_of`) to <root>/`rel_of`, skipping files already there; returns the
-    items' rel paths that failed. Progress about every 5% and every 60 s."""
+    items' rel paths that failed. Progress about every 5% and every 60 s. Failed links are remembered in
+    <root>/raw/ext/<label>.dead.json and not tried again on a re-run (unless `retry_dead`)."""
     from fetch import run_with_progress  # pyright: ignore[reportMissingImports]
+    dead_path = os.path.join(raw_dir(root, ""), label.replace(" ", "_") + ".dead.json")
+    dead = set() if retry_dead or not os.path.exists(dead_path) else set(json.load(open(dead_path)))
 
     def one(it) -> str:
         rel = rel_of(it)
         path = os.path.join(root, rel)
         if os.path.exists(path):
             return ""
+        if rel in dead:
+            return rel
         try:
             with urllib.request.urlopen(urllib.request.Request(url_of(it), headers={"User-Agent": "Mozilla/5.0"}),
                                         timeout=30) as r:
@@ -130,7 +137,9 @@ def fetch_pictures(root: str, items: Sequence[Any], url_of: Callable[[Any], str]
             return ""
         except Exception:     # dead links are expected for web pictures
             return rel
-    return set(run_with_progress(label, list(items), one, workers))
+    failed = set(run_with_progress(label, list(items), one, workers))
+    json.dump(sorted(dead | failed), open(dead_path, "w"))
+    return failed
 
 
 # ---------------------------------------------------------------- held-out pictures

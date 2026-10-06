@@ -64,8 +64,10 @@ def test_clevr_and_chart_conversions():
     from figureqa import template as fig_template
     rng = random.Random(0)
     r, _ = convert("clevr", "k", 0, "x.png", {"user": "What color is the cube?\nBe brief.", "assistant": "Cyan."}, rng)
+    assert r is not None
     assert r["kind"] == "color" and "cyan" in r["questions"]["q"]["criteria"] and r["answer_key"] == "cyan"
     r, _ = convert("clevr", "k", 1, "x.png", {"user": "Are there more cubes than spheres?", "assistant": "No."}, rng)
+    assert r is not None
     assert r["kind"] == "compare" and r["answer_key"] == "false"
     r, why = convert("clevr", "k", 2, "x.png", {"user": "How many?", "assistant": "12."}, rng)
     assert r is None and why == "count > 10"
