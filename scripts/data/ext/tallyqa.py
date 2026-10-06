@@ -7,7 +7,8 @@ TallyQA's pictures are COCO and Visual Genome photos, and the Cauldron copy carr
 pictures (COCO val2014 test sets, GQA val, POPE, ...) are removed by dHash: every extracted picture within
 NEAR_BITS of a held-out photo is dropped (common.HeldOut.near_held; hashes cached in data/raw/ext/tallyqa.hashes.json).
 Each "how many" question with an answer 0..10 -> choice with nearby numbers (common.count_options). Counts are
-flattened (no answer above twice the mean); at most --per-picture questions per picture.
+flattened (no answer above twice the mean), then per wording (v2_common.flatten_top: a recurring question keeps its
+top answer at most as often as its second); at most --per-picture questions per picture.
 """
 import os
 import random
@@ -17,6 +18,7 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (HeldOut, already_built, base_args, cap_per_picture, cauldron_rows, choice, count_options,  # noqa: E402
                     extract_picture, finish, flatten_answers, keep_row, picture_bytes, short_turn)
+from v2_common import flatten_top  # noqa: E402  (scripts/data, put on the path by common)
 
 SOURCE = "tallyqa"
 
@@ -59,6 +61,10 @@ def main(argv=None):
     steps["after_per_picture_cap"] = len(rows)
     rows = flatten_answers(rows)
     steps["after_flatten"] = len(rows)
+    for r in rows:     # a recurring wording ("How many people are in the picture?") may not lean on one answer
+        r["group"] = " ".join(r["questions"]["q"]["instructions"].lower().split())
+    rows = flatten_top(rows)
+    steps["after_wording_flatten"] = len(rows)
     finish(a.root, SOURCE, rows, dict(steps), {"dropped": dict(dropped), "licence": "Apache-2.0",
                                                 "count_answers": dict(sorted(Counter(r["answer_key"] for r in rows).items(),
                                                                             key=lambda kv: int(kv[0])))})
