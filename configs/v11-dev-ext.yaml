@@ -1,0 +1,14 @@
+# Round 12 baseline: v11 (the starting point) on the extension pack's monitoring set dev_ext (300 held-back
+# questions per new source, data/ext/MIX.json) with mismatched and reversed controls. Evaluation only.
+#   uv run devision-pipeline configs/v11-dev-ext.yaml
+name: dev-ext
+device: mps
+stages: []
+
+evaluate:
+  checkpoint: runs/v11-v9b-recovery/stage2
+  calibration_fit: data/v5/dev_mix.jsonl
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_ext: {path: data/ext/dev_ext.jsonl, role: monitoring}

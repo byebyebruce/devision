@@ -246,7 +246,7 @@ def read(path: str) -> List[dict]:
 
 def held_files(root: str) -> List[str]:
     out = []
-    for d in ("", "v2", "v3", "v4", "v6", "v10", "v11", "lv_bench"):   # v10: dev_sqa_diagram; v11: the counting sets
+    for d in ("", "v2", "v3", "v4", "v6", "v10", "v11", "ext", "lv_bench"):   # v10: dev_sqa_diagram; v11: counting; ext: dev_ext
         base = os.path.join(root, d)
         if not os.path.isdir(base):
             continue

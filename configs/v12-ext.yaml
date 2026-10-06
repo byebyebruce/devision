@@ -1,0 +1,29 @@
+# Round 12: the extension data pack (docs/experiments/2026-10-06-v12-ext-plan.md; sources and licences in
+# docs/research/data-pack-sources-2026-10-06.md; built by scripts/data/ext/build_ext.sh -> data/ext/MIX.json).
+# v11 continues one pass on 353,830 questions: 315,342 new from 13 sources (Objects365, TallyQA, CLEVR, FigureQA,
+# SNLI-VE, IconQA, Vision-Flan, VisOnlyQA, CLEVR-Math, Super-CLEVR, MapQA, SpatialSense, PixMo-Count) + 38,488 replay
+# (v9b's left/right questions + every earlier ability). 44,229 steps, v11's learning rates, warmup 500, FP32.
+# Monitoring during training: dev_mix (temperature fit) and dev_ext (300 held-back questions per new source).
+# Acceptance rules were written before training (the plan, section 3); the full evaluation is configs/v12-ext-eval.yaml.
+#   nohup uv run devision-pipeline configs/v12-ext.yaml > runs/v12-ext.out 2>&1 &
+name: v12-ext
+device: mps
+common:
+  log_every: 100
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v11-v9b-recovery/stage2      # the current best (round 11)
+    data: data/ext/train_mix.jsonl
+    val: data/v5/dev_mix.jsonl              # temperature fit (calibration_fit)
+    eval: {ext: data/ext/dev_ext.jsonl}
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 5000,
+             save_every: 1000, amp: "off", seed: 0}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl
+    dev_lr_pairs: data/v6/dev_lr_pairs.jsonl
+    dev_ext: {path: data/ext/dev_ext.jsonl, role: monitoring}
