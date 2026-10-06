@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the data files of the data-v2-and-later training configs from the original sources, on a fresh
-# machine: configs/scratch.yaml and the round 3-8 configs (v3-data2, v4-relation-tb, v5-data3, v6-flip-lr,
-# v7-sqa, v8-vsr-v7w and their *-lvbench evaluations). Rounds 1-2 used older files (train_100k, val_mix, ...) this does not build.
+# machine: configs/scratch.yaml and the round 3-9 configs (v3-data2, v4-relation-tb, v5-data3, v6-flip-lr,
+# v7-sqa, v8-vsr-v7w, v9b-lr-replay and their *-lvbench evaluations). Round 10's data is not built here. Rounds 1-2 used older files (train_100k, val_mix, ...) this does not build.
 #
 #   bash scripts/data/build_all.sh [data]        # default data root: data
 #
@@ -53,8 +53,15 @@ run v7_mix.py
 run v5_build.py
 run v8_mix.py
 
+# round 9 (v9b, the current best): R's 2,500 real left/right questions, then the same questions (pairs on
+# near-duplicate photos of held-out pictures dropped) plus 2,500 replay. Byte for byte v9b's files when <root>/v10
+# does not exist yet; round 10's evaluation sets are also held out, so building after them removes a few more pictures
+run v9_pairs.py
+run v9_mix.py --pairs-file "$ROOT/v9/r_pairs.jsonl" --replay 2500 --out "$ROOT/v9/x1_r2500"
+
 # every data file the supported configs use exists and is not empty
 uv run python scripts/data/check_configs.py --root "$ROOT" configs/scratch.yaml \
     configs/v3-data2.yaml configs/v3-data2-lvbench.yaml configs/v4-relation-tb.yaml configs/v5-data3.yaml \
-    configs/v5-data3-lvbench.yaml configs/v6-flip-lr.yaml configs/v7-sqa.yaml configs/v8-vsr-v7w.yaml
-echo "== done: data under $ROOT; counts in $ROOT/v2/MANIFEST.json, $ROOT/v3/MANIFEST.json and $ROOT/v5/MANIFEST.json"
+    configs/v5-data3-lvbench.yaml configs/v6-flip-lr.yaml configs/v7-sqa.yaml configs/v8-vsr-v7w.yaml \
+    configs/v9b-lr-replay.yaml
+echo "== done: data under $ROOT; counts in $ROOT/v2/MANIFEST.json, $ROOT/v3/MANIFEST.json, $ROOT/v5/MANIFEST.json and $ROOT/v9/x1_r2500/MIX.json"
