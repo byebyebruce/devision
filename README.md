@@ -275,5 +275,21 @@ flowchart TB
   - **阶段 1 对齐**（`devision-align`）：带图完形填空，只训投影层。数据是 COCO train2014 全部 caption。
   - **阶段 2 决策**（`devision-train`）：RLCD，训投影层、决策头和 ModernBERT 的 LoRA。先在 6 万 GQA + 4 万 VQAv2 是非题上训，再在从 COCO 实例框自动出的题（有没有某物、位置、大小）上接着训。
   - 发布的 checkpoint 的完整步骤见 [`configs/v1-release-0.1.yaml`](configs/v1-release-0.1.yaml)，在 Mac（MPS）上共约 16 小时（在已有 `runs/v1-release-0.1/` 的机器上再跑是续跑，会跳过已完成的阶段）。新实验复制一份 YAML，改参数和 `name`（如 `v3-xx`，即 `runs/v3-xx/`）。
-- 训练数据是 JSONL 样本，格式见 `src/devision/train/samples.py`；[`examples/train/`](examples/train/) 里有每种写法的示例数据，`uv run devision-pipeline configs/example.yaml` 能在 CPU 上一两分钟内跑通整个流程。生成数据的代码（GQA / VQAv2 / POPE / COCO 的下载与规则转换）不在仓库里。所有评测图片按 COCO 和 VG 两套 id 从训练数据中剔除。
+- 训练数据是 JSONL 样本，格式见 `src/devision/train/samples.py`；[`examples/train/`](examples/train/) 里有每种写法的示例数据，`uv run devision-pipeline configs/example.yaml` 能在 CPU 上一两分钟内跑通整个流程。生成数据的代码（下载与规则转换）在 [`scripts/data/`](scripts/data/)，见下面「在新机器上训练」。所有评测图片按 COCO 和 VG 两套 id 从训练数据中剔除。
 - 实验过程和结论见 [`docs/experiments/2026-09-30-rlcd-plateau.md`](docs/experiments/2026-09-30-rlcd-plateau.md)。
+
+### 在新机器上训练
+
+```bash
+uv sync                                   # 依赖（含训练和服务的 extras）
+bash scripts/data/build_all.sh data       # 从原始来源生成数据：下载几十 GB、几个小时；日志同时写到 data/build_all.log
+bash scripts/download_models.sh           # 可选：先下载 Laya、SigLIP2、ModernBERT 的权重
+uv run swanlab login                      # 训练默认上报 SwanLab；不想上报就在配置里关掉
+uv run devision-pipeline configs/scratch.yaml        # 从头训练：align -> stage2a -> stage2b，device: auto（CUDA > MPS > CPU）
+# 单卡 A100：uv run devision-pipeline configs/scratch-a100.yaml
+```
+
+- `build_all.sh` 生成 `scratch.yaml` 和第 3–9 轮配置用到的数据，最后核对这些配置引用的数据文件和图片都存在且非空，缺了会列出来并返回非零。中断后重跑会跳过已下载的部分。不生成第 1–2 轮的旧数据和第 10–11 轮的专项数据。
+- 生成的数据和本机的规则、比例相同，不保证逐条一致，也不会自动复现 v9b 的权重或分数。
+- `scratch.yaml` 只训练到大致相当于第 5 轮的模型（输出 `runs/scratch/stage2b`）。后面各轮的配置（`v6-flip-lr.yaml` 起）是历史实验记录，`init` 指向本机的 `runs/` 路径，有的写死 `device: mps`。要在新机器上接着训，复制一份，把 `init` 改成新机器上实际的 checkpoint、把 `device` 改成 `auto` 或 `cuda`。
+- 数据目录不是 `data/` 时，训练配置里的数据路径要一起改，构建脚本不会自动改配置。

@@ -40,3 +40,23 @@ def test_a_config_whose_data_is_missing_or_empty_is_reported(tmp_path, capsys):
         check_configs(["--root", str(root), str(cfg)])
     out = capsys.readouterr().out
     assert "dev.jsonl" in out and "test.jsonl" in out and "train.jsonl" not in out
+
+
+def test_a_picture_that_failed_to_download_is_reported(tmp_path, capsys):
+    root = tmp_path / "data"
+    (root / "coco").mkdir(parents=True)
+    (root / "coco" / "a.jpg").write_bytes(b"x")
+    (root / "coco" / "empty.jpg").write_bytes(b"")
+    rows = [{"id": "1", "image": "coco/a.jpg"}, {"id": "2", "image": "coco/empty.jpg"},
+            {"id": "3", "image": "coco/gone.jpg"}, {"id": "4"}]
+    (root / "train.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(yaml.safe_dump({"name": "x", "stages": [{"name": "s", "kind": "train", "data": "data/train.jsonl"}]}))
+    with pytest.raises(SystemExit):
+        check_configs(["--root", str(root), str(cfg)])
+    out = capsys.readouterr().out
+    assert "2 of 3 pictures" in out and "coco/gone.jpg" in out and "coco/empty.jpg" in out and "a.jpg  " not in out
+    (root / "coco" / "empty.jpg").write_bytes(b"x")
+    (root / "coco" / "gone.jpg").write_bytes(b"x")
+    check_configs(["--root", str(root), str(cfg)])
+    assert "all 3 pictures" in capsys.readouterr().out
