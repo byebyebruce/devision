@@ -1,0 +1,27 @@
+# Round 11 stage 1 (critic/plan-round11.md, revision 1): runs ONLY if stage 0's start rule fires
+# (runs/r11/start_rule.json: v9b - v8 <= -2 points on dev_count_transfer AND <= -1 on dev_count_existing).
+# v9b continues one pass on 9,988 different questions: 3,000 counting + 4,500 other replay + R's 2,488 left/right
+# (scripts/data/v9_mix.py --pairs-file data/v9/r_pairs.jsonl --replay 7500 --count-share 0.4 --seed 0;
+# data/v11/recovery_mix/MIX.json), 1,249 steps, warmup 125, round 10's learning rates (the plan fixes them and
+# tests the new data recipe), FP32. Only monitoring sets here; the screen sets with controls are
+# configs/v11-recovery-screen.yaml, then the gates (plan section 3) before any full evaluation.
+#   uv run devision-pipeline configs/v11-v9b-recovery.yaml
+name: v11-v9b-recovery
+device: mps
+common:
+  log_every: 50
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v9b-lr-replay/stage2         # the current best (round 9)
+    data: data/v11/recovery_mix/train.jsonl
+    val: data/v5/dev_mix.jsonl              # temperature fit (calibration_fit)
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 125, eval_every: 0,
+             save_every: 500, amp: "off", seed: 0}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl
+    dev_lr_pairs: data/v6/dev_lr_pairs.jsonl

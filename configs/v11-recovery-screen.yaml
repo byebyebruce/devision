@@ -1,0 +1,21 @@
+# Round 11 stage 1 screen sets (critic/plan-round11.md, revision 1, section 3): the last-step checkpoint of
+# v11-v9b-recovery on the two counting dev sets and the four diagram types, with mismatched and reversed controls,
+# paired with v9b's results on the same files (configs/v9b-count11.yaml, configs/v9b-sqa-diagram.yaml).
+# Evaluation only; results in runs/v11-v9b-recovery/eval/.
+#   uv run devision-pipeline configs/v11-recovery-screen.yaml
+name: screen
+device: mps
+stages: []
+
+evaluate:
+  checkpoint: runs/v11-v9b-recovery/stage2
+  calibration_fit: data/v5/dev_mix.jsonl
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_count_transfer: {path: data/v11/dev_count_transfer.jsonl, role: monitoring}
+    dev_count_existing: {path: data/v11/dev_count_existing.jsonl, role: monitoring}
+    dev_sqa_repel: {path: data/v10/dev_sqa_repel.jsonl, role: monitoring}
+    dev_sqa_force: {path: data/v10/dev_sqa_force.jsonl, role: monitoring}
+    dev_sqa_temp: {path: data/v10/dev_sqa_temp.jsonl, role: monitoring}
+    dev_sqa_conc: {path: data/v10/dev_sqa_conc.jsonl, role: monitoring}
