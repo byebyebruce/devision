@@ -12,6 +12,8 @@ from common import (balance_yes_no, choice, count_options, download, flatten_ans
 def test_cauldron_turns_parse():
     assert question_text("Is Pale Green the minimum?\nAnswer yes or no.") == "Is Pale Green the minimum?"
     assert question_text("Subtract all cubes. How many are left?\nBe succinct.") == "Subtract all cubes. How many are left?"
+    assert question_text("What shape is it? Your response must be concise.") == "What shape is it?"
+    assert question_text("Is it red? It is next to the cube?") == "Is it red? It is next to the cube?"
     assert multiple_choice("Question: How many?\nChoices:\nA. 10\nB. 3\nAnswer with the letter.", "Answer: B") == \
         ("How many?", ["10", "3"], "3")
     assert multiple_choice("How many?", "3") is None

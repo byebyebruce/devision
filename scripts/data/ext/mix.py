@@ -20,10 +20,11 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import base_args, sha256  # noqa: E402
 
-# questions per source in the training mix (docs/research/data-pack-sources-2026-10-06.md); a smaller source gives all
+# questions per source in the training mix (docs/research/data-pack-sources-2026-10-06.md); a smaller source gives all.
+# DVQA is built but left out: its yes / no questions are all about chart style ("Are the bars horizontal?"), none compare.
 QUOTAS = {"objects365": 80000, "pixmo_points": 50000, "pixmo_count": 20000, "tallyqa": 40000, "clevr": 35000,
           "clevr_math": 10000, "superclevr": 10000, "iconqa": 28000, "visonlyqa": 30000, "figureqa": 30000,
-          "dvqa": 7500, "mapqa": 7500, "spatialsense": 15000, "snli_ve": 30000, "vision_flan": 30000}
+          "mapqa": 7500, "spatialsense": 15000, "snli_ve": 30000, "vision_flan": 30000}
 
 
 def read(path):

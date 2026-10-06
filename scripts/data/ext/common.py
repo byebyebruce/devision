@@ -400,7 +400,7 @@ def extract_picture(root: str, source: str, key: str, data: bytes) -> str:
 
 
 _PROMPT_TAILS = ("answer", "provide", "give", "be ", "quick", "short", "keep", "offer", "ensure", "respond",
-                 "your answer", "a short", "concise", "brief", "write", "reply", "use ", "make", "state")
+                 "your answer", "your response", "please", "only", "just", "the answer", "a short", "concise", "brief", "write", "reply", "use ", "make", "state")
 
 
 def question_text(user: str) -> str:
@@ -409,7 +409,12 @@ def question_text(user: str) -> str:
     lines = [l.strip() for l in user.strip().split("\n") if l.strip()]
     while len(lines) > 1 and not lines[-1].endswith("?") and lines[-1].lower().startswith(_PROMPT_TAILS):
         lines.pop()
-    return " ".join(lines).strip()
+    text = " ".join(lines).strip()
+    # the instruction may also follow the question on the same line: "...what shape? Your response must be concise."
+    head, mark, tail = text.rpartition("?")
+    if mark and tail.strip() and tail.strip().lower().startswith(_PROMPT_TAILS):
+        text = head + "?"
+    return text
 
 
 def short_answer(assistant: str) -> str:
