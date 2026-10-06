@@ -1,0 +1,18 @@
+# Round 11 stage 0 (critic/plan-round11.md, revision 1; stage 0 passed review): v10-count on the new counting monitoring
+# sets (scripts/data/v11_count_eval.py, data/v11/EVAL_MANIFEST.json) with mismatched and reversed controls. v8 and
+# v9b decide whether a recovery run starts (v9b - v8 <= -2 points on dev_count_transfer AND <= -1 on
+# dev_count_existing, point estimates, runs/r11/start_rule.py); v10-count is only reported. test_count_fresh stays
+# sealed. Evaluation only; results in runs/v10-count/eval/.
+#   uv run devision-pipeline configs/v10-count-count11.yaml
+name: count11
+device: mps
+stages: []
+
+evaluate:
+  checkpoint: runs/v10-count/stage2
+  calibration_fit: data/v5/dev_mix.jsonl
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_count_transfer: {path: data/v11/dev_count_transfer.jsonl, role: monitoring}
+    dev_count_existing: {path: data/v11/dev_count_existing.jsonl, role: monitoring}

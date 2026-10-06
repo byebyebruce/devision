@@ -55,7 +55,7 @@ run v8_mix.py
 
 # round 9 (v9b, the current best): R's 2,500 real left/right questions, then the same questions (pairs on
 # near-duplicate photos of held-out pictures dropped) plus 2,500 replay. Byte for byte v9b's files when <root>/v10
-# does not exist yet; round 10's evaluation sets are also held out, so building after them removes a few more pictures
+# and <root>/v11 do not exist yet; their evaluation sets are also held out, so building after them removes more pictures
 run v9_pairs.py
 run v9_mix.py --pairs-file "$ROOT/v9/r_pairs.jsonl" --replay 2500 --out "$ROOT/v9/x1_r2500"
 
