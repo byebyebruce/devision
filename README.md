@@ -45,6 +45,18 @@ result = decider.predict(            # 和 decider.decide(...) 完全相同，pr
 )
 ```
 
+在 Python 里也可以用 `image` 参数直接传图，`state` 里只放文字。它接受 http(s) URL、本地文件路径、base64、data URI、`bytes`、`pathlib.Path` 或 `PIL.Image`，效果和在 `state` 里放图片片段一样：
+
+```python
+result = decider.decide(
+    state={"note": "The customer says this item arrived damaged."},
+    image="photo.jpg",                   # 或 "https://...", bytes, PIL.Image ...
+    questions={"damaged": {"type": "noul", "instructions": "Is the item visibly damaged?"}},
+)
+```
+
+这只是 Python 调用的便利写法。HTTP 请求仍用上面 Jev 兼容的 `state` 图片片段；`state` 对象里叫 `image` 的字段按普通文字处理，HTTP 接口也不接受本地路径。
+
 请求不合法时抛出 `devision.InvalidRequest`（HTTP 服务里对应 422）。
 
 ### 启动 HTTP 服务

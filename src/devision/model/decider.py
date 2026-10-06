@@ -61,6 +61,51 @@ def _load_image(part: Dict[str, Any]) -> Image.Image:
     return img
 
 
+def _open(raw: bytes) -> Image.Image:
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise InvalidRequest("image larger than %d bytes" % MAX_IMAGE_BYTES)
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except (OSError, ValueError, Image.DecompressionBombError) as e:
+        raise InvalidRequest("image could not be decoded: %s" % e) from None
+    return img
+
+
+def _image_arg(image: Any) -> Image.Image:
+    """The `image=` argument of decide (Python only): a PIL image, bytes, a path, or a string that is an http(s)
+    URL, a data URI, an existing local file or base64 -- tried in that order."""
+    if isinstance(image, Image.Image):
+        return image
+    if isinstance(image, (bytes, bytearray)):
+        return _open(bytes(image))
+    if isinstance(image, os.PathLike):
+        image = os.fspath(image)
+    if not isinstance(image, str) or not image.strip():
+        raise InvalidRequest("image must be a URL, data URI, file path, base64 string, bytes or PIL image")
+    s = image.strip()
+    if s.startswith(("http://", "https://")):
+        return _open(_fetch(s))
+    if s.startswith("data:"):
+        head, _, body = s.partition(",")
+        if ";base64" not in head or not body:
+            raise InvalidRequest("image data URI must be base64 (data:image/...;base64,...)")
+        s = body
+    else:
+        try:
+            is_file = len(s) < 4096 and os.path.isfile(os.path.expanduser(s))
+        except (OSError, ValueError):
+            is_file = False
+        if is_file:
+            with open(os.path.expanduser(s), "rb") as f:
+                return _open(f.read(MAX_IMAGE_BYTES + 1))
+    try:
+        raw = base64.b64decode("".join(s.split()), validate=True)
+    except (binascii.Error, ValueError):
+        raise InvalidRequest("image is not an http(s) URL, a data URI, an existing file or base64") from None
+    return _open(raw)
+
+
 def _split_state(state: Any):
     """(text state for the encoder, image or None)."""
     if not isinstance(state, (str, dict, list)):
@@ -164,19 +209,26 @@ class Decider:
         tok = AutoTokenizer.from_pretrained(os.path.join(path, "tokenizer"))
         return cls(model.to(device).float(), tok, cfg)
 
-    def predict(self, state: Any, questions: Any) -> Dict[str, Any]:
+    def predict(self, state: Any, questions: Any, image: Any = None) -> Dict[str, Any]:
         """Same as `decide`, under Laya's name."""
-        return self.decide(state, questions)
+        return self.decide(state, questions, image=image)
 
     @torch.inference_mode()
-    def decide(self, state: Any, questions: Any) -> Dict[str, Any]:
+    def decide(self, state: Any, questions: Any, image: Any = None) -> Dict[str, Any]:
         """Jev answers. Each question's probabilities are softmax(option logits / T), T being its
-        (type, option count) bucket's temperature, or its type's when the bucket has none."""
+        (type, option count) bucket's temperature, or its type's when the bucket has none.
+
+        `image` (Python only, not part of the HTTP request): the picture as an http(s) URL, data URI, local file
+        path, base64 string, bytes, pathlib.Path or PIL image -- the same as an image part in `state`, which must
+        then not have one. A key named "image" inside an object state stays plain text, as in Jev."""
         if not isinstance(questions, dict) or not questions:
             raise InvalidRequest("questions must be a non-empty object")
         for qid, q in questions.items():
             _validate_question(qid, q)
-        text_state, image = _split_state(state)
+        text_state, state_image = _split_state(state)
+        if image is not None and state_image is not None:
+            raise InvalidRequest("give the image either as image= or as an image part in state, not both")
+        image = _image_arg(image) if image is not None else state_image
         qids = list(questions)
         items = [question_item(self.tok, self.cfg, text_state, questions[qid]) for qid in qids]
         for qid, it in zip(qids, items):

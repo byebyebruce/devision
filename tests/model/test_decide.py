@@ -224,3 +224,37 @@ def test_options_that_become_identical_when_cut_to_fit_are_refused(decider):
          "criteria": {prefix + "left": None, prefix + "right": None}}
     with pytest.raises(InvalidRequest, match="identical"):
         decider.decide(state=[{"type": "image", "base64": image_b64()}], questions={"q": q})
+
+
+def test_image_argument_accepts_every_form_and_answers_like_an_image_part(decider, tmp_path):
+    """decide(image=...) is the Python convenience: URL / data URI / file / base64 / bytes / Path / PIL give the
+    same answers as the Jev-compatible image part in state."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    b64 = image_b64()
+    raw = base64.b64decode(b64)
+    path = tmp_path / "photo.png"
+    path.write_bytes(raw)
+    questions = {"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}}
+    want = decider.decide(state=[{"type": "image", "base64": b64}, "a note"], questions=questions)
+    for image in (b64, "data:image/png;base64," + b64, str(path), path, raw, Image.open(io.BytesIO(raw))):
+        assert decider.decide(state="a note", questions=questions, image=image) == want
+
+
+def test_image_argument_errors_are_invalid_requests(decider, tmp_path):
+    questions = {"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}}
+    with pytest.raises(InvalidRequest, match="not both"):
+        decider.decide(state=[{"type": "image", "base64": image_b64()}], questions=questions, image=image_b64())
+    for bad in ("not an image at all!", str(tmp_path / "missing.jpg"), "data:image/png,abc", 42):
+        with pytest.raises(InvalidRequest):
+            decider.decide(state="", questions=questions, image=bad)
+
+
+def test_an_image_key_in_an_object_state_stays_text_as_in_jev(decider, tmp_path):
+    questions = {"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}}
+    text = decider.decide(state={"image": "a red sofa", "note": "n"}, questions=questions)
+    seen = decider.decide(state={"image": "a red sofa", "note": "n"}, questions=questions, image=image_b64())
+    assert text["usage"]["input_tokens"] < seen["usage"]["input_tokens"]    # only image= adds the picture

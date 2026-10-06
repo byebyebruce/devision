@@ -4,6 +4,8 @@
     decider = devision.load("path/or/hub-repo-id")
     decider.predict(state=[{"type": "image", "url": "..."}],
                     questions={"q": {"type": "noul", "instructions": "Is there a dog?"}})
+    decider.predict(state="optional text", image="photo.jpg",       # or a URL, base64, bytes, PIL image
+                    questions={"q": {"type": "noul", "instructions": "Is there a dog?"}})
 
 `import devision` is cheap: torch and the model code load on first use of `load`, `Decider` or
 `InvalidRequest`.
