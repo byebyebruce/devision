@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(HERE))   # scripts/data: convert, fetch, v8_m
 
 Sample = Dict[str, Any]
 NOUL = ("false", "true")
+PICTURE_SECONDS = 60          # one web picture may take at most this long (fetch_pictures)
 
 
 # ---------------------------------------------------------------- paths and downloads
@@ -133,7 +134,15 @@ def fetch_pictures(root: str, items: Sequence[Any], url_of: Callable[[Any], str]
         try:
             with urllib.request.urlopen(urllib.request.Request(url_of(it), headers={"User-Agent": "Mozilla/5.0"}),
                                         timeout=30) as r:
-                save_bytes(path, r.read())
+                chunks, start = [], time.time()
+                while True:             # a server that drips bytes would never hit the per-read timeout
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    if time.time() - start > PICTURE_SECONDS:
+                        raise TimeoutError("picture took over %d s" % PICTURE_SECONDS)
+                save_bytes(path, b"".join(chunks))
             return ""
         except Exception:     # dead links are expected for web pictures
             return rel
