@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/byebyebruce/devision/master/assets/logo.png" alt="deVision" width="200"></p>
+
 # deVision
 
 **deVision = Decision + Vision**：看图做决策。输入一张图片和若干英文问题，输出 Jev 格式的答案（`noul` 是非题 / `choice` 选择题）和校准过的概率。SigLIP2 看图，Laya 的 ModernBERT 决策头打分，不生成文字；没有 GPU 也能跑。
