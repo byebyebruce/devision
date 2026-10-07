@@ -4,7 +4,7 @@
 
 **Image + typed questions → structured answers and calibrated probabilities.** deVision is a non-autoregressive visual decision model built from Laya's ModernBERT-large decision model and a SigLIP2 vision encoder. It scores the supplied options without generating text. Multiple questions about one image share a single image encoding.
 
-This is release **{{version}}** (training round `{{round}}`). It supports English, one image per request, yes/no decisions (`noul`) and multiple-choice decisions (`choice`). Weights and code are released under the Apache-2.0 licence; see [Licence and data](#licence-and-data).
+This is release **{{version}}**. It supports English, one image per request, yes/no decisions (`noul`) and multiple-choice decisions (`choice`). Weights and code are released under the Apache-2.0 licence; see [Licence and data](#licence-and-data).
 
 ## Install
 
