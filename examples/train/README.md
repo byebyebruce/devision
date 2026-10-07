@@ -6,7 +6,9 @@
 uv run devision-pipeline configs/example.yaml    # CPU 上约 1–2 分钟；首次会下载基础模型（约 2.5 GB）
 ```
 
-它依次跑阶段 1（对齐）、阶段 2（决策题）和评测，产出 `runs/example/`。数据只有十几条，模型学不到东西，只用来确认格式和流程。真实训练的数据规模和配置见 `configs/v1-release-0.1.yaml`。
+需要训练依赖：本仓库里 `uv sync` 已包含；单独安装时用 `pip install "devision[train] @ git+https://github.com/byebyebruce/devision"`。
+
+它依次跑阶段 1（对齐）、阶段 2（决策题）和评测，产出 `runs/example/`。数据只有十几条，模型学不到东西，只用来确认格式和流程。真实规模的从头训练见 `configs/scratch.yaml`，发布版 v0.2 的最后一轮见 `configs/v12-ext.yaml`，每一轮的数据和结果见 `docs/training-log.md`。
 
 ## 文件
 
@@ -30,7 +32,7 @@ uv run devision-pipeline configs/example.yaml    # CPU 上约 1–2 分钟；首
 
 ## 阶段 2：决策题样本
 
-`questions` 就是 Jev 请求里的 `questions`；`gold` 给出每道题的标准答案，是一个**概率分布**：
+`questions` 就是 Jev 请求里的 `questions`；`gold` 给出每道题的标准答案，是一个**概率分布**。可选的 `state_text` 是和图片一起给模型的文字（如 ScienceQA 的提示），推理时相当于 `state`。例子：
 
 ```json
 {"id": "example:1", "source": "example", "image_id": "example:1-dog-skier", "image": "1-dog-skier.jpg",
@@ -59,4 +61,4 @@ uv run devision-pipeline configs/example.yaml    # CPU 上约 1–2 分钟；首
 
 ## 生成真实规模的数据
 
-仓库只约定格式（见 `src/devision/train/samples.py`）。把 GQA、VQAv2、COCO 等数据集下载并转换成这种格式的脚本放在仓库外的 `scripts/data/`，用到的命令见 `CLAUDE.md`。
+训练代码只认这种格式（见 `src/devision/train/samples.py`）。把 GQA、VQAv2、COCO 等公开数据集下载并转换成这种格式的脚本在仓库的 [`scripts/data/`](../../scripts/data/)：`bash scripts/data/build_all.sh data` 一次生成从头训练和第 3–9 轮用到的数据，第 12 轮的扩展数据包用 `bash scripts/data/ext/build_ext.sh data`。详见主 README 的「自己训练」。

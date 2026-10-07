@@ -16,9 +16,10 @@ by the next release and `verify` reports it as a changed file.
 | `release/<version>/smoke.json` | yes, written by build | fixed requests on `examples/` pictures and the source checkpoint's answers |
 | `runs/release/<version>/` | no | the built Hub repository (weights, configs, card, `LICENSE`, `provenance.json`, `evaluation/`) |
 
-Versions are model versions (`v0.2`), separate from training rounds (`v11-v9b-recovery`). Hub tag `v0.2` ↔ GitHub
-tag `model-v0.2` (the code the release was built and verified with); the card installs the latest code and loads
-the weights with `revision="v0.2"`.
+Versions are model versions (`v0.2` = round `v12-ext`), separate from training rounds. Hub tag `v0.2` ↔ GitHub
+tag `model-v0.2` (the code the release was built and verified with); the card installs the latest code and shows
+`revision="v0.2"` for pinning the weights (without it, `devision.load("lukbit/devision")` takes the Hub's latest).
+The card says only the version; `provenance.json` records the training round and commit.
 
 ## Steps (manual)
 

@@ -1,4 +1,4 @@
-"""The training / evaluation sample format. The code that produces samples lives outside the repo.
+"""The training / evaluation sample format. The scripts that produce samples are in scripts/data/ (not in the package).
 
 One JSON object per JSONL line:
 
