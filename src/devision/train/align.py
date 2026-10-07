@@ -22,7 +22,7 @@ from transformers.models.modernbert.modeling_modernbert import ModernBertPredict
 from .rlcd import _device, _Images
 from .samples import Sample
 from .tracking import Tracker, TrainLog
-from ..decider import Decider
+from ..infer import Decider
 from ..model import text_encoder
 
 

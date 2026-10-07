@@ -10,7 +10,7 @@ import pytest
 from conftest import tiny_decider
 from PIL import Image
 
-from devision.decider import Decider
+from devision.infer import Decider
 from devision.train.align import AlignConfig, align
 from devision.train.evaluate import evaluate
 from devision.train.rlcd import TrainConfig, train

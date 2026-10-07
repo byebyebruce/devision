@@ -1,6 +1,7 @@
 """`Decider.decide`: the one entry point for inference. Jev `/v1/systemone` state + questions in,
 Jev answers out. The HTTP server and the evaluation both go through it."""
 import base64
+import contextlib
 import binascii
 import io
 import json
@@ -20,6 +21,27 @@ from .model import ModelConfig, VisionDecisionModel, build_model, text_encoder
 
 CONFIG_FILE = "config.json"                       # the model config save() writes (the Hub's standard name)
 LEGACY_CONFIG_FILE = "devision_config.json"       # its name in checkpoints saved before 2026-10-07
+
+
+@contextlib.contextmanager
+def _parameters_on_meta():
+    """Build modules with their parameters on the meta device: no memory and no random initialisation (about 23 s
+    of a 27 s CPU load), since `load_state_dict(..., assign=True)` replaces every one of them with the checkpoint's
+    tensors. Buffers (e.g. rotary frequencies, computed at construction) stay real. This is what `accelerate`'s
+    `init_empty_weights(include_buffers=False)` does."""
+    register = torch.nn.Module.register_parameter
+
+    def on_meta(module, name, param):
+        register(module, name, param)
+        if param is not None:
+            p = module._parameters[name]
+            module._parameters[name] = torch.nn.Parameter(p.to("meta"), requires_grad=p.requires_grad)
+
+    setattr(torch.nn.Module, "register_parameter", on_meta)
+    try:
+        yield
+    finally:
+        setattr(torch.nn.Module, "register_parameter", register)
 
 
 def config_path(path: str) -> str:
@@ -218,9 +240,10 @@ class Decider:
             path = snapshot_download(path, revision=revision, token=token)
         with open(config_path(path)) as f:
             cfg = ModelConfig.from_dict(json.load(f))
-        model = build_model(AutoConfig.from_pretrained(os.path.join(path, "encoder")),
-                            SiglipVisionConfig.from_pretrained(os.path.join(path, "vision")), cfg)
-        model.load_state_dict(load_file(os.path.join(path, "model.safetensors")), strict=True)
+        with _parameters_on_meta():     # no memory and no random init for weights the file replaces anyway
+            model = build_model(AutoConfig.from_pretrained(os.path.join(path, "encoder")),
+                                SiglipVisionConfig.from_pretrained(os.path.join(path, "vision")), cfg)
+        model.load_state_dict(load_file(os.path.join(path, "model.safetensors")), strict=True, assign=True)
         tok = AutoTokenizer.from_pretrained(os.path.join(path, "tokenizer"))
         return cls(model.to(device).float(), tok, cfg)
 

@@ -30,7 +30,7 @@ import numpy as np
 from laya.common import ece_score
 
 from .samples import Sample
-from ..decider import Decider
+from ..infer import Decider
 
 CONTROLS = ("none", "mismatched", "reversed")
 WARMUP = 3

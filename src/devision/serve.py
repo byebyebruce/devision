@@ -15,7 +15,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from .decider import Decider, InvalidRequest
+from .infer import Decider, InvalidRequest
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 DEMO_ASSETS = {"demo.css": "text/css", "demo.js": "text/javascript", "scenes.js": "text/javascript"}

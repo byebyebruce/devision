@@ -20,7 +20,7 @@ def test_the_same_seed_gives_the_same_projector_and_another_seed_does_not():
 
 
 def test_loading_a_checkpoint_does_not_depend_on_the_seed(tmp_path):
-    from devision.decider import Decider
+    from devision.infer import Decider
 
     tiny_decider(seed=3).save(tmp_path / "ckpt")
     seed_all(0)

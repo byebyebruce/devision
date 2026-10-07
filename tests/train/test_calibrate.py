@@ -6,7 +6,7 @@ import torch
 from conftest import image_b64, tiny_decider
 from PIL import Image
 
-from devision.decider import Decider
+from devision.infer import Decider
 from devision.train.cli import calibrate_main
 
 COLORS = {"red": (220, 20, 20), "blue": (20, 20, 220)}

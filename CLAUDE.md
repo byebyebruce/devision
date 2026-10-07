@@ -13,11 +13,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 代码结构
 
-- 推理在 `src/devision/` 顶层，不分子包（负责人 2026-10-07）：`model.py`（网络结构、`ModelConfig`）、`image.py`（预处理）、`decider.py`（checkpoint 读写、`Decider.decide`）；三者不引用 `serve`、`train`。数据流：图片 letterbox 256 → 冻结的 SigLIP2 → 2×2 pixel shuffle + MLP 投影层 → 64 个视觉 token 插在 `[CLS]` 之后 → ModernBERT-large（Laya 权重）→ Laya 决策头在每个选项的 `[MASK]` 上打分 → 按温度 softmax（先查（题型, 选项数）桶的温度 `temperature_by_options`，没有就用题型温度 `temperature`；旧 checkpoint 没有分桶，行为不变）。训练和推理共用 `question_item` / `image_tensor`，序列构造不要另写一份。
+- 推理在 `src/devision/` 顶层，不分子包（负责人 2026-10-07）：`model.py`（网络结构、`ModelConfig`）、`image.py`（预处理）、`infer.py`（checkpoint 读写、`Decider.decide`）；三者不引用 `serve`、`train`。数据流：图片 letterbox 256 → 冻结的 SigLIP2 → 2×2 pixel shuffle + MLP 投影层 → 64 个视觉 token 插在 `[CLS]` 之后 → ModernBERT-large（Laya 权重）→ Laya 决策头在每个选项的 `[MASK]` 上打分 → 按温度 softmax（先查（题型, 选项数）桶的温度 `temperature_by_options`，没有就用题型温度 `temperature`；旧 checkpoint 没有分桶，行为不变）。训练和推理共用 `question_item` / `image_tensor`，序列构造不要另写一份。
 - `src/devision/train/`：样本格式（`samples.py`）、阶段 1 对齐（`align.py`，带图完形填空，训投影层，`--lora-r` 时 ModernBERT 也加 LoRA）、阶段 2 RLCD 训练（`rlcd.py`）、评测（`evaluate.py`，走 `decide`）、SwanLab 上报（`tracking.py`）、YAML 实验编排（`pipeline.py`），依赖推理模块。
 - 准备训练数据的代码（下载、转换、混合、转换器测试）在 `scripts/data/`，**在仓库里**（2026-10-04 起，为了在别的机器上从零复现）；下载的原始数据和生成的数据（`data/`）不进仓库。`bash scripts/data/build_all.sh [data]` 按顺序从原始来源生成 data-v2 及以后的配置（`configs/scratch.yaml` 与第 3–9 轮及其评测；第 10 轮的数据不在内）用到的全部数据，最后逐个核对这些配置引用的文件都存在且非空（首次会下载几十 GB、跑几个小时；输出同时写到 `<root>/build_all.log`，大文件和图片下载会定期打印进度；第 1–2 轮的旧数据不在内）；laya-vision 评测集先于需要排除其图片的训练数据生成，缺了它 `v2_vg_relation` / `v3_build` 会拒绝运行；规则和比例与本机生成的一致，不保证逐字节相同。训练代码只认 `samples.py` 里约定的 JSONL 格式。
 - `src/devision/serve.py`：`/v1/systemone` API、web demo 路由和 `devision-serve` 命令；demo 网页在 `src/devision/static/`，只通过 HTTP 调 API。
-- 依赖只能单向：推理模块（model / image / decider）不引用 serve、train；serve 和 train 只引用推理模块，互不引用。
+- 依赖只能单向：推理模块（model / image / infer）不引用 serve、train；serve 和 train 只引用推理模块，互不引用。
 - 测试按部分放：`tests/model/`（推理）、`tests/train/`、`tests/release/`；共享的 tiny 模型在 `tests/conftest.py`。
 
 ## 不可违背的约束
