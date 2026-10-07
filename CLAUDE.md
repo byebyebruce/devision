@@ -27,7 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **`confidence = (n·p_max−1)/(n−1)`**（Jev 口径），不用 Laya 的熵式定义。
 - **CPU 是主要的推理场景之一，但不是硬约束**（负责人 2026-10-05）：模型应能在没有 GPU 的机器上跑，有 GPU 时也能用（`devision.load(device=...)`、`devision-serve --device`，默认 `auto`）。结构上的改动（更多视觉 token、更高输入分辨率、更大的编码器）可以考虑，不因"必须只用 CPU"而排除；但方案和结果里要实测并写明 CPU 延迟的变化，作为取舍依据。**我们自己的训练和评测用最快的设备**：训练在本地 Mac（MPS），`devision-eval` / `devision-calibrate` 默认 `--device auto`（CUDA > MPS > CPU），流水线把 YAML 的 `device` 传给评测；延迟数字只在要验证部署时用 `--device cpu` 单独测。
 - 当前仅：英文、单图、letterbox 到 256×256、题型 `noul`/`choice`（`score` 返回 422）。
-- **非商用项目**：可用 laya-vision（CC BY-NC-SA）做 baseline；许可相关改动需先确认。
+- **许可**：代码和发布的模型权重用 **Apache-2.0**（负责人 2026-10-07：选最宽松的；与 Laya、SigLIP2、ModernBERT 三个基座一致）。训练数据各有条款，部分非商用（如 ScienceQA 为 CC BY-NC-SA），模型卡的 metadata 列出训练数据集，正文说明这一点。可用 laya-vision（CC BY-NC-SA）做 baseline。许可相关改动需先确认。
 
 ## 测试
 
@@ -71,6 +71,7 @@ uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data
 uv run devision-compare runs/a/x.details.jsonl runs/b/x.details.jsonl --by source   # 同一批题上两个模型的差值，按图片配对重采样给 95% 区间
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
 uv run devision-pipeline configs/v3-x.yaml [--dry-run] [--from STAGE] [--force]   # 按 YAML 跑一轮训练（再跑同一个 YAML 是续跑）
+uv run python scripts/release/hf.py build|verify|publish release/v0.2 [--push]   # 发布到 Hugging Face（手动；流程见 release/README.md）：build 生成 runs/release/<版本>/（权重、生成的模型卡、LICENSE、provenance、evaluation/）并把 results / MANIFEST / smoke 写回 release/<版本>/；verify 核对文件哈希、模型卡 metadata，并要求在 CPU 上和源 checkpoint 答案一致；publish 默认只演练，--push 才上传，仓库保持私有、已有版本 tag 不覆盖
 ```
 
 - **每一轮训练评测完都要和 laya-vision 详细比较**（负责人 2026-10-05 定）：每轮的 YAML 都把四个 `bench_lv_*`（含 `controls: true`）放进 `evaluate.sets`；评完除了和上一轮逐题配对，还要跑 `uv run python scripts/lv_report.py runs/<轮次>/eval --prev runs/<上一轮>/eval`，生成 `eval/compare/laya_vision.{md,json}`（逐题配对的全部 / 未见过、逐题对照、同题校准、我们的看图收益、ScienceQA 按学科 / 选项数 / 必须看图切片、POPE 每档对公开分及 precision / recall），结论写进训练日志该轮一节和 `docs/research/laya-vision-gap.md`。只看某项专项能力、不算一轮的只评测实验不受此限。

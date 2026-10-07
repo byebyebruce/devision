@@ -19,7 +19,7 @@ deVision 是输出结构化决策概率的视觉模型。审查时以项目目�
 - 审查训练停滞、稳定性、空间关系或文字与区域绑定问题时，阅读 [实验记录](docs/experiments/2026-09-30-rlcd-plateau.md)，按时间检查结论更新和原始证据，避免重复提出已失败且条件相同的实验。
 - 审查数据与评测设计时，阅读 [数据质量分析](docs/research/data-quality.md)；审查外部 baseline 时，阅读 [laya-vision 对比](docs/research/laya-vision-gap.md)，核对比较口径与来源日期。
 - 审查具体运行时，从对应的 `configs/*.yaml`、实际启动参数、`runs/logs/` 和已有结果中确认实验身份；配置文件和历史文档不能证明当前正在执行什么。文件缺失或记录冲突时，明确标注证据缺口。
-- 评估发布结论时，对照 [README.md](README.md) 与 [模型卡](docs/model-card.md)，核对能力、校准和性能声明是否得到相应实验支持。
+- 评估发布结论时，对照 [README.md](README.md) 与模型卡（模板 [release/card_template.md](release/card_template.md)，生成的模型卡在 `runs/release/<版本>/README.md`），核对能力、校准和性能声明是否得到相应实验支持。
 
 ## 评审流程
 

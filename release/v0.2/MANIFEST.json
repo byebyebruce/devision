@@ -1,0 +1,54 @@
+{
+ ".gitattributes": {
+  "size": 92,
+  "sha256": "127386e47ae53f224aaf02383189e1b11e6d52289775b426655aa5d87d7e953c"
+ },
+ "LICENSE": {
+  "size": 11358,
+  "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+ },
+ "README.md": {
+  "size": 13048,
+  "sha256": "b8a355ef53635c3375eadbc3b5123e3a3591084b3be27a891a58b23bd3b0d645"
+ },
+ "config.json": {
+  "size": 156,
+  "sha256": "1c76e28a761d8f605345e0924c86863f14d0556595a8202cf9af8a5e82d62bb8"
+ },
+ "devision_config.json": {
+  "size": 348,
+  "sha256": "28883209704a280de31fc19088a276115a793ac678b96a91eff1a569f4d42273"
+ },
+ "encoder/config.json": {
+  "size": 2084,
+  "sha256": "5268d24ad3b77c8151de5dcb0762ba4391619aad9ab0bda33e36fb083cfeae6d"
+ },
+ "evaluation/results.json": {
+  "size": 2844,
+  "sha256": "7285b2ce2733e32eb199b204f16a98e472c4356ee3601d3a95067c7c8a2b085f"
+ },
+ "evaluation/results.md": {
+  "size": 1656,
+  "sha256": "945e07ca8949babc6e1d219c6870012a227a47408bd908c534ae6e9291ca3af3"
+ },
+ "model.safetensors": {
+  "size": 2073754784,
+  "sha256": "c7831354b228cb1bc14bd7d3b0a7fc72e5e2bc6d1295d70c538746cc014f2549"
+ },
+ "provenance.json": {
+  "size": 1196,
+  "sha256": "b8d65ab5f6f1b263b4de865a3b4df871f606f5474a54778e127855624d74622e"
+ },
+ "tokenizer/tokenizer.json": {
+  "size": 3583228,
+  "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+ },
+ "tokenizer/tokenizer_config.json": {
+  "size": 379,
+  "sha256": "5926e6ec4294f80294bd98d9176defa9fbae7f140525d06a1da987488e74a973"
+ },
+ "vision/config.json": {
+  "size": 361,
+  "sha256": "118c80de2a3e1c4cd8142cfcc61dc1d55bb02013b2f9f0d6ca4a94cd857f77e4"
+ }
+}

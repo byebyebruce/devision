@@ -3,6 +3,8 @@ name = "devision"
 version = "0.1.0"
 description = "Vision decision model: image + questions -> Jev-format calibrated answers"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 keywords = ["decision-model", "calibration", "vision", "jev", "system-one", "laya", "rlcd"]
 classifiers = [
