@@ -494,6 +494,9 @@ def run_plan(plan: Plan, start_from: Optional[str] = None, force: bool = False, 
 
 def pipeline_main(argv=None) -> None:
     """Run the stages and evaluations of an experiment YAML (see configs/)."""
+    from .cli import _need_train_extra
+
+    _need_train_extra()
     import yaml
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

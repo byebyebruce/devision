@@ -20,48 +20,48 @@
   }
  },
  "tolerance": 0.0001,
- "source": "runs/v11-v9b-recovery/stage2",
+ "source": "runs/v12-ext/stage2",
  "answers": {
   "1-dog-skier.jpg": {
    "person": {
     "type": "noul",
-    "noul": 0.9194678664207458
+    "noul": 0.9565043449401855
    },
    "animal": {
     "type": "noul",
-    "noul": 0.981812596321106
+    "noul": 0.9887661337852478
    },
    "sport": {
     "type": "choice",
     "choice": "skiing",
     "probabilities": {
-     "tennis": 0.008702629245817661,
-     "skiing": 0.9720978140830994,
-     "soccer": 0.009735031984746456,
-     "surfing": 0.009464559145271778
+     "tennis": 0.002122770994901657,
+     "skiing": 0.9928072690963745,
+     "soccer": 0.002516786102205515,
+     "surfing": 0.0025532071013003588
     },
-    "confidence": 0.9627970854441324
+    "confidence": 0.9904096921284994
    }
   },
   "2-tennis-lying.jpg": {
    "person": {
     "type": "noul",
-    "noul": 0.9477809071540833
+    "noul": 0.8694818615913391
    },
    "animal": {
     "type": "noul",
-    "noul": 0.02137257158756256
+    "noul": 0.042058419436216354
    },
    "sport": {
     "type": "choice",
     "choice": "tennis",
     "probabilities": {
-     "tennis": 0.9807213544845581,
-     "skiing": 0.006241395603865385,
-     "soccer": 0.007013747002929449,
-     "surfing": 0.006023494526743889
+     "tennis": 0.9933288097381592,
+     "skiing": 0.002090885303914547,
+     "soccer": 0.0025584662798792124,
+     "surfing": 0.0020219148136675358
     },
-    "confidence": 0.9742951393127441
+    "confidence": 0.9911050796508789
    }
   }
  }

@@ -37,7 +37,8 @@ def seed_all(seed: int) -> None:
 
 
 def _decider(a):
-    from ..model import Decider, ModelConfig, from_pretrained
+    from ..infer import Decider
+    from ..model import ModelConfig, from_pretrained
 
     if a.init:
         return Decider.load(a.init)
@@ -52,10 +53,14 @@ def _write_report(out: str, name: str, report) -> None:
 
 
 def _need_train_extra() -> None:
+    """Every devision.train command needs the train extra (peft, swanlab, pyyaml, psutil)."""
     try:
         import peft  # noqa: F401
+        import psutil  # noqa: F401
+        import swanlab  # noqa: F401
+        import yaml  # noqa: F401
     except ImportError:
-        raise SystemExit("training needs the train extra: pip install 'devision[train]'") from None
+        raise SystemExit("training and evaluation need the train extra: pip install 'devision[train]'") from None
 
 
 def align_main(argv=None) -> None:
@@ -114,7 +119,8 @@ def eval_main(argv=None) -> None:
     summary can be recomputed. Questions about the same picture and text state go into one decide()
     request (at most --max-questions), so each picture is encoded once; --no-group asks one question per
     request (single-question latency)."""
-    from ..model import Decider
+    _need_train_extra()
+    from ..infer import Decider
     from .evaluate import CONTROLS, MAX_QUESTIONS, evaluate
 
     p = argparse.ArgumentParser(description=eval_main.__doc__)
@@ -175,8 +181,8 @@ def calibrate_main(argv=None) -> None:
     _need_train_extra()
     import shutil
 
-    from ..model import Decider
-    from ..model.decider import CONFIG_FILE, config_path
+    from ..infer import Decider
+    from ..infer import CONFIG_FILE, config_path
     from .rlcd import MIN_BUCKET_ITEMS, calibrate
 
     p = argparse.ArgumentParser(description=calibrate_main.__doc__)
@@ -243,6 +249,7 @@ def calibrate_main(argv=None) -> None:
 def compare_main(argv=None) -> None:
     """Paired comparison of two evaluations of the same questions (their --details files): accuracy
     difference of B minus A with a bootstrap interval that resamples whole pictures."""
+    _need_train_extra()
     from .compare import compare, load_records
 
     p = argparse.ArgumentParser(description=compare_main.__doc__)

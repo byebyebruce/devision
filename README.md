@@ -15,15 +15,14 @@
 ### 安装
 
 ```bash
-pip install "devision[serve] @ git+https://github.com/byebyebruce/devision"   # 推理 + HTTP 服务
-pip install "devision @ git+https://github.com/byebyebruce/devision"          # 只在 Python 里推理
+pip install "devision @ git+https://github.com/byebyebruce/devision"            # 推理 + HTTP 服务
+pip install "devision[train] @ git+https://github.com/byebyebruce/devision"     # 再加训练
 ```
 
 | 安装项 | 包含 |
 |---|---|
-| `devision` | 推理：`devision.load`、`Decider.predict` / `decide`、`devision-eval` |
-| `devision[serve]` | 加上 HTTP 服务和 web demo（`devision-serve`） |
-| `devision[train]` | 加上训练（`devision-align`、`devision-train`，依赖 peft、SwanLab） |
+| `devision` | 推理（`devision.load`、`Decider.predict` / `decide`）和 HTTP 服务、web demo（`devision-serve`） |
+| `devision[train]` | 加上训练、评测、校准和实验流水线（`devision-align`、`devision-train`、`devision-eval`、`devision-calibrate`、`devision-compare`、`devision-pipeline`；依赖 peft、SwanLab 等） |
 
 在本仓库里开发用 `uv sync`，开发依赖组已经包含上面所有内容。
 

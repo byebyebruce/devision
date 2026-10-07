@@ -316,6 +316,7 @@ name = "devision"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
     { name = "huggingface-hub" },
     { name = "laya" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -324,13 +325,10 @@ dependencies = [
     { name = "safetensors" },
     { name = "torch" },
     { name = "transformers" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
-serve = [
-    { name = "fastapi" },
-    { name = "uvicorn" },
-]
 train = [
     { name = "peft" },
     { name = "psutil" },
@@ -340,7 +338,6 @@ train = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "fastapi" },
     { name = "httpx" },
     { name = "peft" },
     { name = "psutil" },
@@ -349,12 +346,11 @@ dev = [
     { name = "pytest" },
     { name = "pyyaml" },
     { name = "swanlab" },
-    { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", marker = "extra == 'serve'", specifier = ">=0.110" },
+    { name = "fastapi", specifier = ">=0.110" },
     { name = "huggingface-hub", specifier = ">=0.30" },
     { name = "laya", specifier = "==0.3.22" },
     { name = "numpy", specifier = ">=1.26" },
@@ -366,13 +362,12 @@ requires-dist = [
     { name = "swanlab", marker = "extra == 'train'", specifier = ">=0.10.1" },
     { name = "torch", specifier = ">=2.4" },
     { name = "transformers", specifier = ">=5.0" },
-    { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.27" },
+    { name = "uvicorn", specifier = ">=0.27" },
 ]
-provides-extras = ["serve", "train"]
+provides-extras = ["train"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "peft", specifier = ">=0.13" },
     { name = "psutil", specifier = ">=5.9" },
@@ -381,7 +376,6 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "swanlab", specifier = ">=0.10.1" },
-    { name = "uvicorn", specifier = ">=0.27" },
 ]
 
 [[package]]

@@ -28,8 +28,9 @@ from PIL import Image
 
 from .samples import Sample
 from .tracking import Tracker, TrainLog
-from ..model import Decider, ModelConfig, image_tensor, option_bucket, pick_temperature, question_item, text_encoder
-from ..model.decider import best_device
+from ..infer import Decider, image_tensor, question_item
+from ..model import ModelConfig, option_bucket, pick_temperature, text_encoder
+from ..infer import best_device
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
 MIN_TYPE_ITEMS = 10      # fewer val questions of a type: its temperature is not fitted
