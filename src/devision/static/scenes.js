@@ -20,9 +20,9 @@
   const diagrams = [
     {
       id: 'count', kind: 'diagram', title: '颜色与数量', subtitle: '合成示例 · 属性 · 计数',
-      description: '三个珊瑚色圆形与两个绿色方形。试着分别问颜色、形状和数量；合成图的表现不代表真实照片上的效果。',
-      url: diagram('#f4e8dc', '<circle cx="145" cy="135" r="48" fill="#cc7358"/><circle cx="320" cy="135" r="48" fill="#cc7358"/><circle cx="495" cy="135" r="48" fill="#cc7358"/><rect x="195" y="242" width="94" height="94" rx="5" fill="#557b62"/><rect x="351" y="242" width="94" height="94" rx="5" fill="#557b62"/>'),
-      questions: [choice('How many circles are in the image?', ['two', 'three', 'four', 'five']), choice('What color are the squares?', ['red', 'green', 'blue']), yesno('Are there more circles than squares?')],
+      description: '三个珊瑚红的圆。试试问数量、颜色和形状，也可以改选项看概率怎样变化。',
+      url: diagram('#f4e8dc', '<circle cx="145" cy="210" r="56" fill="#cc7358"/><circle cx="320" cy="210" r="56" fill="#cc7358"/><circle cx="495" cy="210" r="56" fill="#cc7358"/>'),
+      questions: [choice('How many circles are in the image?', ['two', 'three', 'four', 'five']), choice('What color are the circles?', ['red', 'green', 'blue', 'yellow']), yesno('Are the circles red?')],
     },
     {
       id: 'spatial', kind: 'diagram', title: '换个方向看', subtitle: '合成示例 · 空间关系',
