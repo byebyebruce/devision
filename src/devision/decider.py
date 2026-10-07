@@ -16,7 +16,7 @@ from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoTokenizer, SiglipVisionConfig
 
 from .image import to_pixel_values
-from .network import ModelConfig, VisionDecisionModel, build_model, text_encoder
+from .model import ModelConfig, VisionDecisionModel, build_model, text_encoder
 
 CONFIG_FILE = "config.json"                       # the model config save() writes (the Hub's standard name)
 LEGACY_CONFIG_FILE = "devision_config.json"       # its name in checkpoints saved before 2026-10-07

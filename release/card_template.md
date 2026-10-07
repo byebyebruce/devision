@@ -12,7 +12,7 @@ This is release **{{version}}** (training round `{{round}}`). It supports Englis
 pip install "devision @ git+https://github.com/byebyebruce/devision"
 ```
 
-Python 3.11 or newer is required. For the HTTP server and browser demo, install `devision[serve]` instead. If the model repository is private, authenticate first with `hf auth login` using an account that has access.
+Python 3.11 or newer is required; the install includes the HTTP server and browser demo. If the model repository is private, authenticate first with `hf auth login` using an account that has access.
 
 ## Python quickstart
 
@@ -76,7 +76,7 @@ An `image` key inside an object state stays text: `state={"image": "photo.jpg"}`
 ## HTTP API and browser demo
 
 ```bash
-pip install "devision[serve] @ git+https://github.com/byebyebruce/devision"
+pip install "devision @ git+https://github.com/byebyebruce/devision"
 devision-serve --checkpoint {{hub_repo}} --device cpu --port 8000
 ```
 

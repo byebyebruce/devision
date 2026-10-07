@@ -2,7 +2,7 @@
 import pytest
 from conftest import image_b64
 
-from devision.model import InvalidRequest
+from devision.decider import InvalidRequest
 
 
 def test_noul_question_about_an_image_returns_probability_of_yes(decider):
@@ -185,7 +185,7 @@ def test_a_checkpoint_saved_before_bucket_temperatures_answers_with_its_per_type
 
     from conftest import tiny_decider
 
-    from devision.model import Decider
+    from devision.decider import Decider
 
     decider = tiny_decider()
     decider.cfg.temperature = [2.0, 1.0, 0.6]

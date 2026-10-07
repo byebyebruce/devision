@@ -60,8 +60,8 @@ def pick_pairs(originals, n, rng):
 def shorten_hints(rows):
     """Cut the hint of questions whose text would exceed MAX_TOKENS (a few ScienceQA hints drive memory peaks)."""
     from transformers import AutoTokenizer
-    from devision.model.decider import question_item
-    from devision.model.network import ModelConfig
+    from devision.decider import question_item
+    from devision.model import ModelConfig
     tok = AutoTokenizer.from_pretrained("convaiinnovations/laya", subfolder="tokenizer")   # deVision's tokenizer
     cfg = ModelConfig()                                                                   # same token budgets
     length = lambda r, hint: len(question_item(tok, cfg, hint, r["questions"]["q"])["ids"])

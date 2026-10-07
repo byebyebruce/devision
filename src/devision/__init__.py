@@ -13,7 +13,7 @@
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from .model import Decider, InvalidRequest
+    from .decider import Decider, InvalidRequest
 
 __version__ = "0.1.0"
 
@@ -24,7 +24,7 @@ def load(model_id_or_path: str, device: str = "auto", revision: Optional[str] = 
 
     `revision` pins a hub commit, tag or branch; `token` is for private repos.
     """
-    from .model import Decider
+    from .decider import Decider
 
     return Decider.load(model_id_or_path, device=device, revision=revision, token=token)
 

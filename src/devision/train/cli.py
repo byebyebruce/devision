@@ -37,7 +37,8 @@ def seed_all(seed: int) -> None:
 
 
 def _decider(a):
-    from ..model import Decider, ModelConfig, from_pretrained
+    from ..decider import Decider
+    from ..model import ModelConfig, from_pretrained
 
     if a.init:
         return Decider.load(a.init)
@@ -114,7 +115,7 @@ def eval_main(argv=None) -> None:
     summary can be recomputed. Questions about the same picture and text state go into one decide()
     request (at most --max-questions), so each picture is encoded once; --no-group asks one question per
     request (single-question latency)."""
-    from ..model import Decider
+    from ..decider import Decider
     from .evaluate import CONTROLS, MAX_QUESTIONS, evaluate
 
     p = argparse.ArgumentParser(description=eval_main.__doc__)
@@ -175,8 +176,8 @@ def calibrate_main(argv=None) -> None:
     _need_train_extra()
     import shutil
 
-    from ..model import Decider
-    from ..model.decider import CONFIG_FILE, config_path
+    from ..decider import Decider
+    from ..decider import CONFIG_FILE, config_path
     from .rlcd import MIN_BUCKET_ITEMS, calibrate
 
     p = argparse.ArgumentParser(description=calibrate_main.__doc__)

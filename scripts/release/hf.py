@@ -299,7 +299,7 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
             shutil.copy(src, dst)
     # the model config is config.json (the Hub's standard name, which also counts downloads); a checkpoint saved
     # before 2026-10-07 calls it devision_config.json
-    from devision.model.decider import config_path
+    from devision.decider import config_path
     config = load_json(config_path(ckpt))
     config["model_name"] = cfg["model_name"]
     write_json(os.path.join(out, "config.json"), config)
