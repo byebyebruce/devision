@@ -31,7 +31,8 @@ pip install "devision[train] @ git+https://github.com/byebyebruce/devision"     
 ```python
 import devision
 
-decider = devision.load("lukbit/devision", revision="v0.2")   # Hugging Face 上的发布版；也可传本地 checkpoint 目录
+decider = devision.load("lukbit/devision")   # Hugging Face 上的最新发布版；也可传本地 checkpoint 目录
+# 固定某个版本：devision.load("lukbit/devision", revision="v0.2")
 # device 默认 auto（CUDA > MPS > CPU），可指定 device="cpu"；私有仓库先 hf auth login，或传 token="hf_..."
 
 result = decider.predict(            # 和 decider.decide(...) 完全相同，predict 是 Laya 的叫法
@@ -75,13 +76,13 @@ HTTP 仍使用下方的 `state` 图片片段，不支持顶层 `image` 参数或
 ### 启动 HTTP 服务
 
 ```bash
-devision-serve --checkpoint lukbit/devision --revision v0.2 --port 8000
+devision-serve --checkpoint lukbit/devision --port 8000
 ```
 
 | 参数 | 作用 |
 |---|---|
 | `--checkpoint` | 本地目录或 Hugging Face 仓库 id |
-| `--revision` | 仓库 id 时固定的 commit、tag 或分支 |
+| `--revision` | 仓库 id 时固定的 commit、tag 或分支（如 `v0.2`）；不给就用最新版 |
 | `--host` / `--port` | 默认 `127.0.0.1:8000` |
 | `--device` | `auto`（默认：有 CUDA / Apple GPU 就用，没有就用 CPU）、`cuda`、`mps` 或 `cpu` |
 | `--threads` | CPU 推理线程数 |
@@ -95,10 +96,10 @@ devision-serve --checkpoint lukbit/devision --revision v0.2 --port 8000
 
 Demo 的中文界面提供物体、动作、计数、颜色、大小、空间关系及磁铁示意图等探索入口；问题和选项仍使用英文。运行后才展示模型实际返回的结果，修改输入会标记已有结果过期。左右关系和科学示意图用于观察能力边界，不保证示例答对。
 
-在本仓库里体验（发布版 v0.2，或本地的同一个 checkpoint `runs/v12-ext/stage2`）：
+在本仓库里体验（Hugging Face 上的最新发布版，目前是 v0.2；也可用本地的同一个 checkpoint `runs/v12-ext/stage2`）：
 
 ```bash
-uv run devision-serve --checkpoint lukbit/devision --revision v0.2 --port 8000
+uv run devision-serve --checkpoint lukbit/devision --port 8000
 # 浏览器打开 http://127.0.0.1:8000
 ```
 
