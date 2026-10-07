@@ -1,0 +1,33 @@
+# Round 12 (extension pack) full evaluation (docs/experiments/2026-10-06-v12-ext-plan.md, acceptance written before
+# training): every test_ / bench_ set with controls on the last-step checkpoint, paired with v11 (same files),
+# including the sealed test_count_fresh (v8 / v9b / v11 already scored after round 11), dev_ext as monitoring.
+# Results in runs/v12-ext/eval/.
+#   uv run devision-pipeline configs/v12-ext-eval.yaml
+name: full
+stages: []
+
+evaluate:
+  checkpoint: runs/v12-ext/stage2
+  calibration_fit: data/v5/dev_mix.jsonl
+  history: [data/v6/dev_lr_pairs.jsonl, data/ext/dev_ext.jsonl]
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl   # left/right on mirrored pictures: both right = grounded
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl   # laya-vision's benchmark
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
+    test_count_fresh: {path: data/v11/test_count_fresh.jsonl, role: heldout}
