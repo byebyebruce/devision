@@ -226,13 +226,12 @@
       }
       return [`q${index + 1}`, question];
     }));
-    const parts = [];
-    if (state.image) parts.push({ type: 'image', base64: state.image.url.split(',')[1] });
-    if ($('#context').value.trim()) parts.push($('#context').value.trim());
-    return { model: 'devision', state: parts.length ? parts : '', questions };
+    const body = { model: 'devision', state: $('#context').value.trim(), questions };
+    if (state.image) body.image = state.image.url.split(',')[1];
+    return body;
   }
   function shownRequest(body) {
-    return { ...body, state: Array.isArray(body.state) ? body.state.map((part) => part?.type === 'image' ? { type: 'image', base64: `[图片已省略：${part.base64.length} 个字符]` } : part) : body.state };
+    return body.image ? { ...body, image: `[图片已省略：${body.image.length} 个字符]` } : body;
   }
   function validateAnswers(data, questions) {
     const probability = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
@@ -312,8 +311,8 @@
       renderResults();
       if (mode !== 'none') {
         status(`当前图片已完成，正在分析${mode === 'mirror' ? '镜像' : '无图'}对照（2 / 2）…`, 'loading');
-        const control = { ...body, state: Array.isArray(body.state) ? body.state.filter((part) => part?.type !== 'image') : body.state };
-        if (mode === 'mirror') control.state = [{ type: 'image', base64: (await rasterize(image.url, true)).split(',')[1] }, ...control.state];
+        const { image: _, ...control } = body;
+        if (mode === 'mirror') control.image = (await rasterize(image.url, true)).split(',')[1];
         if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         state.result.runs.push({ label: mode === 'mirror' ? '水平镜像' : '无图', ...await ask(control, controller) });
         renderResults();

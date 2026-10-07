@@ -137,10 +137,11 @@
 
 ### API 契约
 
-与 Jev 的差异只有一处：`state` 可以是数组，数组元素里可以有图片片段。其余请求字段和整个响应结构都与 Jev 相同。以下是数据形状（按 Jev 文档整理，图片片段是我们新增的）：
+与 Jev 的差异只在请求里怎么带图（负责人 2026-10-07 改为两种写法）：推荐用顶层 `image` 字段，与 Python 的 `image=` 一致；`state` 数组里的图片片段继续兼容。其余请求字段和整个响应结构都与 Jev 相同，不带图的 Jev 请求含义不变。以下是数据形状（按 Jev 文档整理，`image` 和图片片段是我们新增的）：
 
 ```
 Request
+  image?: string                                                 // http(s) URL、data URI 或纯 base64；不接受服务器本地路径
   state: string | object | Array<string | object | ImagePart>
   ImagePart: { type: "image", base64?: string, url?: string }   // 二选一
   model: string
@@ -159,9 +160,12 @@ Response
 ```
 
 - MVP 阶段每个请求最多带 1 张图。
-- **Python 库的便利写法**（负责人 2026-10-06）：`decide` / `predict` 另有关键字参数 `image`，接受 http(s) URL、data URI（`data:image/...;base64,...`）、本地文件路径、base64 字符串、`bytes`、`pathlib.Path` 或 `PIL.Image`，由库识别。它只是 Python 调用的便利，等价于在 `state` 里放一个图片片段：
-  - HTTP 请求格式不变，仍是上面的 Jev 兼容格式。`state` 对象里名为 `image` 的字段仍是普通文字，不会被当成图片，这样合法的 Jev 请求含义不变。
-  - 本地路径只在调用方自己的 Python 进程里读取。HTTP 接口不接受本地路径，否则任何人都能让服务读取服务器上的文件。
+- **HTTP 的顶层 `image`**（负责人 2026-10-07）：字符串，按 http(s) URL → data URI → 纯 base64 的顺序识别，等价于在 `state` 里放一个图片片段；**从不读取服务器本地文件**，否则任何人都能让服务读取服务器上的文件。和 `state` 里的图片片段不能同时给。例：`{"image": "https://...", "state": "customer says ...", "questions": {...}}`。
+- **Python 库**（负责人 2026-10-06）：`decide` / `predict` 的关键字参数 `image` 与 HTTP 的顶层 `image` 对应，另外还接受本地文件路径、`bytes`、`pathlib.Path` 和 `PIL.Image`，由库识别，等价于在 `state` 里放一个图片片段：
+  - `state` 仍必填，类型为字符串、对象或数组；只有图片、没有背景文字时传 `state=""`，不能省略或传 `None`。例如 `decider.decide(image="photo.jpg", state="", questions=questions)`。`state={"note": "..."}` 是普通背景对象，`note` 没有特殊语义。
+  - `state` 对象里名为 `image` 的字段仍是普通文字，不会被当成图片，这样合法的 Jev 请求含义不变（HTTP 同理，只有顶层 `image` 是图片）。
+  - 兼容写法的图片片段：`url` 只接受 http(s) URL，`base64` 只接受不带 Data URI 前缀的纯 Base64。
+  - 本地路径只在调用方自己的 Python 进程里读取。
   - `image` 参数和 `state` 里的图片片段不能同时给，同时给按请求不合法处理。
   - 字符串的识别顺序：http(s) URL → data URI → 存在的本地文件 → base64。都不是时报请求不合法，并说明原因。
 - `score` 题型会以 422 拒绝。

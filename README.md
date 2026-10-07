@@ -10,7 +10,7 @@
 
 ## 使用
 
-给一张图和几道英文题，返回每道题的答案和校准过的概率。Python 调用可直接用 `image=` 传图；HTTP 请求和响应兼容 Jev `/v1/systemone`，通过 `state` 中的图片片段传图。
+给一张图和几道英文题，返回每道题的答案和校准过的概率。Python 和 HTTP 都用 `image` 传图、`state` 放文字背景；响应和 Jev `/v1/systemone` 完全相同。
 
 ### 安装
 
@@ -69,7 +69,7 @@ damage_result = decider.decide(
 
 `note` 是普通背景字段，没有专门的备注参数。Python 仍兼容 `state=[{"type": "image", "url": "https://..."}, "背景文字"]` 的旧写法，但不能同时通过 `image=` 和 `state` 图片片段传图。`state={"image": "photo.jpg"}` 中的字段按文字处理，不会加载图片。
 
-HTTP 仍使用下方的 `state` 图片片段，不支持顶层 `image` 参数或本地路径。HTTP 图片片段的 `url` 只接受 HTTP(S)，`base64` 只接受纯 Base64；Data URI 属于 Python `image=` 支持的格式。
+HTTP 请求的顶层 `image` 与此相同，但只接受 http(s) URL、Data URI 和纯 Base64，不读服务器上的本地路径。
 
 请求格式或图片编码不合法时抛出 `devision.InvalidRequest`（HTTP 服务里对应 422）。Python 读取本地文件失败时也可能抛出 `OSError`。
 
@@ -111,10 +111,8 @@ uv run devision-serve --checkpoint lukbit/devision --port 8000
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -d '{
-  "state": [
-    {"type": "image", "url": "https://example.com/kitchen.jpg"},
-    "customer says the order arrived damaged"
-  ],
+  "image": "https://example.com/kitchen.jpg",
+  "state": "customer says the order arrived damaged",
   "questions": {
     "has_fork": {"type": "noul", "instructions": "Is there a fork in the image?"},
     "room": {
@@ -126,7 +124,8 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 }'
 ```
 
-- **`state`**：字符串、对象或数组。数组里最多一张图：`{"type": "image", "url": "https://..."}` 或 `{"type": "image", "base64": "..."}`；其余元素是文字背景信息。不带图时等同于纯文本的 Laya。
+- **`image`**：图片，http(s) URL、Data URI（`data:image/png;base64,...`）或纯 Base64，和 Python 的 `image=` 对应；不带图时省略，等同于纯文本的 Laya。不接受服务器本地路径。
+- **`state`**：文字背景信息，字符串、对象或数组；没有就传 `""`。兼容 Jev 的旧写法仍可用：在 `state` 数组里放一个图片片段 `{"type": "image", "url": "https://..."}` 或 `{"type": "image", "base64": "..."}`，但不能和顶层 `image` 同时给。
 - **`questions`**：对象，键是你自己起的题目 id，可以一次问多道。
   - `noul`：是非题，`instructions` 写要判断的陈述或问题；`criteria` 可选，用 `{"false": "...", "true": "..."}` 改写两个选项的含义。
   - `choice`：单选题，`criteria` 的键是选项（2–255 个），值是 `null` 或一句说明，帮模型区分相近的选项。

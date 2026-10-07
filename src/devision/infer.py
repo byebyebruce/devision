@@ -106,17 +106,19 @@ def _open(raw: bytes) -> Image.Image:
     return img
 
 
-def _image_arg(image: Any) -> Image.Image:
-    """The `image=` argument of decide (Python only): a PIL image, bytes, a path, or a string that is an http(s)
-    URL, a data URI, an existing local file or base64 -- tried in that order."""
+def _image_arg(image: Any, files: bool = True) -> Image.Image:
+    """The `image=` argument of decide: a PIL image, bytes, a path, or a string that is an http(s) URL, a data URI,
+    an existing local file or base64 -- tried in that order. `files=False` (the HTTP request's `image`) never reads
+    a local file: a string is a URL, a data URI or base64."""
     if isinstance(image, Image.Image):
         return image
     if isinstance(image, (bytes, bytearray)):
         return _open(bytes(image))
-    if isinstance(image, os.PathLike):
+    if isinstance(image, os.PathLike) and files:
         image = os.fspath(image)
     if not isinstance(image, str) or not image.strip():
-        raise InvalidRequest("image must be a URL, data URI, file path, base64 string, bytes or PIL image")
+        raise InvalidRequest("image must be a URL, data URI, file path, base64 string, bytes or PIL image" if files
+                             else "image must be an http(s) URL, a data URI or base64")
     s = image.strip()
     if s.startswith(("http://", "https://")):
         return _open(_fetch(s))
@@ -125,7 +127,7 @@ def _image_arg(image: Any) -> Image.Image:
         if ";base64" not in head or not body:
             raise InvalidRequest("image data URI must be base64 (data:image/...;base64,...)")
         s = body
-    else:
+    elif files:
         try:
             is_file = len(s) < 4096 and os.path.isfile(os.path.expanduser(s))
         except (OSError, ValueError):
@@ -136,7 +138,8 @@ def _image_arg(image: Any) -> Image.Image:
     try:
         raw = base64.b64decode("".join(s.split()), validate=True)
     except (binascii.Error, ValueError):
-        raise InvalidRequest("image is not an http(s) URL, a data URI, an existing file or base64") from None
+        raise InvalidRequest("image is not an http(s) URL, a data URI, an existing file or base64" if files
+                             else "image is not an http(s) URL, a data URI or base64") from None
     return _open(raw)
 
 
@@ -256,9 +259,9 @@ class Decider:
         """Jev answers. Each question's probabilities are softmax(option logits / T), T being its
         (type, option count) bucket's temperature, or its type's when the bucket has none.
 
-        `image` (Python only, not part of the HTTP request): the picture as an http(s) URL, data URI, local file
-        path, base64 string, bytes, pathlib.Path or PIL image -- the same as an image part in `state`, which must
-        then not have one. A key named "image" inside an object state stays plain text, as in Jev."""
+        `image`: the picture as an http(s) URL, data URI, local file path, base64 string, bytes, pathlib.Path or
+        PIL image -- the same as an image part in `state`, which must then not have one. The HTTP request's
+        top-level `image` comes here too, as a URL, data URI or base64 only (never a server-side file). A key named "image" inside an object state stays plain text, as in Jev."""
         if not isinstance(questions, dict) or not questions:
             raise InvalidRequest("questions must be a non-empty object")
         for qid, q in questions.items():

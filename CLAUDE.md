@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 不可违背的约束
 
-- **API 与 Jev `/v1/systemone` 兼容**：唯一扩展是 `state` 数组可含 `{type:"image", base64|url}`。响应结构不得偏离 Jev。
+- **API 与 Jev `/v1/systemone` 兼容**：请求只在带图上扩展——顶层 `image`（http(s) URL、data URI 或 base64，从不读服务器本地文件；与 Python 的 `image=` 一致，负责人 2026-10-07），或兼容的 `state` 数组图片片段 `{type:"image", base64|url}`，两者不能同时给。响应结构不得偏离 Jev。
 - **`confidence = (n·p_max−1)/(n−1)`**（Jev 口径），不用 Laya 的熵式定义。
 - **CPU 是主要的推理场景之一，但不是硬约束**（负责人 2026-10-05）：模型应能在没有 GPU 的机器上跑，有 GPU 时也能用（`devision.load(device=...)`、`devision-serve --device`，默认 `auto`）。结构上的改动（更多视觉 token、更高输入分辨率、更大的编码器）可以考虑，不因"必须只用 CPU"而排除；但方案和结果里要实测并写明 CPU 延迟的变化，作为取舍依据。**我们自己的训练和评测用最快的设备**：训练在本地 Mac（MPS），`devision-eval` / `devision-calibrate` 默认 `--device auto`（CUDA > MPS > CPU），流水线把 YAML 的 `device` 传给评测；延迟数字只在要验证部署时用 `--device cpu` 单独测。
 - 当前仅：英文、单图、letterbox 到 256×256、题型 `noul`/`choice`（`score` 返回 422）。
@@ -31,7 +31,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 测试
 
 - 只从 seam 测外部行为：仓库内是 `decide(state, questions) → answers`；数据转换器的测试在 `scripts/data/`（`uv run pytest scripts/data`）。不测张量形状/层结构。
-- HTTP 层是 `decide` 的薄封装，不单测。
+- HTTP 层是 `decide` 的薄封装，只测它自己的规则（`tests/model/test_http_image.py`：顶层 `image` 与图片片段等价、不读服务器文件）。
 - 端到端冒烟（`tests/train/test_pipeline.py`）：tiny 模型 + 合成红/蓝图样本 → 训练 → 存盘 → 加载 → 经 decide 评测，CPU 上几秒，随 `pytest` 一起跑。真实模型的同一流程用下面的 train → eval 命令（训练在 Mac 上，`--device mps`）。
 - 评测集图片按 image id 从所有训练源剔除；VG（GQA）里约一半是 COCO 图，剔除时两套 id 都要对上（`convert.same_images`，映射来自 VG 的 `image_data.json`）。
 - v2 数据的图片用途互不重叠：训练文件、`dev_*` / `dev_mix`（训练中监测、选 checkpoint、拟合温度，按图片哈希约 3% 加稀疏切片补充）、`test_*` / `bench_pope`（最终测试：COCO val2014、VQAv2 val、GQA val、POPE，同时避开 v1 和 v2 的训练图片；不要放进训练中的周期性 `--eval`）。

@@ -80,14 +80,14 @@ pip install "devision @ git+https://github.com/byebyebruce/devision"
 devision-serve --checkpoint {{hub_repo}} --device cpu --port 8000
 ```
 
-Open `http://127.0.0.1:8000` for the demo. The server speaks the Jev-compatible `POST /v1/systemone` format; an image is an element of the `state` array:
+Open `http://127.0.0.1:8000` for the demo. `POST /v1/systemone` takes the same `image`, `state` and `questions` as Python and returns Jev's response format:
 
 ```json
-{"state": [{"type": "image", "url": "https://example.com/photo.jpg"}, "optional text"],
+{"image": "https://example.com/photo.jpg", "state": "optional text",
  "questions": {"has_fork": {"type": "noul", "instructions": "Is there a fork in the image?"}}}
 ```
 
-Use `{"type": "image", "base64": "..."}` for an uploaded picture. HTTP never reads server-local paths. Invalid requests and `score` questions return HTTP 422.
+Over HTTP, `image` is an http(s) URL, a data URI or base64; the server never reads its own files. Jev's image part in a `state` array (`{"type": "image", "url": ...}` or `{"type": "image", "base64": ...}`) also works; do not combine it with `image`. Invalid requests and `score` questions return HTTP 422.
 
 ## Architecture
 

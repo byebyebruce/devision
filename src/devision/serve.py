@@ -2,7 +2,8 @@
 
     devision-serve --checkpoint lukbit/devision --port 8000
 
-- POST /v1/systemone -> Decider.decide (the request and response follow Jev; an image is an image part in `state`)
+- POST /v1/systemone -> Decider.decide (the response follows Jev; the request is Jev's plus the picture, either a
+  top-level `image` -- an http(s) URL, data URI or base64, never a server-side file -- or an image part in `state`)
 - GET /health
 - the demo page at / with its assets and example images (--no-demo turns it off); the page talks to the API over
   HTTP only, like any other client.
@@ -15,7 +16,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from .infer import Decider, InvalidRequest
+from .infer import Decider, InvalidRequest, _image_arg
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 DEMO_ASSETS = {"demo.css": "text/css", "demo.js": "text/javascript", "scenes.js": "text/javascript"}
@@ -32,7 +33,10 @@ def create_app(decider: Decider) -> FastAPI:
         if not isinstance(body, dict):
             return JSONResponse({"error": "body must be a JSON object"}, status_code=422)
         try:
-            return decider.decide(state=body.get("state"), questions=body.get("questions"))
+            image = body.get("image")
+            if image is not None:
+                image = _image_arg(image if isinstance(image, str) else None, files=False)
+            return decider.decide(state=body.get("state"), questions=body.get("questions"), image=image)
         except InvalidRequest as e:
             return JSONResponse({"error": str(e)}, status_code=422)
 
