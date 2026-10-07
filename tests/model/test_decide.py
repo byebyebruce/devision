@@ -190,9 +190,9 @@ def test_a_checkpoint_saved_before_bucket_temperatures_answers_with_its_per_type
     decider = tiny_decider()
     decider.cfg.temperature = [2.0, 1.0, 0.6]
     decider.save(tmp_path / "ckpt")
-    config = json.loads((tmp_path / "ckpt" / "devision_config.json").read_text())
+    config = json.loads((tmp_path / "ckpt" / "config.json").read_text())
     del config["temperature_by_options"]   # as written before the field existed
-    (tmp_path / "ckpt" / "devision_config.json").write_text(json.dumps(config))
+    (tmp_path / "ckpt" / "config.json").write_text(json.dumps(config))
 
     old = Decider.load(tmp_path / "ckpt", device="cpu")   # the in-memory model is on the CPU: exact equality
     untempered = tiny_decider()
@@ -260,8 +260,8 @@ def test_an_image_key_in_an_object_state_stays_text_as_in_jev(decider, tmp_path)
     assert text["usage"]["input_tokens"] < seen["usage"]["input_tokens"]    # only image= adds the picture
 
 
-def test_a_checkpoint_whose_config_is_named_config_json_loads_the_same(decider, tmp_path):
-    """A Hugging Face release names the model config config.json; devision.load reads it like devision_config.json."""
+def test_an_older_checkpoint_with_devision_config_json_loads_the_same(decider, tmp_path):
+    """Checkpoints saved before 2026-10-07 name the model config devision_config.json; they still load."""
     import os
 
     import devision
@@ -269,5 +269,8 @@ def test_a_checkpoint_whose_config_is_named_config_json_loads_the_same(decider, 
     request = dict(state=[{"type": "image", "base64": image_b64()}],
                    questions={"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}})
     decider.save(tmp_path / "ckpt")
-    os.rename(tmp_path / "ckpt" / "devision_config.json", tmp_path / "ckpt" / "config.json")
+    os.rename(tmp_path / "ckpt" / "config.json", tmp_path / "ckpt" / "devision_config.json")
     assert devision.load(str(tmp_path / "ckpt")).predict(**request) == decider.decide(**request)
+    decider.save(tmp_path / "ckpt")                              # saving over it leaves one config, config.json
+    assert sorted(os.listdir(tmp_path / "ckpt"))[0] == "config.json"
+    assert not (tmp_path / "ckpt" / "devision_config.json").exists()

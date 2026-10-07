@@ -23,7 +23,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-CHECKPOINT = ["model.safetensors", "encoder", "vision", "tokenizer"]   # + devision_config.json, released as config.json
+CHECKPOINT = ["model.safetensors", "encoder", "vision", "tokenizer"]   # + the model config, released as config.json
 REQUIRED = CHECKPOINT + ["config.json", "README.md", "LICENSE", "provenance.json", ".gitattributes",
                          "evaluation/results.json", "evaluation/results.md"]
 GITATTRIBUTES = "*.safetensors filter=lfs diff=lfs merge=lfs -text\n*.bin filter=lfs diff=lfs merge=lfs -text\n"
@@ -297,9 +297,10 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
             shutil.copytree(src, dst)
         elif subprocess.call(["cp", "-c", src, dst], stderr=subprocess.DEVNULL) != 0:   # APFS clone, no 2 GB copy
             shutil.copy(src, dst)
-    # the model config is released as config.json: the Hub's standard name (it also counts downloads by it);
-    # devision.load reads either name
-    config = load_json(os.path.join(ckpt, "devision_config.json"))
+    # the model config is config.json (the Hub's standard name, which also counts downloads); a checkpoint saved
+    # before 2026-10-07 calls it devision_config.json
+    from devision.model.decider import config_path
+    config = load_json(config_path(ckpt))
     config["model_name"] = cfg["model_name"]
     write_json(os.path.join(out, "config.json"), config)
     res = results(round_dir, config)

@@ -165,7 +165,7 @@ def eval_main(argv=None) -> None:
                 f.write(json.dumps(r) + "\n")
 
 
-CHECKPOINT_FILES = ("devision_config.json", "model.safetensors", "encoder", "vision", "tokenizer")
+CHECKPOINT_FILES = ("config.json", "model.safetensors", "encoder", "vision", "tokenizer")   # config: or its legacy name
 
 
 def calibrate_main(argv=None) -> None:
@@ -185,7 +185,7 @@ def calibrate_main(argv=None) -> None:
     p.add_argument("--data-root", default="data")
     where = p.add_mutually_exclusive_group()
     where.add_argument("--out", help="new directory: a copy of the checkpoint with the refitted temperatures")
-    where.add_argument("--in-place", action="store_true", help="overwrite the checkpoint's devision_config.json")
+    where.add_argument("--in-place", action="store_true", help="overwrite the checkpoint's config.json")
     p.add_argument("--device", default="auto", help="cpu, cuda, mps, or auto (the fastest available; default)")
     p.add_argument("--min-bucket", type=int, default=MIN_BUCKET_ITEMS,
                    help="fewer questions than this in a bucket: no bucket temperature, the type's is used")
@@ -222,7 +222,7 @@ def calibrate_main(argv=None) -> None:
             src = snapshot_download(src)
         os.makedirs(a.out)
         for name in CHECKPOINT_FILES:
-            if name == CONFIG_FILE:      # a Hub release names it config.json; the copy keeps that name
+            if name == CONFIG_FILE:      # an older checkpoint calls it devision_config.json; the copy keeps that name
                 shutil.copyfile(config_path(src), os.path.join(a.out, os.path.basename(config_path(src))))
                 continue
             copy = shutil.copytree if os.path.isdir(os.path.join(src, name)) else shutil.copyfile

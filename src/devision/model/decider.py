@@ -18,17 +18,17 @@ from transformers import AutoConfig, AutoTokenizer, SiglipVisionConfig
 from .image import to_pixel_values
 from .network import ModelConfig, VisionDecisionModel, build_model, text_encoder
 
-CONFIG_FILE = "devision_config.json"      # what save() writes
-RELEASE_CONFIG_FILE = "config.json"        # the same file in a Hugging Face release (scripts/release/hf.py)
+CONFIG_FILE = "config.json"                       # the model config save() writes (the Hub's standard name)
+LEGACY_CONFIG_FILE = "devision_config.json"       # its name in checkpoints saved before 2026-10-07
 
 
 def config_path(path: str) -> str:
-    """The model config of a checkpoint directory: config.json (a Hub release) or devision_config.json."""
-    for name in (RELEASE_CONFIG_FILE, CONFIG_FILE):
+    """The model config of a checkpoint directory: config.json, or devision_config.json in an older checkpoint."""
+    for name in (CONFIG_FILE, LEGACY_CONFIG_FILE):
         p = os.path.join(path, name)
         if os.path.exists(p):
             return p
-    raise FileNotFoundError("no %s or %s in %s" % (RELEASE_CONFIG_FILE, CONFIG_FILE, path))
+    raise FileNotFoundError("no %s or %s in %s" % (CONFIG_FILE, LEGACY_CONFIG_FILE, path))
 
 
 class InvalidRequest(ValueError):
@@ -198,6 +198,9 @@ class Decider:
                   os.path.join(path, "model.safetensors"))
         with open(os.path.join(path, CONFIG_FILE), "w") as f:
             json.dump(self.cfg.to_dict(), f, indent=2)
+        legacy = os.path.join(path, LEGACY_CONFIG_FILE)
+        if os.path.exists(legacy):      # saved over an older checkpoint: one config only
+            os.remove(legacy)
 
     @classmethod
     def load(cls, path, device: str = "auto", revision: Optional[str] = None,

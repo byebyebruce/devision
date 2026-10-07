@@ -67,13 +67,13 @@ def test_calibrate_fits_dense_buckets_and_leaves_sparse_ones_to_the_type_tempera
 
     calibrate_main(["--checkpoint", str(ckpt), "--data", str(val), "--data-root", str(root), "--out", str(out)])
 
-    config = json.loads((out / "devision_config.json").read_text())
+    config = json.loads((out / "config.json").read_text())
     assert set(config["temperature_by_options"]) == {"noul:2", "choice:3-5"}   # no "choice:2": 45 questions
     report = json.loads((out / "calibrate_report.json").read_text())
     assert {"all", "noul:2", "choice:2", "choice:3-5"} <= set(report["metrics_after"])
     assert report["metrics_after"]["all"]["nll"] <= report["metrics_before"]["all"]["nll"] + 1e-6
     # the original checkpoint is untouched
-    assert json.loads((ckpt / "devision_config.json").read_text())["temperature_by_options"] == {}
+    assert json.loads((ckpt / "config.json").read_text())["temperature_by_options"] == {}
 
     calibrated = Decider.load(out)
     per_type_only = Decider.load(out)
@@ -90,11 +90,11 @@ def test_calibrate_fits_dense_buckets_and_leaves_sparse_ones_to_the_type_tempera
 
 def test_calibrate_without_a_destination_writes_nothing(checkpoint_and_data):
     ckpt, val, root = checkpoint_and_data
-    before = (ckpt / "devision_config.json").read_text()
+    before = (ckpt / "config.json").read_text()
 
     calibrate_main(["--checkpoint", str(ckpt), "--data", str(val), "--data-root", str(root)])
 
-    assert (ckpt / "devision_config.json").read_text() == before
+    assert (ckpt / "config.json").read_text() == before
     assert not (ckpt / "calibrate_report.json").exists()
 
 
@@ -110,19 +110,19 @@ def test_calibrate_in_place_rewrites_the_checkpoint_config(checkpoint_and_data):
 def test_calibrate_keeps_every_other_config_entry(checkpoint_and_data, tmp_path, mode):
     """Only the temperatures change: e.g. the "training" record of a published checkpoint survives."""
     ckpt, val, root = checkpoint_and_data
-    config = json.loads((ckpt / "devision_config.json").read_text())
+    config = json.loads((ckpt / "config.json").read_text())
     config["training"] = {"round": "v9-x", "stage": "stage2"}
     config["note"] = "kept"
-    (ckpt / "devision_config.json").write_text(json.dumps(config))
-    before = (ckpt / "devision_config.json").read_text()
+    (ckpt / "config.json").write_text(json.dumps(config))
+    before = (ckpt / "config.json").read_text()
     args = ["--checkpoint", str(ckpt), "--data", str(val), "--data-root", str(root)]
     target = tmp_path / "calibrated" if mode == "out" else ckpt
     calibrate_main(args + (["--out", str(target)] if mode == "out" else ["--in-place"]))
 
-    after = json.loads((target / "devision_config.json").read_text())
+    after = json.loads((target / "config.json").read_text())
     changed = {k for k in set(config) | set(after) if config.get(k) != after.get(k)}
     assert changed <= {"temperature", "temperature_by_options"} and "temperature_by_options" in changed
     assert after["training"] == {"round": "v9-x", "stage": "stage2"} and after["note"] == "kept"
     if mode == "out":
-        assert (ckpt / "devision_config.json").read_text() == before
+        assert (ckpt / "config.json").read_text() == before
     assert set(Decider.load(target).cfg.temperature_by_options) == {"noul:2", "choice:3-5"}
