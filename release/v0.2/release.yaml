@@ -2,7 +2,7 @@
 version: v0.2                          # HF tag; model version (training rounds are named separately)
 git_tag: model-v0.2                    # GitHub tag of the code this release is built and installed from
 model_name: devision-v0.2              # what the API reports as "model"
-round: runs/v11-v9b-recovery           # training round (current best; see docs/training-log.md)
+round: runs/v12-ext                    # training round (current best; see docs/training-log.md)
 stage: stage2
 hub_repo: lukbit/devision              # private until the project owner says to publish
 license: apache-2.0
@@ -14,4 +14,10 @@ datasets:                              # what the model was trained on (card met
   - derek-thomas/ScienceQA
   - HuggingFaceM4/the_cauldron
   - cambridgeltl/vsr_random
-cpu_latency: runs/r12/cpu/A.single.json   # devision-eval --device cpu --no-group on this checkpoint (structure screen, 2026-10-06)
+  - jxu124/objects365
+  - J1mb0o/e-SNLI-VE
+  - Vision-Flan/vision-flan_191-task_1k
+  - ryokamoi/VisOnlyQA_Train
+  - RyanWW/Super-CLEVR
+  - allenai/pixmo-count
+cpu_latency: runs/v12-ext/cpu/single.json   # devision-eval --device cpu --no-group, 4 threads, idle machine (2026-10-07)

@@ -1,153 +1,153 @@
 {
  "temperature": {
-  "choice": 1.987873911857605,
-  "noul": 1.816094160079956,
+  "choice": 1.9567745923995972,
+  "noul": 1.6382114887237549,
   "by_options": {
-   "choice:2": 2.15144419670105,
-   "choice:3-5": 1.945410132408142,
-   "noul:2": 1.816094160079956
+   "choice:2": 1.8836495876312256,
+   "choice:3-5": 1.979034662246704,
+   "noul:2": 1.6382114887237549
   }
  },
  "test_sets": {
   "test_exist": {
    "questions": 1120,
-   "accuracy": 0.9554,
-   "nll": 0.1315,
-   "ece": 0.022,
-   "accuracy_mismatched": 0.4991
+   "accuracy": 0.9384,
+   "nll": 0.162,
+   "ece": 0.0204,
+   "accuracy_mismatched": 0.4929
   },
   "test_vqa_choice": {
    "questions": 1420,
-   "accuracy": 0.8908,
-   "nll": 0.3065,
-   "ece": 0.0378,
-   "accuracy_mismatched": 0.3803
+   "accuracy": 0.8979,
+   "nll": 0.2706,
+   "ece": 0.0262,
+   "accuracy_mismatched": 0.3993
   },
   "test_size": {
    "questions": 1100,
-   "accuracy": 0.8573,
-   "nll": 0.3501,
-   "ece": 0.0213,
-   "accuracy_mismatched": 0.5018
+   "accuracy": 0.86,
+   "nll": 0.3503,
+   "ece": 0.036,
+   "accuracy_mismatched": 0.5045
   },
   "bench_pope": {
    "questions": 8676,
-   "accuracy": 0.8438,
-   "nll": 0.3928,
-   "ece": 0.0715,
-   "accuracy_mismatched": 0.5279
+   "accuracy": 0.8511,
+   "nll": 0.3702,
+   "ece": 0.0578,
+   "accuracy_mismatched": 0.527
   },
   "test_gqa": {
    "questions": 992,
-   "accuracy": 0.745,
-   "nll": 0.4527,
-   "ece": 0.0846,
-   "accuracy_mismatched": 0.5373
+   "accuracy": 0.7843,
+   "nll": 0.409,
+   "ece": 0.0419,
+   "accuracy_mismatched": 0.5323
   },
   "test_position": {
    "questions": 1274,
-   "accuracy": 0.8501,
-   "nll": 0.3585,
-   "ece": 0.0132,
-   "accuracy_mismatched": 0.5086
+   "accuracy": 0.8721,
+   "nll": 0.3045,
+   "ece": 0.0251,
+   "accuracy_mismatched": 0.4929
   },
   "test_vqa_yesno": {
    "questions": 1000,
-   "accuracy": 0.716,
-   "nll": 0.5669,
-   "ece": 0.0429,
-   "accuracy_mismatched": 0.514
+   "accuracy": 0.71,
+   "nll": 0.5768,
+   "ece": 0.0223,
+   "accuracy_mismatched": 0.518
   },
   "test_relation": {
    "questions": 1950,
-   "accuracy": 0.6513,
-   "nll": 0.5953,
-   "ece": 0.0333,
-   "accuracy_mismatched": 0.5138
+   "accuracy": 0.7108,
+   "nll": 0.5401,
+   "ece": 0.0471,
+   "accuracy_mismatched": 0.4841
   },
   "test_vsr": {
    "questions": 904,
-   "accuracy": 0.6527,
-   "nll": 0.6225,
-   "ece": 0.0328,
+   "accuracy": 0.6792,
+   "nll": 0.6155,
+   "ece": 0.0478,
    "accuracy_mismatched": 0.4812
   },
   "test_v7w": {
    "questions": 1000,
-   "accuracy": 0.712,
-   "nll": 0.7024,
-   "ece": 0.0401,
-   "accuracy_mismatched": 0.432
+   "accuracy": 0.721,
+   "nll": 0.6838,
+   "ece": 0.0302,
+   "accuracy_mismatched": 0.422
   },
   "test_count_fresh": {
    "questions": 600,
-   "accuracy": 0.7233,
-   "nll": 0.6402,
-   "ece": 0.0427,
-   "accuracy_mismatched": 0.32
+   "accuracy": 0.74,
+   "nll": 0.5763,
+   "ece": 0.0648,
+   "accuracy_mismatched": 0.5067
   }
  },
  "laya_vision": {
   "vqav2_yesno": {
    "questions": 4887,
    "laya_vision": 0.7172,
-   "devision": 0.7293,
-   "difference": 0.0121,
+   "devision": 0.7248,
+   "difference": 0.0076,
    "ci95": [
-    -0.004,
-    0.0273
+    -0.0087,
+    0.0233
    ]
   },
   "aokvqa": {
    "questions": 1138,
    "laya_vision": 0.5984,
-   "devision": 0.6028,
-   "difference": 0.0044,
+   "devision": 0.6257,
+   "difference": 0.0272,
    "ci95": [
-    -0.029,
-    0.0369
+    -0.0062,
+    0.0598
    ]
   },
   "scienceqa": {
    "questions": 2097,
    "laya_vision": 0.824,
-   "devision": 0.7473,
-   "difference": -0.0768,
+   "devision": 0.7663,
+   "difference": -0.0577,
    "ci95": [
-    -0.0982,
-    -0.0563
+    -0.0792,
+    -0.0362
    ]
   },
   "scienceqa_natural_needs_picture": {
    "questions": 323,
    "laya_vision": 0.6997,
-   "devision": 0.4675,
-   "difference": -0.2322,
+   "devision": 0.4551,
+   "difference": -0.2446,
    "ci95": [
-    -0.291,
-    -0.1703
+    -0.3158,
+    -0.1765
    ]
   },
   "pope": {
    "random": {
     "laya_vision_published": 0.836,
-    "devision": 0.8633
+    "devision": 0.8913
    },
    "popular": {
     "laya_vision_published": 0.819,
-    "devision": 0.849
+    "devision": 0.868
    },
    "adversarial": {
     "laya_vision_published": 0.777,
-    "devision": 0.8133
+    "devision": 0.7913
    }
   }
  },
  "cpu_latency": {
-  "p50": 145,
-  "p95": 159,
+  "p50": 148,
+  "p95": 161,
   "threads": 4,
   "machine": "Darwin arm64",
-  "source": "runs/r12/cpu/A.single.json"
+  "source": "runs/v12-ext/cpu/single.json"
  }
 }
