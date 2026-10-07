@@ -93,7 +93,7 @@ v0.2 与 laya-vision 201M 在同一批题上逐题比较（差值 95% 区间按�
 | A-OKVQA | 1,138 | 0.598 | **0.626** | +2.7 [−0.6, +6.0] |
 | ScienceQA（带图题） | 2,097 | **0.824** | 0.766 | −5.8 [−7.9, −3.6] |
 
-完整结果和每一轮的训练记录见 [`docs/training-log.md`](docs/training-log.md)，模型结构和设计见 [`docs/spec/vision-decision-mvp.md`](docs/spec/vision-decision-mvp.md)。
+完整结果和每一轮的训练记录见 [`docs/training-log.md`](https://github.com/byebyebruce/devision/blob/master/docs/training-log.md)，模型结构和设计见 [`docs/spec/vision-decision-mvp.md`](https://github.com/byebyebruce/devision/blob/master/docs/spec/vision-decision-mvp.md)。
 
 ## 训练
 
@@ -103,8 +103,8 @@ bash scripts/data/build_all.sh data              # 从公开数据集生成训�
 uv run devision-pipeline configs/scratch.yaml    # 从头训练
 ```
 
-每一轮训练是 `configs/` 里的一个 YAML，再跑同一个 YAML 是续跑。数据格式见 [`examples/train/`](examples/train/)，发布版 v0.2 的配置是 [`configs/v12-ext.yaml`](configs/v12-ext.yaml)。
+每一轮训练是 `configs/` 里的一个 YAML，再跑同一个 YAML 是续跑。数据格式见 [`examples/train/`](https://github.com/byebyebruce/devision/tree/master/examples/train)，发布版 v0.2 的配置是 [`configs/v12-ext.yaml`](https://github.com/byebyebruce/devision/blob/master/configs/v12-ext.yaml)。
 
 ## 许可
 
-代码和权重为 [Apache-2.0](LICENSE)。训练数据各有条款，部分非商用（如 ScienceQA），请按用途自行核对。
+代码和权重为 [Apache-2.0](https://github.com/byebyebruce/devision/blob/master/LICENSE)。训练数据各有条款，部分非商用（如 ScienceQA），请按用途自行核对。

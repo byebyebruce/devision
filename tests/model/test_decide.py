@@ -281,3 +281,11 @@ def test_an_image_url_that_is_not_http_is_refused_with_that_reason(decider):
     with pytest.raises(InvalidRequest) as e:
         decider.decide(state=[{"type": "image", "url": "/etc/passwd"}], questions=questions)
     assert str(e.value) == "image url must be http(s)"
+
+
+def test_the_package_exports_decider_invalid_request_and_its_version():
+    import devision
+
+    assert devision.Decider.__name__ == "Decider"
+    assert issubclass(devision.InvalidRequest, Exception)
+    assert devision.__version__ != "0+unknown"

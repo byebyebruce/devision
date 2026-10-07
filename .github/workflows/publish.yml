@@ -1,0 +1,109 @@
+name: Publish to PyPI
+
+# Push a tag v<package version> (e.g. v0.2.0) to build, check and publish the Python package.
+# Uses PyPI Trusted Publishing (no token stored in GitHub); setup in docs/pypi-release.md.
+# Model tags (model-v0.2) and the Hugging Face version (v0.2) do not trigger this.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and check distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.27"
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Check tag matches package version
+        run: |
+          uv run --no-project python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"Tag {tag!r} does not match package version: expected 'v{version}'")
+          print(f"Publishing devision {version}")
+          PY
+
+      - name: Build wheel and source distribution
+        run: uv build --no-sources
+
+      - name: Check package metadata
+        run: uvx twine check --strict dist/*
+
+      - name: Check installed wheel without model dependencies
+        run: |
+          uv venv "$RUNNER_TEMP/package-check"
+          uv pip install --python "$RUNNER_TEMP/package-check/bin/python" --no-deps dist/*.whl
+          "$RUNNER_TEMP/package-check/bin/python" -I - <<'PY'
+          import os
+          import sys
+          from importlib.metadata import distribution
+          from importlib.resources import files
+
+          import devision
+
+          package = distribution("devision")
+          expected = os.environ["GITHUB_REF_NAME"][1:]
+          assert package.version == expected, (package.version, expected)
+          assert devision.__version__ == expected, (devision.__version__, expected)
+          assert "torch" not in sys.modules, "Importing devision must not load torch"
+          for asset in ("demo.html", "demo.js", "demo.css", "scenes.js"):
+              assert files("devision").joinpath("static", asset).is_file(), f"Missing demo asset: {asset}"
+          assert any(ep.name == "devision-serve" for ep in package.entry_points)
+          print(f"Installed devision {package.version}; demo assets and CLI entry point present")
+          PY
+
+      - name: Check the source distribution holds only the package
+        run: |
+          unexpected=$(tar tzf dist/*.tar.gz | cut -d/ -f2 | sort -u | grep -vxE '|src|README.md|LICENSE|pyproject.toml|PKG-INFO|\.gitignore' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::Unexpected files in the source distribution: $unexpected"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Upload to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/devision
+    permissions:
+      id-token: write   # Trusted Publishing: PyPI accepts this workflow's OIDC token instead of a password
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: distributions
+          path: dist/
+
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

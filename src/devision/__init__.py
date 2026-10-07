@@ -2,20 +2,22 @@
 
     import devision
     decider = devision.load("path/or/hub-repo-id")
-    decider.predict(state=[{"type": "image", "url": "..."}],
-                    questions={"q": {"type": "noul", "instructions": "Is there a dog?"}})
-    decider.predict(state="optional text", image="photo.jpg",       # or a URL, base64, bytes, PIL image
+    decider.predict(image="photo.jpg", state="",       # or a URL, data URI, base64, bytes, PIL image
                     questions={"q": {"type": "noul", "instructions": "Is there a dog?"}})
 
 `import devision` is cheap: torch and the model code load on first use of `load`, `Decider` or
 `InvalidRequest`.
 """
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from .infer import Decider, InvalidRequest
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("devision")   # the one version is pyproject.toml's
+except PackageNotFoundError:  # running from a source tree that is not installed
+    __version__ = "0+unknown"
 
 
 def load(model_id_or_path: str, device: str = "auto", revision: Optional[str] = None,
@@ -31,9 +33,9 @@ def load(model_id_or_path: str, device: str = "auto", revision: Optional[str] = 
 
 def __getattr__(name: str) -> Any:
     if name in ("Decider", "InvalidRequest"):
-        from . import model
+        from . import infer
 
-        return getattr(model, name)
+        return getattr(infer, name)
     raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 
