@@ -3,7 +3,7 @@
     uv run python scripts/release/hf.py build   release/v0.2      # -> runs/release/v0.2/ (the HF repository layout)
     uv run python scripts/release/hf.py verify  release/v0.2      # files, hashes, card, load + smoke answers on CPU
     uv run python scripts/release/hf.py publish release/v0.2      # dry run: what would be uploaded where
-    uv run python scripts/release/hf.py publish release/v0.2 --push   # upload to the private repo, tag the version
+    uv run python scripts/release/hf.py publish release/v0.2 --push   # upload to the Hub repo, tag the version
     uv run python scripts/release/hf.py publish release/v0.2 --docs --push   # released already: update the card only
 
 release/<version>/release.yaml names the checkpoint (round + stage), the Hub repo, the version tag and the card
@@ -11,7 +11,8 @@ metadata; release/card_template.md + release/<version>/notes.md give the card's 
 comes from the round's evaluation files (runs/<round>/eval/), never typed by hand. Files committed to git under
 release/<version>/: results.json (the card's numbers), MANIFEST.json (size and SHA256 of every released file) and
 smoke.json (fixed requests on examples/ pictures and the answers the source checkpoint gives; `verify` requires the
-release to answer the same). The Hub repository is created private, and publishing stops if it is public.
+release to answer the same). A missing Hub repository is created private; making it public is the project owner's call, done by hand on the Hub
+(lukbit/devision is public since 2026-10-07).
 """
 import argparse
 import hashlib
@@ -390,11 +391,10 @@ def publish(release_dir: str, push: bool, folder: Optional[str] = None, docs: bo
     api = HfApi()
     repo = cfg["hub_repo"]
     exists = api.repo_exists(repo)
-    print("%s %s -> %s (%s), tag %s; %d files, %.2f GB" % ("PUSH" if push else "DRY RUN", folder, repo,
-          "exists" if exists else "will be created private", cfg["version"], len(files_of(folder)),
+    visibility = ("private" if api.model_info(repo).private else "public") if exists else "will be created private"
+    print("%s %s -> %s (%s), tag %s; %d files, %.2f GB" % ("PUSH" if push else "DRY RUN", folder, repo, visibility,
+          cfg["version"], len(files_of(folder)),
           sum(os.path.getsize(os.path.join(folder, f)) for f in files_of(folder)) / 1e9))
-    if exists and not api.model_info(repo).private:
-        raise SystemExit("%s is public: publishing is stopped (making it public is the project owner's call)" % repo)
     tags = {t.name for t in api.list_repo_refs(repo).tags} if exists else set()
     if docs and cfg["version"] not in tags:
         raise SystemExit("--docs updates a released version, but %s has no tag %s" % (repo, cfg["version"]))

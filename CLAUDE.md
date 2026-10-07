@@ -70,7 +70,7 @@ uv run devision-eval --checkpoint runs/x --data data/pope.jsonl --data-root data
 uv run devision-compare runs/a/x.details.jsonl runs/b/x.details.jsonl --by source   # 同一批题上两个模型的差值，按图片配对重采样给 95% 区间
 uv run devision-serve --checkpoint runs/x --port 8000   # POST /v1/systemone；浏览器打开 / 是 web demo（--no-demo 关闭）
 uv run devision-pipeline configs/v3-x.yaml [--dry-run] [--from STAGE] [--force]   # 按 YAML 跑一轮训练（再跑同一个 YAML 是续跑）
-uv run python scripts/release/hf.py build|verify|publish release/v0.2 [--push]   # 发布到 Hugging Face（手动；流程见 release/README.md）：build 生成 runs/release/<版本>/（权重、生成的模型卡、LICENSE、provenance、evaluation/）并把 results / MANIFEST / smoke 写回 release/<版本>/；verify 核对文件哈希、模型卡 metadata，并要求在 CPU 上和源 checkpoint 答案一致；publish 默认只演练，--push 才上传，仓库保持私有、已有版本 tag 不覆盖
+uv run python scripts/release/hf.py build|verify|publish release/v0.2 [--push]   # 发布到 Hugging Face（手动；流程见 release/README.md）：build 生成 runs/release/<版本>/（权重、生成的模型卡、LICENSE、provenance、evaluation/）并把 results / MANIFEST / smoke 写回 release/<版本>/；verify 核对文件哈希、模型卡 metadata，并要求在 CPU 上和源 checkpoint 答案一致；publish 默认只演练，--push 才上传（新建的仓库是私有的；`lukbit/devision` 已由负责人 2026-10-07 公开），已有版本 tag 不覆盖；`--docs` 只更新已发布版本的模型卡（main 分支，不动权重和 tag）
 ```
 
 - **每一轮训练评测完都要和 laya-vision 详细比较**（负责人 2026-10-05 定）：每轮的 YAML 都把四个 `bench_lv_*`（含 `controls: true`）放进 `evaluate.sets`；评完除了和上一轮逐题配对，还要跑 `uv run python scripts/lv_report.py runs/<轮次>/eval --prev runs/<上一轮>/eval`，生成 `eval/compare/laya_vision.{md,json}`（逐题配对的全部 / 未见过、逐题对照、同题校准、我们的看图收益、ScienceQA 按学科 / 选项数 / 必须看图切片、POPE 每档对公开分及 precision / recall），结论写进训练日志该轮一节和 `docs/research/laya-vision-gap.md`。只看某项专项能力、不算一轮的只评测实验不受此限。

@@ -4,7 +4,7 @@ git_tag: model-v0.2                    # GitHub tag of the code this release is 
 model_name: devision-v0.2              # what the API reports as "model"
 round: runs/v12-ext                    # training round (current best; see docs/training-log.md)
 stage: stage2
-hub_repo: lukbit/devision              # private until the project owner says to publish
+hub_repo: lukbit/devision              # public (project owner, 2026-10-07)
 license: apache-2.0
 base_model: [convaiinnovations/laya, google/siglip2-base-patch16-256]
 datasets:                              # what the model was trained on (card metadata)

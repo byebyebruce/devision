@@ -1,6 +1,6 @@
 # Releasing deVision to the Hugging Face Hub
 
-The GitHub repository is the source of truth; the Hub repository (`lukbit/devision`, private) holds what a release
+The GitHub repository is the source of truth; the Hub repository ([`lukbit/devision`](https://huggingface.co/lukbit/devision), public) holds what a release
 produces. Nothing is edited by hand on the Hub: the model card is generated, so a hand edit would be overwritten
 by the next release and `verify` reports it as a changed file.
 
@@ -38,8 +38,8 @@ hf download lukbit/devision --revision v0.2 --local-dir /tmp/devision-v0.2
 uv run python scripts/release/hf.py verify release/v0.2 --folder /tmp/devision-v0.2
 ```
 
-`publish` runs `verify` first, creates the repository **private** if it does not exist, stops if the repository
-is public (making it public is the project owner's decision, done by hand on the Hub), refuses to overwrite an
+`publish` runs `verify` first, creates the repository **private** if it does not exist (making it public is the project
+owner's decision, done by hand on the Hub), refuses to overwrite an
 existing version tag, uploads the folder in one commit whose message names the GitHub tag and commit, and tags it.
 
 Changing only the card of a released version (template or notes): `build`, `verify`, commit, then
