@@ -42,5 +42,9 @@ uv run python scripts/release/hf.py verify release/v0.2 --folder /tmp/devision-v
 is public (making it public is the project owner's decision, done by hand on the Hub), refuses to overwrite an
 existing version tag, uploads the folder in one commit whose message names the GitHub tag and commit, and tags it.
 
+Changing only the card of a released version (template or notes): `build`, `verify`, commit, then
+`publish release/v0.2 --docs --push`. It uploads only `README.md`, `MANIFEST.json` and `evaluation/` to the main
+branch; the weights and the version tag stay as they were, so `revision="v0.2"` keeps the card it was released with.
+
 A new release: copy `release/v0.2/` to `release/v0.3/`, change `release.yaml` (version, git_tag, round) and
 `notes.md`, and run the steps again.

@@ -4,6 +4,7 @@
     uv run python scripts/release/hf.py verify  release/v0.2      # files, hashes, card, load + smoke answers on CPU
     uv run python scripts/release/hf.py publish release/v0.2      # dry run: what would be uploaded where
     uv run python scripts/release/hf.py publish release/v0.2 --push   # upload to the private repo, tag the version
+    uv run python scripts/release/hf.py publish release/v0.2 --docs --push   # released already: update the card only
 
 release/<version>/release.yaml names the checkpoint (round + stage), the Hub repo, the version tag and the card
 metadata; release/card_template.md + release/<version>/notes.md give the card's prose. Every number in the card
@@ -374,7 +375,12 @@ def verify(release_dir: str, folder: Optional[str] = None, latency: bool = True)
     return problems
 
 
-def publish(release_dir: str, push: bool, folder: Optional[str] = None) -> None:
+DOCS = ["README.md", "MANIFEST.json", "evaluation/*"]   # what --docs uploads: the card and its tables, never weights
+
+
+def publish(release_dir: str, push: bool, folder: Optional[str] = None, docs: bool = False) -> None:
+    """Upload the release and tag it. `docs`: the version is already released; upload only the card, the manifest
+    and evaluation/ to the main branch, leaving the weights and the version tag as they are."""
     from huggingface_hub import HfApi
     cfg = release_config(release_dir)
     folder = folder or build_dir(cfg)
@@ -390,10 +396,18 @@ def publish(release_dir: str, push: bool, folder: Optional[str] = None) -> None:
     if exists and not api.model_info(repo).private:
         raise SystemExit("%s is public: publishing is stopped (making it public is the project owner's call)" % repo)
     tags = {t.name for t in api.list_repo_refs(repo).tags} if exists else set()
-    if cfg["version"] in tags:
-        raise SystemExit("tag %s already exists on %s: a release is never overwritten" % (cfg["version"], repo))
+    if docs and cfg["version"] not in tags:
+        raise SystemExit("--docs updates a released version, but %s has no tag %s" % (repo, cfg["version"]))
+    if not docs and cfg["version"] in tags:
+        raise SystemExit("tag %s already exists on %s: a release is never overwritten (--docs updates its card "
+                         "on the main branch)" % (cfg["version"], repo))
     if not push:
-        print("dry run: nothing uploaded; add --push to upload")
+        print("dry run: nothing uploaded; add --push to upload" + (" (--docs: only %s)" % ", ".join(DOCS) if docs else ""))
+        return
+    if docs:
+        commit = api.upload_folder(repo_id=repo, folder_path=folder, repo_type="model", allow_patterns=DOCS,
+                                   commit_message="deVision %s card (github %s)" % (cfg["version"], git_commit() or "?"))
+        print("updated the card of %s on main at %s; tag %s unchanged" % (repo, commit.oid, cfg["version"]))
         return
     if not exists:
         api.create_repo(repo, private=True, repo_type="model")
@@ -413,6 +427,8 @@ def main(argv=None):
     p.add_argument("--folder", help="the release folder (default runs/release/<version>); verify also takes a "
                                     "downloaded Hub snapshot here")
     p.add_argument("--push", action="store_true", help="publish: really upload (default: dry run)")
+    p.add_argument("--docs", action="store_true", help="publish: the version is released; update only the card, "
+                                                       "manifest and evaluation/ on main (no new tag)")
     a = p.parse_args(argv)
     if a.command == "build":
         build(a.release_dir, a.folder)
@@ -421,7 +437,7 @@ def main(argv=None):
         print("verify: OK" if not problems else "verify found:\n  " + "\n  ".join(problems))
         sys.exit(1 if problems else 0)
     else:
-        publish(a.release_dir, a.push, a.folder)
+        publish(a.release_dir, a.push, a.folder, a.docs)
 
 
 if __name__ == "__main__":

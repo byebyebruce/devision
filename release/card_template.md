@@ -2,143 +2,75 @@
 
 # deVision {{version}}
 
-**Image + typed questions → structured answers and calibrated probabilities.** deVision is a non-autoregressive visual decision model built from Laya's ModernBERT-large decision model and a SigLIP2 vision encoder. It scores the supplied options without generating text. Multiple questions about one image share a single image encoding.
+**Image + English questions → structured answers with calibrated probabilities.** deVision pairs a SigLIP2 vision encoder with Laya's ModernBERT decision model. It scores the options of yes/no (`noul`) and multiple-choice (`choice`) questions instead of generating text, follows the Jev answer format, and runs without a GPU. Several questions about one image share a single image encoding.
 
-This is release **{{version}}**. It supports English, one image per request, yes/no decisions (`noul`) and multiple-choice decisions (`choice`). Weights and code are released under the Apache-2.0 licence; see [Licence and data](#licence-and-data).
-
-## Install
+## Usage
 
 ```bash
 pip install "devision @ git+https://github.com/byebyebruce/devision"
 ```
-
-Python 3.11 or newer is required; the install includes the HTTP server and browser demo. If the model repository is private, authenticate first with `hf auth login` using an account that has access.
-
-## Python quickstart
 
 ```python
 import devision
 
-model = devision.load("{{hub_repo}}", revision="{{version}}", device="cpu")
+model = devision.load("{{hub_repo}}")   # latest release; revision="{{version}}" pins this one; device defaults to auto
 result = model.predict(
-    image="photo.jpg",  # an image path, an http(s) URL, base64, bytes or a PIL image
-    state="",           # text context; empty when there is none
+    image="photo.jpg",   # a path, an http(s) URL, a data URI, base64, bytes or a PIL image
+    state="",            # text context; "" when there is none
     questions={
         "has_fork": {"type": "noul", "instructions": "Is there a fork in the image?"},
-        "room": {
-            "type": "choice",
-            "instructions": "Which room is this?",
-            "criteria": {"kitchen": None, "bathroom": None, "bedroom": None},
-        },
+        "room": {"type": "choice", "instructions": "Which room is this?",
+                 "criteria": {"kitchen": None, "bathroom": None, "bedroom": None}},
     },
 )
-print(result["answers"]["has_fork"]["noul"])       # probability of yes
-print(result["answers"]["room"]["choice"])         # selected option
-print(result["answers"]["room"]["probabilities"])  # probability of each option
+print(result["answers"]["has_fork"]["noul"])        # probability of yes
+print(result["answers"]["room"]["probabilities"])   # one probability per option, summing to 1
 ```
 
-`model.decide(...)` takes the same arguments. Pin `revision="{{version}}"` so that later releases do not change your results. The default device is `auto` (CUDA, then MPS, then CPU).
-
-### Image input
-
-The Python `image=` argument accepts:
-
-| Input | Example |
-|---|---|
-| HTTP(S) URL | `image="https://example.com/photo.jpg"` |
-| Local path | `image="photo.jpg"` or `image=Path("photo.jpg")` |
-| Base64 data URI | `image="data:image/png;base64,..."` |
-| Plain base64 | `image=base64_string` |
-| Encoded image bytes | `image=image_bytes` (PNG / JPEG file contents) |
-| PIL image | `image=pil_image` |
-
-### Context
-
-`state` carries text context as a string, object or array, exactly as in Jev:
-
-```python
-result = model.decide(
-    image="photo.jpg",
-    state={"note": "The customer says this item arrived damaged."},
-    questions={"damaged": {"type": "noul", "instructions": "Is the item visibly damaged?"}},
-)
-```
-
-An `image` key inside an object state stays text: `state={"image": "photo.jpg"}` does not load the file. The Jev-compatible image part `state=[{"type": "image", "url": "https://..."}]` also works; do not combine it with `image=`.
-
-### Output
-
-- `noul`: the probability that the statement holds, between 0 and 1.
-- `choice`: the highest-probability option; `probabilities` covers every option and sums to 1.
-- `confidence` (choice) follows Jev: `(n * p_max - 1) / (n - 1)`.
-- Invalid requests raise `devision.InvalidRequest`.
-
-## HTTP API and browser demo
+HTTP server with a browser demo at `http://127.0.0.1:8000`:
 
 ```bash
-pip install "devision @ git+https://github.com/byebyebruce/devision"
-devision-serve --checkpoint {{hub_repo}} --device cpu --port 8000
+devision-serve --checkpoint {{hub_repo}} --port 8000
+curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' \
+  -d '{"image": "https://example.com/photo.jpg", "state": "", "questions": {"has_fork": {"type": "noul", "instructions": "Is there a fork in the image?"}}}'
 ```
 
-Open `http://127.0.0.1:8000` for the demo. `POST /v1/systemone` takes the same `image`, `state` and `questions` as Python and returns Jev's response format:
+Over HTTP, `image` is an http(s) URL, a data URI or base64; the server never reads its own files. Responses follow Jev; `confidence` for `choice` is `(n * p_max - 1) / (n - 1)`. Invalid requests return 422 (`devision.InvalidRequest` in Python).
 
-```json
-{"image": "https://example.com/photo.jpg", "state": "optional text",
- "questions": {"has_fork": {"type": "noul", "instructions": "Is there a fork in the image?"}}}
-```
-
-Over HTTP, `image` is an http(s) URL, a data URI or base64; the server never reads its own files. Jev's image part in a `state` array (`{"type": "image", "url": ...}` or `{"type": "image", "base64": ...}`) also works; do not combine it with `image`. Invalid requests and `score` questions return HTTP 422.
-
-## Architecture
-
-| Component | |
-|---|---|
-| Vision encoder | Frozen SigLIP2-B/16, {{image_size}} × {{image_size}} input, about 93M parameters |
-| Image preprocessing | Aspect-preserving resize and letterbox padding |
-| Connector | {{shuffle}} × {{shuffle}} patch grouping, then LayerNorm → Linear → GELU → Linear |
-| Visual sequence | {{visual_tokens}} visual tokens, inserted after `[CLS]` |
-| Text encoder | Laya-initialised ModernBERT-large, about 395M parameters |
-| Decision head | Laya's two Transformer layers and option scorer, about 27M parameters |
-| Checkpoint | About 518M parameters, FP32, {{weights_gb}} GB of weights (LoRA merged) |
-
-Each option is scored at its `[MASK]` position; a temperature-scaled softmax turns the scores into probabilities.
-
-## Training and calibration
-
-{{training}}
-
-Temperatures fitted on the project's calibration set (a question's type / option-count bucket first, else its type):
-
-{{temperature_table}}
-
-Calibration changes probabilities, not visual ability. Validate confidence thresholds on your own data.
+**Good for:** whether something is present and how many (ask counts as a choice), what kind of thing or scene, colours and materials, up/down and left/right in photos (as a choice). **Not for:** comparing two places on a diagram, chart or map; relative-position yes/no questions; small text; other languages or several images. Use the probabilities as thresholds and send uncertain cases to a person or a stronger model, after checking the thresholds on your own data.
 
 ## Evaluation
 
-Results of this checkpoint through `decide`, with the fitted temperatures; ECE uses 15 bins. *Mismatched* is the accuracy when every picture is swapped for an unrelated one (how much the answer depends on the picture). The project test sets use held-out pictures; they are project-specific subsets or generated questions, not official leaderboard scores, and several have informed decisions across training rounds.
+Accuracy through `decide` with the fitted temperatures. *Mismatched*: the same questions with every picture swapped for an unrelated one. Test sets use held-out pictures; they are project subsets, not official leaderboard scores.
 
 {{eval_table}}
 
-### Comparison with Laya Vision 201M
-
-Laya Vision's published per-question predictions on the same questions; differences in percentage points with 95% intervals from paired resampling by picture. We did not rerun Laya Vision.
+Against Laya Vision 201M on the same questions (its published per-question predictions; difference in points, 95% interval from paired resampling by picture):
 
 {{laya_table}}
 
 {{pope_line}}
 
-CPU latency: {{latency}}. Several questions about one picture in one request share the image encoding, so each extra question costs less.
+CPU latency: {{latency}}.
+
+## Model
+
+| | |
+|---|---|
+| Vision | Frozen SigLIP2-B/16, {{image_size}} × {{image_size}} letterboxed input, {{visual_tokens}} visual tokens after a {{shuffle}} × {{shuffle}} merge and an MLP projector |
+| Decision | Laya-initialised ModernBERT-large and Laya's decision head; each option is scored at its `[MASK]`, then a temperature-scaled softmax |
+| Size | About 518M parameters, FP32, {{weights_gb}} GB (LoRA merged) |
+
+{{training}}
 
 ## Limitations
 
 {{limitations}}
 
-## Licence and data
+## Licence
 
-The weights and the code are released under the **Apache-2.0** licence, the licence of the three base models ([Laya](https://huggingface.co/convaiinnovations/laya), [SigLIP2](https://huggingface.co/google/siglip2-base-patch16-256), [ModernBERT](https://huggingface.co/answerdotai/ModernBERT-large)). The training data come from public datasets with their own terms, some of them non-commercial (for example ScienceQA, CC BY-NC-SA 4.0) or covering the pictures separately (COCO / Flickr images). Whether such terms carry over to trained weights is not settled; check the datasets listed in this card's metadata against your use.
+Weights and code: Apache-2.0, like the three base models ([Laya](https://huggingface.co/convaiinnovations/laya), [SigLIP2](https://huggingface.co/google/siglip2-base-patch16-256), [ModernBERT](https://huggingface.co/answerdotai/ModernBERT-large)). The training datasets (listed in this card's metadata) have their own terms, some non-commercial (e.g. ScienceQA, CC BY-NC-SA 4.0); check them against your use.
 
 ## Links
 
-- [Code, training configurations and experiment records](https://github.com/byebyebruce/devision) — this release is tag `{{git_tag}}`
-- [Evaluation details](evaluation/results.md) · [metrics](evaluation/results.json) · [provenance](provenance.json)
-- [Laya decision model](https://huggingface.co/convaiinnovations/laya) · [SigLIP2](https://huggingface.co/google/siglip2-base-patch16-256) · [Laya Vision](https://github.com/r33drichards/laya-vision)
+[Code and training records](https://github.com/byebyebruce/devision) (this release: tag `{{git_tag}}`) · [evaluation details](evaluation/results.md) · [provenance](provenance.json) · [Laya Vision](https://github.com/r33drichards/laya-vision)
