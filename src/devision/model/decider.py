@@ -18,7 +18,17 @@ from transformers import AutoConfig, AutoTokenizer, SiglipVisionConfig
 from .image import to_pixel_values
 from .network import ModelConfig, VisionDecisionModel, build_model, text_encoder
 
-CONFIG_FILE = "devision_config.json"
+CONFIG_FILE = "devision_config.json"      # what save() writes
+RELEASE_CONFIG_FILE = "config.json"        # the same file in a Hugging Face release (scripts/release/hf.py)
+
+
+def config_path(path: str) -> str:
+    """The model config of a checkpoint directory: config.json (a Hub release) or devision_config.json."""
+    for name in (RELEASE_CONFIG_FILE, CONFIG_FILE):
+        p = os.path.join(path, name)
+        if os.path.exists(p):
+            return p
+    raise FileNotFoundError("no %s or %s in %s" % (RELEASE_CONFIG_FILE, CONFIG_FILE, path))
 
 
 class InvalidRequest(ValueError):
@@ -201,7 +211,7 @@ class Decider:
             from huggingface_hub import snapshot_download
 
             path = snapshot_download(path, revision=revision, token=token)
-        with open(os.path.join(path, CONFIG_FILE)) as f:
+        with open(config_path(path)) as f:
             cfg = ModelConfig.from_dict(json.load(f))
         model = build_model(AutoConfig.from_pretrained(os.path.join(path, "encoder")),
                             SiglipVisionConfig.from_pretrained(os.path.join(path, "vision")), cfg)

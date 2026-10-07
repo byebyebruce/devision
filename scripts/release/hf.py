@@ -23,8 +23,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-CHECKPOINT = ["model.safetensors", "devision_config.json", "encoder", "vision", "tokenizer"]
-REQUIRED = CHECKPOINT + ["README.md", "LICENSE", "config.json", "provenance.json", ".gitattributes",
+CHECKPOINT = ["model.safetensors", "encoder", "vision", "tokenizer"]   # + devision_config.json, released as config.json
+REQUIRED = CHECKPOINT + ["config.json", "README.md", "LICENSE", "provenance.json", ".gitattributes",
                          "evaluation/results.json", "evaluation/results.md"]
 GITATTRIBUTES = "*.safetensors filter=lfs diff=lfs merge=lfs -text\n*.bin filter=lfs diff=lfs merge=lfs -text\n"
 TEST_SETS = [("test_exist", "COCO object presence"), ("test_vqa_choice", "VQAv2 multiple choice"),
@@ -297,12 +297,11 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
             shutil.copytree(src, dst)
         elif subprocess.call(["cp", "-c", src, dst], stderr=subprocess.DEVNULL) != 0:   # APFS clone, no 2 GB copy
             shutil.copy(src, dst)
-    config = load_json(os.path.join(out, "devision_config.json"))
+    # the model config is released as config.json: the Hub's standard name (it also counts downloads by it);
+    # devision.load reads either name
+    config = load_json(os.path.join(ckpt, "devision_config.json"))
     config["model_name"] = cfg["model_name"]
-    write_json(os.path.join(out, "devision_config.json"), config)
-    write_json(os.path.join(out, "config.json"), {"library_name": "devision", "model_type": "devision",
-                                                  "version": cfg["version"], "weights": "model.safetensors",
-                                                  "devision_config": "devision_config.json"})
+    write_json(os.path.join(out, "config.json"), config)
     res = results(round_dir, config)
     res["cpu_latency"] = cpu_latency(cfg.get("cpu_latency"), os.path.join(cfg["round"], cfg["stage"]))
     write_json(os.path.join(out, "evaluation", "results.json"), res)
@@ -356,9 +355,9 @@ def verify(release_dir: str, folder: Optional[str] = None, latency: bool = True)
     smoke = load_json(os.path.join(release_dir, "smoke.json"))
     got_answers = smoke_answers(folder, smoke["questions"])
     problems += ["smoke: %s" % d for d in same_answers(smoke["answers"], got_answers, smoke["tolerance"])]
-    config = load_json(os.path.join(folder, "devision_config.json"))
+    config = load_json(os.path.join(folder, "config.json"))
     if config.get("model_name") != cfg["model_name"]:
-        problems.append("devision_config model_name %r, release says %r" % (config.get("model_name"), cfg["model_name"]))
+        problems.append("config.json model_name %r, release says %r" % (config.get("model_name"), cfg["model_name"]))
     if latency and not problems:
         import devision
         d = devision.load(folder, device="cpu")

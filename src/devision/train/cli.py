@@ -176,7 +176,7 @@ def calibrate_main(argv=None) -> None:
     import shutil
 
     from ..model import Decider
-    from ..model.decider import CONFIG_FILE
+    from ..model.decider import CONFIG_FILE, config_path
     from .rlcd import MIN_BUCKET_ITEMS, calibrate
 
     p = argparse.ArgumentParser(description=calibrate_main.__doc__)
@@ -222,19 +222,22 @@ def calibrate_main(argv=None) -> None:
             src = snapshot_download(src)
         os.makedirs(a.out)
         for name in CHECKPOINT_FILES:
+            if name == CONFIG_FILE:      # a Hub release names it config.json; the copy keeps that name
+                shutil.copyfile(config_path(src), os.path.join(a.out, os.path.basename(config_path(src))))
+                continue
             copy = shutil.copytree if os.path.isdir(os.path.join(src, name)) else shutil.copyfile
             copy(os.path.join(src, name), os.path.join(a.out, name))
     # rewrite only the temperatures: other entries (e.g. the "training" record of a published checkpoint)
     # are not ModelConfig fields and would otherwise be lost
-    with open(os.path.join(target, CONFIG_FILE)) as f:
+    with open(config_path(target)) as f:
         saved = json.load(f)
     saved["temperature"] = list(decider.cfg.temperature)
     saved["temperature_by_options"] = dict(decider.cfg.temperature_by_options)
-    with open(os.path.join(target, CONFIG_FILE), "w") as f:
+    with open(config_path(target), "w") as f:
         json.dump(saved, f, indent=2)
     with open(os.path.join(target, "calibrate_report.json"), "w") as f:
         json.dump(report, f, indent=2)
-    print("wrote %s" % os.path.join(target, CONFIG_FILE))
+    print("wrote %s" % config_path(target))
 
 
 def compare_main(argv=None) -> None:

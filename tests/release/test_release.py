@@ -42,7 +42,8 @@ def test_build_lays_out_the_hub_repository_and_verify_accepts_it(release):
     text = (out / "README.md").read_text()
     meta = yaml.safe_load(text.split("---")[1])
     assert meta["license"] == "apache-2.0" and meta["library_name"] == "devision" and "{{" not in text
-    assert json.loads((out / "devision_config.json").read_text())["model_name"] == "devision-v9.9"
+    assert json.loads((out / "config.json").read_text())["model_name"] == "devision-v9.9"
+    assert not (out / "devision_config.json").exists()          # released under the Hub's standard name
     assert (rel / "MANIFEST.json").exists() and (rel / "smoke.json").exists() and (rel / "results.json").exists()
     assert hf.verify(str(rel), str(out), latency=False) == []
 

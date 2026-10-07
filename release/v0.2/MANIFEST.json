@@ -12,10 +12,6 @@
   "sha256": "ed7e8764ea8ca1b7e6777d85d3a87e70eb7724a4e8182560f7a0b94b2ad2a13a"
  },
  "config.json": {
-  "size": 156,
-  "sha256": "1c76e28a761d8f605345e0924c86863f14d0556595a8202cf9af8a5e82d62bb8"
- },
- "devision_config.json": {
   "size": 348,
   "sha256": "28883209704a280de31fc19088a276115a793ac678b96a91eff1a569f4d42273"
  },
@@ -37,7 +33,7 @@
  },
  "provenance.json": {
   "size": 1196,
-  "sha256": "09807d17d512079a4cc38583787e24e9990fe28f2d43b627692026691d331c03"
+  "sha256": "bbd57252c4ffe77c58018dcac6bb66419dbf4bb3445d2c0119685180f4a17aaf"
  },
  "tokenizer/tokenizer.json": {
   "size": 3583228,

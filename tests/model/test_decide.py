@@ -258,3 +258,16 @@ def test_an_image_key_in_an_object_state_stays_text_as_in_jev(decider, tmp_path)
     text = decider.decide(state={"image": "a red sofa", "note": "n"}, questions=questions)
     seen = decider.decide(state={"image": "a red sofa", "note": "n"}, questions=questions, image=image_b64())
     assert text["usage"]["input_tokens"] < seen["usage"]["input_tokens"]    # only image= adds the picture
+
+
+def test_a_checkpoint_whose_config_is_named_config_json_loads_the_same(decider, tmp_path):
+    """A Hugging Face release names the model config config.json; devision.load reads it like devision_config.json."""
+    import os
+
+    import devision
+
+    request = dict(state=[{"type": "image", "base64": image_b64()}],
+                   questions={"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}})
+    decider.save(tmp_path / "ckpt")
+    os.rename(tmp_path / "ckpt" / "devision_config.json", tmp_path / "ckpt" / "config.json")
+    assert devision.load(str(tmp_path / "ckpt")).predict(**request) == decider.decide(**request)
