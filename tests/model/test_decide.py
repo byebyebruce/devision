@@ -274,3 +274,10 @@ def test_an_older_checkpoint_with_devision_config_json_loads_the_same(decider, t
     decider.save(tmp_path / "ckpt")                              # saving over it leaves one config, config.json
     assert sorted(os.listdir(tmp_path / "ckpt"))[0] == "config.json"
     assert not (tmp_path / "ckpt" / "devision_config.json").exists()
+
+
+def test_an_image_url_that_is_not_http_is_refused_with_that_reason(decider):
+    questions = {"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}}
+    with pytest.raises(InvalidRequest) as e:
+        decider.decide(state=[{"type": "image", "url": "/etc/passwd"}], questions=questions)
+    assert str(e.value) == "image url must be http(s)"

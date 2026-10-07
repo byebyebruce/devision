@@ -66,6 +66,8 @@ def _load_image(part: Dict[str, Any]) -> Image.Image:
             raise InvalidRequest("image base64 must be a string")
         img = Image.open(io.BytesIO(raw))
         img.load()
+    except InvalidRequest:      # already says what is wrong (e.g. a url that is not http(s))
+        raise
     except (binascii.Error, OSError, ValueError, Image.DecompressionBombError) as e:
         raise InvalidRequest("image could not be decoded: %s" % e) from None
     return img
