@@ -8,8 +8,8 @@
   "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
  },
  "README.md": {
-  "size": 13072,
-  "sha256": "e7b4def2c7d25c5fd694802cd26e342f6dcb536aa5b2021af10c3d8e2fcb8102"
+  "size": 13050,
+  "sha256": "ed7e8764ea8ca1b7e6777d85d3a87e70eb7724a4e8182560f7a0b94b2ad2a13a"
  },
  "config.json": {
   "size": 156,
@@ -37,7 +37,7 @@
  },
  "provenance.json": {
   "size": 1196,
-  "sha256": "bd134887ec2c269fb4a085f8e7b2cca462da5b8dd941b9e9bfe7e4de769d0a3b"
+  "sha256": "09807d17d512079a4cc38583787e24e9990fe28f2d43b627692026691d331c03"
  },
  "tokenizer/tokenizer.json": {
   "size": 3583228,

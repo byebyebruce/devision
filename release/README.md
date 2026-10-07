@@ -17,7 +17,8 @@ by the next release and `verify` reports it as a changed file.
 | `runs/release/<version>/` | no | the built Hub repository (weights, configs, card, `LICENSE`, `provenance.json`, `evaluation/`) |
 
 Versions are model versions (`v0.2`), separate from training rounds (`v11-v9b-recovery`). Hub tag `v0.2` ↔ GitHub
-tag `model-v0.2`; the card installs the code from that tag and loads the weights with `revision="v0.2"`.
+tag `model-v0.2` (the code the release was built and verified with); the card installs the latest code and loads
+the weights with `revision="v0.2"`.
 
 ## Steps (manual)
 
