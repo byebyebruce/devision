@@ -7,7 +7,7 @@
 ## Usage
 
 ```bash
-pip install "devision @ git+https://github.com/byebyebruce/devision"
+pip install devision
 ```
 
 ```python

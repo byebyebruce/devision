@@ -7,8 +7,8 @@
 ## 安装
 
 ```bash
-pip install "devision @ git+https://github.com/byebyebruce/devision"            # 推理 + HTTP 服务
-pip install "devision[train] @ git+https://github.com/byebyebruce/devision"     # 再加训练
+pip install devision            # 推理 + HTTP 服务
+pip install "devision[train]"   # 再加训练
 ```
 
 需要 Python 3.11+。在本仓库里开发用 `uv sync`。

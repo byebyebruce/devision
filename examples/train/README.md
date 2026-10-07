@@ -6,7 +6,7 @@
 uv run devision-pipeline configs/example.yaml    # CPU 上约 1–2 分钟；首次会下载基础模型（约 2.5 GB）
 ```
 
-需要训练依赖：本仓库里 `uv sync` 已包含；单独安装时用 `pip install "devision[train] @ git+https://github.com/byebyebruce/devision"`。
+需要训练依赖：本仓库里 `uv sync` 已包含；单独安装时用 `pip install "devision[train]"`。
 
 它依次跑阶段 1（对齐）、阶段 2（决策题）和评测，产出 `runs/example/`。数据只有十几条，模型学不到东西，只用来确认格式和流程。真实规模的从头训练见 `configs/scratch.yaml`，发布版 v0.2 的最后一轮见 `configs/v12-ext.yaml`，每一轮的数据和结果见 `docs/training-log.md`。
 
