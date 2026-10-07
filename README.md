@@ -10,7 +10,7 @@
 
 ## 使用
 
-给一张图和几道英文题，返回每道题的答案和校准过的概率。可以起 HTTP 服务，也可以在 Python 里直接调用。请求和响应格式与 Jev `/v1/systemone` 相同，唯一的扩展是 `state` 里可以放一张图。
+给一张图和几道英文题，返回每道题的答案和校准过的概率。Python 调用可直接用 `image=` 传图；HTTP 请求和响应兼容 Jev `/v1/systemone`，通过 `state` 中的图片片段传图。
 
 ### 安装
 
@@ -31,11 +31,12 @@ pip install "devision[train] @ git+https://github.com/byebyebruce/devision"     
 ```python
 import devision
 
-decider = devision.load("runs/v1-release-0.1/stage2b")   # 本地 checkpoint 目录，或 Hugging Face 仓库 id
-# devision.load("user/repo", revision="v0.1", token="hf_...")   # 固定版本 / 私有仓库
+decider = devision.load("lukbit/devision", revision="v0.2")   # Hugging Face 上的发布版；也可传本地 checkpoint 目录
+# device 默认 auto（CUDA > MPS > CPU），可指定 device="cpu"；私有仓库先 hf auth login，或传 token="hf_..."
 
 result = decider.predict(            # 和 decider.decide(...) 完全相同，predict 是 Laya 的叫法
-    state=[{"type": "image", "url": "https://example.com/kitchen.jpg"}],
+    image="photo.jpg",               # 换成你的图片路径，也可传 http(s) URL
+    state="",                        # 必填；没有补充文字时传空字符串
     questions={
         "has_fork": {"type": "noul", "instructions": "Is there a fork in the image?"},
         "room": {"type": "choice", "instructions": "Which room is this?",
@@ -44,24 +45,37 @@ result = decider.predict(            # 和 decider.decide(...) 完全相同，pr
 )
 ```
 
-在 Python 里也可以用 `image` 参数直接传图，`state` 里只放文字。它接受 http(s) URL、本地文件路径、base64、data URI、`bytes`、`pathlib.Path` 或 `PIL.Image`，效果和在 `state` 里放图片片段一样：
+`image` 接受以下输入，库会自动识别；`predict` 和 `decide` 均支持：
+
+| 输入 | 示例 |
+|---|---|
+| HTTP(S) URL | `image="https://example.com/photo.jpg"`（换成真实图片地址） |
+| 本地文件路径 | `image="photo.jpg"` 或 `image=Path("photo.jpg")`（需 `from pathlib import Path`） |
+| Data URI | `image="data:image/png;base64,..."`（省略处为完整编码） |
+| 纯 Base64 | `image=base64_string`（不带 Data URI 前缀） |
+| 图片文件的字节 | `image=image_bytes`（如 PNG/JPEG 文件内容） |
+| PIL 图片 | `image=pil_image` |
+
+`state` 是必填的背景信息，可以是字符串、对象或数组；没有背景信息时用 `state=""`。例如需要附带备注时：
 
 ```python
-result = decider.decide(
+damage_result = decider.decide(
     state={"note": "The customer says this item arrived damaged."},
     image="photo.jpg",                   # 或 "https://...", bytes, PIL.Image ...
     questions={"damaged": {"type": "noul", "instructions": "Is the item visibly damaged?"}},
 )
 ```
 
-这只是 Python 调用的便利写法。HTTP 请求仍用上面 Jev 兼容的 `state` 图片片段；`state` 对象里叫 `image` 的字段按普通文字处理，HTTP 接口也不接受本地路径。
+`note` 是普通背景字段，没有专门的备注参数。Python 仍兼容 `state=[{"type": "image", "url": "https://..."}, "背景文字"]` 的旧写法，但不能同时通过 `image=` 和 `state` 图片片段传图。`state={"image": "photo.jpg"}` 中的字段按文字处理，不会加载图片。
 
-请求不合法时抛出 `devision.InvalidRequest`（HTTP 服务里对应 422）。
+HTTP 仍使用下方的 `state` 图片片段，不支持顶层 `image` 参数或本地路径。HTTP 图片片段的 `url` 只接受 HTTP(S)，`base64` 只接受纯 Base64；Data URI 属于 Python `image=` 支持的格式。
+
+请求格式或图片编码不合法时抛出 `devision.InvalidRequest`（HTTP 服务里对应 422）。Python 读取本地文件失败时也可能抛出 `OSError`。
 
 ### 启动 HTTP 服务
 
 ```bash
-devision-serve --checkpoint runs/v1-release-0.1/stage2b --port 8000
+devision-serve --checkpoint lukbit/devision --revision v0.2 --port 8000
 ```
 
 | 参数 | 作用 |
@@ -76,21 +90,21 @@ devision-serve --checkpoint runs/v1-release-0.1/stage2b --port 8000
 接口：
 
 - `POST /v1/systemone`：做决策，见下文。
-- `GET /health`：返回 `{"status": "ok", "model": "devision-0.1"}`。
+- `GET /health`：返回 `{"status": "ok", "model": "devision-v0.2"}`。
 - `GET /`：web demo，包含照片与合成示例场景、图片上传、多题编辑和概率卡片（`--no-demo` 关闭）。支持水平镜像／无图对照、查看请求响应与导出结果；对照会顺序发送两次请求，不是自动评测。
 
 Demo 的中文界面提供物体、动作、计数、颜色、大小、空间关系及磁铁示意图等探索入口；问题和选项仍使用英文。运行后才展示模型实际返回的结果，修改输入会标记已有结果过期。左右关系和科学示意图用于观察能力边界，不保证示例答对。
 
-本地体验当前 V8 checkpoint：
+在本仓库里体验（发布版 v0.2，或本地的同一个 checkpoint `runs/v12-ext/stage2`）：
 
 ```bash
-uv run devision-serve --checkpoint runs/v11-v9b-recovery/stage2 --port 8000
+uv run devision-serve --checkpoint lukbit/devision --revision v0.2 --port 8000
 # 浏览器打开 http://127.0.0.1:8000
 ```
 
 `--examples <目录>` 可以替换照片示例（默认 `examples/`）；目录不存在或为空时仍可使用内置合成示例和上传功能。纯前端资源随 Python 包分发，不需要 Node 构建或访问外部 CDN。
 
-自动用最快的设备，没有 GPU 的机器用 CPU 也能跑（Mac CPU 上单题大约 0.2 秒）；同一请求里的多道题共用一次图片编码。
+自动用最快的设备，没有 GPU 的机器用 CPU 也能跑（Mac CPU 4 线程单题约 0.15 秒；同图多题时每题约 0.09 秒）；同一请求里的多道题共用一次图片编码。
 
 ### 请求
 
@@ -121,7 +135,7 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 
 ```json
 {
-  "model": "devision-0.1",
+  "model": "devision-v0.2",
   "answers": {
     "has_fork": {"type": "noul", "noul": 0.03},
     "room": {
@@ -142,7 +156,7 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 
 ### 怎么用得好
 
-**用概率做阈值，没把握的转给人或更强的模型。** 概率经过按题型的温度校准，但校准程度因题而异：在拟合温度用的 GQA / VQAv2 题上 ECE 约 0.03–0.04，在没参与拟合的 POPE 和 COCO 题上是 0.098 和 0.054。阈值请在自己的数据上确定并验证，不要假设 "说 80% 就八成对" 对所有问题都成立。
+**用概率做阈值，没把握的转给人或更强的模型。** 概率经过按题型的温度校准，但校准程度因题而异：v0.2 在留出的测试集上 ECE 约 0.02–0.06（POPE 0.058、新图计数 0.065，见下方 Benchmark）。阈值请在自己的数据上确定并验证，不要假设 "说 80% 就八成对" 对所有问题都成立。
 
 ```python
 p = result["answers"]["has_fork"]["noul"]
@@ -164,52 +178,56 @@ else:
 
 **不要问的：**
 
-- 某个东西在哪里、在另一个东西的哪一边。这类题现在是随机水平。
-- 数数、读图中的小字（输入只有 256×256）。
+- 在示意图、图表、地图上比较两处（哪根柱子高、哪块磁铁的哪一极、哪条线长）。这类题仍接近随机。
+- 相对位置的是非题（"Is the cup to the left of the laptop?"）：同一道题在原图和镜像图上同时答对只有约 19%。改成选择题（"左边还是右边"）好得多。
+- 读图中的小字（输入只有 256×256）。
 - 非英文问题、一次多张图、`score` 打分题。
 
 **题目写清楚，选项互不重叠。** 选项意思接近时在 `criteria` 里加一句说明。
 
 ## Benchmark
 
-数字来自当前最佳的第 11 轮 checkpoint（`v11-v9b-recovery`，训练过程见 [`docs/training-log.md`](docs/training-log.md)），全部经 `decide` 评测（MPS；CPU 上结果相同），已套用拟合温度。每一轮的结果和与上一轮的逐题配对比较都记在训练日志里。
+数字来自发布版 v0.2（训练轮次 `v12-ext`，训练过程见 [`docs/training-log.md`](docs/training-log.md)），全部经 `decide` 评测（MPS；CPU 上结果相同），已套用拟合温度。每一轮的结果和与上一轮的逐题配对比较都记在训练日志里。
 
 ### 与 laya-vision 对比（同一批题逐题配对）
 
 laya-vision 是目前唯一公开的、能看图的 System One 模型。我们按它公开的逐题预测重建了它的评测集（`scripts/data/lv_bench.py`，不运行它的模型），在同一批题上逐题比较；差值 = deVision − laya-vision 201M，95% 区间按图片配对重采样（`devision-compare`）。
 
-| 评测集 | 题数 | laya-vision 201M | deVision v11 | 差值 [95% 区间] |
+| 评测集 | 题数 | laya-vision 201M | deVision v0.2 | 差值 [95% 区间] |
 |---|---|---|---|---|
-| POPE random / popular / adversarial | 3 × 3,000 | 0.836 / 0.819 / 0.777（公开分，无逐题） | **0.863 / 0.849 / 0.813** | +2.7 / +3.0 / +3.6 个点 |
-| VQAv2 是非题 | 4,887 | 0.717 | **0.729** | +1.2 [−0.4, +2.7] |
-| A-OKVQA（常识推理，四选一） | 1,138 | 0.598 | **0.603** | +0.4 [−2.9, +3.7] |
-| ScienceQA（带图题） | 2,097 | **0.824** | 0.747 | −7.7 [−9.8, −5.6] |
+| POPE random / popular / adversarial | 3 × 3,000 | 0.836 / 0.819 / 0.777（公开分，无逐题） | **0.891 / 0.868 / 0.791** | +5.5 / +4.9 / +1.4 个点 |
+| VQAv2 是非题 | 4,887 | 0.717 | **0.725** | +0.8 [−0.9, +2.3] |
+| A-OKVQA（常识推理，四选一） | 1,138 | 0.598 | **0.626** | +2.7 [−0.6, +6.0] |
+| ScienceQA（带图题） | 2,097 | **0.824** | 0.766 | −5.8 [−7.9, −3.6] |
 
-- "有没有某物"（POPE）领先，日常是非题和常识推理打平；教科书插图仍低 7.7 个点（第 6 轮是 24 个点），换成别的图片仍有 0.665——分数大部分来自题目和提示文字。差距集中在必须看示意图的自然科学题（323 题，0.467 对 0.700），其中磁铁题最多。
-- 其他差别：参数 518M 对 201M；输入 256 px 对 512 px；我们在 Mac CPU 上单题约 160 ms，对方在 L4 GPU 上 41 ms（硬件不同，不可直接比）。逐项分析见 [`docs/research/laya-vision-gap.md`](docs/research/laya-vision-gap.md)。
+- "有没有某物"（POPE）领先，日常是非题和常识推理略高（区间含 0）；教科书插图仍低 5.8 个点。差距集中在必须看示意图的自然科学题（323 题，0.455 对 0.700），其中磁铁题最多。
+- 校准：VQAv2、A-OKVQA 上 NLL 和 ECE 都低于 laya-vision；ScienceQA 的 ECE 0.022（对方 0.028）。
+- 其他差别：参数 518M 对 201M；输入 256 px 对 512 px；我们在 Mac CPU 上单题约 150 ms，对方在 L4 GPU 上 41 ms（硬件不同，不可直接比）。逐项分析见 [`docs/research/laya-vision-gap.md`](docs/research/laya-vision-gap.md)。
 
 ### 本项目的测试集
 
-`data/v2/test_*`：我们自己出的题，按组平衡（只看题目答不出来），图片与所有训练、dev 数据不重叠（数据集 LookFirst，私有）。另外两行来自 VSR 和 Visual7W，按图另行留出，图片模型训练时从没见过（`data/v5/test_*`）。*配错图*：同一批题换成别的图片后的准确率。
+`data/v2/test_*`：我们自己出的题，按组平衡（只看题目答不出来），图片与所有训练、dev 数据不重叠（数据集 LookFirst，私有）。VSR、Visual7W 两行按图另行留出（`data/v5/test_*`）；新图计数是第 11 轮新建、从没参与训练的图（`data/v11/test_count_fresh.jsonl`）。*配错图*：同一批题换成别的图片后的准确率。
 
 | 测试集 | 题数 | 准确率 | 配错图 | ECE |
 |---|---|---|---|---|
-| 存在（有没有某物） | 1,120 | 0.955 | 0.499 | 0.022 |
-| VQAv2 多选（13 类） | 1,420 | 0.891 | 0.380 | 0.038 |
-| 尺寸（哪个更大） | 1,100 | 0.857 | 0.502 | 0.021 |
-| POPE（3 档合计，`bench_pope`） | 8,676 | 0.844 | 0.528 | 0.072 |
-| GQA val | 992 | 0.745 | 0.537 | 0.085 |
-| 位置（上下 0.920，左右 0.781） | 1,274 | 0.850 | 0.509 | 0.013 |
-| VQAv2 是非 | 1,000 | 0.716 | 0.514 | 0.043 |
-| 相对位置（上下 0.814，左右 0.601） | 1,950 | 0.651 | 0.514 | 0.033 |
-| VSR 物体关系（按图留出，`test_vsr`） | 904 | 0.653 | 0.481 | 0.033 |
-| Visual7W 四选一（按图留出，`test_v7w`） | 1,000 | 0.712 | 0.432 | 0.040 |
+| 存在（有没有某物） | 1,120 | 0.938 | 0.493 | 0.020 |
+| VQAv2 多选（13 类） | 1,420 | 0.898 | 0.399 | 0.026 |
+| 尺寸（哪个更大） | 1,100 | 0.860 | 0.504 | 0.036 |
+| POPE（3 档合计，`bench_pope`） | 8,676 | 0.851 | 0.527 | 0.058 |
+| GQA val | 992 | 0.784 | 0.532 | 0.042 |
+| 位置（上下 0.909，左右 0.836） | 1,274 | 0.872 | 0.493 | 0.025 |
+| VQAv2 是非 | 1,000 | 0.710 | 0.518 | 0.022 |
+| 相对位置（上下 0.838，左右 0.672） | 1,950 | 0.711 | 0.484 | 0.047 |
+| VSR 物体关系（按图留出，`test_vsr`） | 904 | 0.679 | 0.481 | 0.048 |
+| Visual7W 四选一（按图留出，`test_v7w`） | 1,000 | 0.721 | 0.422 | 0.030 |
+| 新图计数（`test_count_fresh`） | 600 | 0.740 | 0.507 | 0.065 |
 
-配错图后都回到随机或只看题目的水平，说明分数来自看图。左右关系第 9 轮起学会了一部分：同一道左右题在原图和左右镜像图上同时答对的比例，位置题 61%、相对位置选择题 39%（第 8 轮为 23% / 18%）；相对位置是非题仍只有 10%。
+配错图后都回到随机或只看题目的水平，说明分数来自看图。左右关系：同一道左右题在原图和左右镜像图上同时答对的比例，位置题 72%、相对位置选择题 65%（v11 为 61% / 39%）；相对位置是非题 19%，仍低于随机的 25%。
 
 ## 已知限制
 
-- **分不清 "文字说的那个东西在哪"**：左右类问题（"Is the cup to the left of the laptop?"）在随机水平。上下、大小题的成绩大部分来自类别先验。诊断见实验记录。
+- **按文字找到图里两处再比较还不会**：示意图、图表、地图上的比较题（ScienceQA 磁铁题、FigureQA、MapQA）接近随机；相对位置是非题原图与镜像同时答对只有 19%。诊断见实验记录和训练日志 v12 一节。
+- **"有没有某物"偏向答"有"**：v0.2 比上一版更常把标注为不存在的物体答成存在（存在题 0.955 → 0.938，POPE adversarial 0.791）。
 - 只支持英文、单张图、`noul` / `choice`（`score` 返回 422）。
 - 输入 letterbox 到 256×256，图中小字和细节会丢失。
 
@@ -217,14 +235,19 @@ laya-vision 是目前唯一公开的、能看图的 System One 模型。我们�
 
 ```
 src/devision/
-├── model/     模型：网络结构、图片预处理、checkpoint 读写、Decider.decide（推理入口）
-├── train/     训练：样本格式、对齐（阶段 1）、RLCD 训练（阶段 2，SwanLab 可视化）、评测；命令 devision-align / train / eval
-├── serve/     服务：POST /v1/systemone API（自动选设备，CPU 也能跑）；命令 devision-serve
-└── demo/      Web demo：页面与示例图路由，由 devision-serve 挂载（--no-demo 可关）
-examples/      demo 默认加载的示例图
+├── __init__.py   对外入口 devision.load(...)（import devision 不加载 torch）
+├── model.py      网络结构：SigLIP2 → 投影层 → ModernBERT + Laya 决策头
+├── image.py      图片读取与 letterbox 预处理
+├── infer.py      Decider：checkpoint 读写、decide / predict（推理入口）
+├── serve.py      POST /v1/systemone API 和 web demo 路由；命令 devision-serve
+├── static/       web demo 页面
+└── train/        训练、评测、校准、实验流水线（需 devision[train]）；命令 devision-align / train / eval / calibrate / compare / pipeline
+examples/         demo 默认加载的示例图；examples/train/ 是训练数据格式示例
+scripts/data/     生成训练和评测数据的脚本（不随包分发）
+configs/          每一轮训练的 YAML
 ```
 
-依赖只能单向：`train`、`serve`、`demo` 都建立在 `model` 之上，三者之间互不引用。`model` 不依赖其他子包；`demo` 只通过 HTTP 调用 API，不引用任何 Python 代码。
+依赖只能单向：`train` 和 `serve` 建立在推理代码（`model` / `image` / `infer`）之上，推理代码不引用它们；demo 页面只通过 HTTP 调用 API。
 
 ## 模型结构
 
@@ -284,8 +307,8 @@ flowchart TB
 - 训练结束后，按题型在 val 集上用 LBFGS 拟合温度 T，范围限制在 [0.5, 5]。
 - 训练分两个阶段：
   - **阶段 1 对齐**（`devision-align`）：带图完形填空，只训投影层。数据是 COCO train2014 全部 caption。
-  - **阶段 2 决策**（`devision-train`）：RLCD，训投影层、决策头和 ModernBERT 的 LoRA。先在 6 万 GQA + 4 万 VQAv2 是非题上训，再在从 COCO 实例框自动出的题（有没有某物、位置、大小）上接着训。
-  - 发布的 checkpoint 的完整步骤见 [`configs/v1-release-0.1.yaml`](configs/v1-release-0.1.yaml)，在 Mac（MPS）上共约 16 小时（在已有 `runs/v1-release-0.1/` 的机器上再跑是续跑，会跳过已完成的阶段）。新实验复制一份 YAML，改参数和 `name`（如 `v3-xx`，即 `runs/v3-xx/`）。
+  - **阶段 2 决策**（`devision-train`）：RLCD，训投影层、决策头和 ModernBERT 的 LoRA。之后每一轮从上一轮的最佳 checkpoint 接着训，逐步加入 COCO 自动出题（存在、位置、大小）、VQAv2、GQA、A-OKVQA、ScienceQA、VSR、Visual7W、左右镜像对和计数。
+  - v0.2 是第 12 轮（[`configs/v12-ext.yaml`](configs/v12-ext.yaml)）：从第 11 轮接着训一遍 353,830 道题，其中扩展数据包 315,342 道来自 13 个公开数据集（Objects365、TallyQA、CLEVR、FigureQA、SNLI-VE、IconQA、Vision-Flan 等），在 Mac（MPS）上约 16 小时。每一轮改了什么、结果如何见 [`docs/training-log.md`](docs/training-log.md)。新实验复制一份 YAML，改参数和 `name`（第 13 轮起命名为 `r<轮次>-<描述>`，即 `runs/r13-xx/`）。
 - 训练数据是 JSONL 样本，格式见 `src/devision/train/samples.py`；[`examples/train/`](examples/train/) 里有每种写法的示例数据，`uv run devision-pipeline configs/example.yaml` 能在 CPU 上一两分钟内跑通整个流程。生成数据的代码（下载与规则转换）在 [`scripts/data/`](scripts/data/)，见下面「在新机器上训练」。所有评测图片按 COCO 和 VG 两套 id 从训练数据中剔除。
 - 实验过程和结论见 [`docs/experiments/2026-09-30-rlcd-plateau.md`](docs/experiments/2026-09-30-rlcd-plateau.md)。
 
@@ -301,6 +324,7 @@ uv run devision-pipeline configs/scratch.yaml        # 从头训练：align -> s
 ```
 
 - `build_all.sh` 生成 `scratch.yaml` 和第 3–9 轮配置用到的数据，最后核对这些配置引用的数据文件和图片都存在且非空，缺了会列出来并返回非零。中断后重跑会跳过已下载的部分。不生成第 1–2 轮的旧数据和第 10–11 轮的专项数据。
-- 生成的数据和本机的规则、比例相同，不保证逐条一致，也不会自动复现 v9b 的权重或分数。
+- 第 12 轮的扩展数据包用 `bash scripts/data/ext/build_ext.sh data` 生成（每个来源一个脚本，可断点续传；需要先有 `build_all.sh` 的输出和 `scripts/data/v11_count_eval.py` 生成的 `data/v11/`，以便剔除评测图片）。
+- 生成的数据和本机的规则、比例相同，不保证逐条一致，也不会自动复现发布版的权重或分数。
 - `scratch.yaml` 只训练到大致相当于第 5 轮的模型（输出 `runs/scratch/stage2b`）。后面各轮的配置（`v6-flip-lr.yaml` 起）是历史实验记录，`init` 指向本机的 `runs/` 路径，有的写死 `device: mps`。要在新机器上接着训，复制一份，把 `init` 改成新机器上实际的 checkpoint、把 `device` 改成 `auto` 或 `cuda`。
 - 数据目录不是 `data/` 时，训练配置里的数据路径要一起改，构建脚本不会自动改配置。
