@@ -50,7 +50,8 @@ devision-compare = "devision.train.cli:compare_main"
 devision-calibrate = "devision.train.cli:calibrate_main"
 
 [project.optional-dependencies]
-serve = []   # kept so that `pip install "devision[serve]"` still works: serving is part of the core install
+# `pip install "devision[train]"` adds training, evaluation, calibration and experiment pipelines (devision.train:
+# devision-align / -train / -eval / -calibrate / -compare / -pipeline). Inference and devision-serve need nothing extra.
 train = [
     "peft>=0.13",
     "psutil>=5.9",
