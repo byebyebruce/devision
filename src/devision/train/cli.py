@@ -7,6 +7,14 @@ from typing import Any, Dict, Sequence
 from .samples import read_decision_jsonl, read_jsonl
 
 
+def _flag_bool(text: str) -> bool:
+    if text.lower() in ("true", "1", "yes"):
+        return True
+    if text.lower() in ("false", "0", "no"):
+        return False
+    raise argparse.ArgumentTypeError("expected true or false, got %r" % text)
+
+
 def _parser(doc: str, config) -> argparse.ArgumentParser:
     """Arguments shared by align and train, plus one flag per field of the `config` dataclass."""
     p = argparse.ArgumentParser(description=doc)
@@ -21,7 +29,8 @@ def _parser(doc: str, config) -> argparse.ArgumentParser:
     p.add_argument("--visual-shuffle", type=int, default=2, help="2: 64 visual tokens, 1: 256")
     p.add_argument("--model-name", default="devision-0.1")
     for field, default in vars(config).items():
-        p.add_argument("--" + field.replace("_", "-"), type=type(default), default=default)
+        kind = _flag_bool if isinstance(default, bool) else type(default)   # bool("False") would be True
+        p.add_argument("--" + field.replace("_", "-"), type=kind, default=default)
     p.set_defaults(swanlab_project="devision")  # pass --swanlab-project "" to turn it off
     return p
 

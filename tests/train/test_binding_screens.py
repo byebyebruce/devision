@@ -141,3 +141,11 @@ def test_question_conditioning_trains(tmp_path):
     loaded = Decider.load(str(tmp_path / "ck"), device="cpu")
     assert loaded.model.condition is not None
     assert loaded.model.condition.out.weight.abs().sum() > 0   # the zero layer moved
+
+
+def test_boolean_training_flags_parse_false_as_false():
+    from devision.train.cli import _parser
+    p = _parser("x", TrainConfig())
+    args = ["--data", "d", "--out", "o", "--question-conditioning"]
+    assert p.parse_args(args + ["False"]).question_conditioning is False
+    assert p.parse_args(args + ["True"]).question_conditioning is True
