@@ -115,7 +115,7 @@ GQA 的问答是从场景图**自动生成**的（[GQA 官方](https://cs.stanfo
 | `test_bind_gqa` | GQA val 中项目历史未见的原图，1.3 的规则 | 最终验收 | 第 3 步训练后 |
 | `bench_sugarcrepe_{att,rel}` | SugarCrepe（val2017），描述二选一，保存子类、选项打乱 | 迁移报告（是描述匹配，不叫定位准确率） | 第 3 步 |
 | `bench_whatsup` | What'sUp Controlled A/B，原第一项固定为对的要打乱，保留 pair / set 分组 | 迁移报告 | 第 3 步 |
-| `bench_countbench` | CountBenchQA 491 题，候选固定构造（正确数 ± 1、± 2 中合法的），检查近重复 | 迁移报告（不与开放计数协议的分数比较） | 第 3 步 |
+| `bench_countbench` | CountBenchQA 491 题，**所有题同一组候选 1–10**（各题顺序打乱），检查近重复；报告只看选项的基线（随机 0.10、取中位数 0.090、最优常数 0.122）。原先的"正确数 ± 1、± 2"会让"取中间选项"491/491 全对（critic R13-I07），已停用，旧文件改名为 `countbench.gold-centred-v1.jsonl` | 迁移报告（不与开放计数协议的分数比较） | 第 3 步 |
 
 样本量：`dev_bind_cf` / `test_bind_cf` 各 1,200 场景族，`dev_bind_gqa` / `test_bind_gqa` 各至少 800 张原图。温度只在 `dev_mix` 上拟合，不用任何 bind 集。
 
