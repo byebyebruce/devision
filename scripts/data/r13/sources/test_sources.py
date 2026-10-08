@@ -141,10 +141,14 @@ def test_vismin_caption_check_and_question():
 
 # ---------------------------------------------------------------- benches
 
-def test_countbench_candidates_are_fixed():
-    from countbench import candidates
-    assert candidates(2) == ["1", "2", "3", "4"]
-    assert candidates(7) == ["5", "6", "7", "8", "9"]
+def test_countbench_candidates_do_not_depend_on_the_gold():
+    """Critic R13-I07: the options are the same for every count, so they cannot give the answer away."""
+    from countbench import CANDIDATES, candidates, option_baselines
+    assert {tuple(candidates(n)) for n in range(2, 11)} == {tuple(CANDIDATES)}
+    rows = [{"answer_key": str(n), "questions": {"q": {"criteria": {o: None for o in candidates(n)}}}}
+            for n in range(2, 11) for _ in range(3)]
+    b = option_baselines(rows)
+    assert b["median_option"] < 0.2 and b["uniform_guess"] == 0.1
 
 
 def test_whatsup_prepositions():

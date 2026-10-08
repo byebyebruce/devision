@@ -82,3 +82,22 @@ def test_paired_difference_matches_a_hand_count():
         br.paired(fa, {"f1": fb["f1"]}, "binding")
     with pytest.raises(br.ReportError):
         br.paired(fa, {"f1": {"binding": [2, 3]}, "f2": fb["f2"]}, "binding")
+
+
+def test_two_complete_models_with_different_error_counts_are_compared(data, tmp_path):
+    """Critic R13-I06: B answers one colour question with the salient kind's colour; both files are complete, so
+    the full report runs, pairs the fixed-unit metrics, and keeps wrong_is_salient per model only."""
+    path, samples = data
+    s0 = samples[0]
+    q = next(q for q, m in s0["meta"].items() if m["task"] == "colour" and m["salient"] != br.answer(s0["gold"][q]))
+    wrong = lambda s, qid: s["meta"][qid]["salient"] if (s["id"], qid) == (s0["id"], q) else right(s, qid)
+    a = write(tmp_path, "a", details(samples, right))
+    b = write(tmp_path, "b", details(samples, wrong))
+    r = br.report(path, [a, b])
+    vs = r["models"][1]["vs_baseline"]
+    assert "wrong_is_salient" not in vs
+    assert vs["binding"]["difference"] < 0 and vs["task:colour"]["difference"] < 0
+    assert r["models"][0]["summary"].get("wrong_is_salient") is None
+    assert r["models"][1]["summary"]["wrong_is_salient"] == {"accuracy": 1.0, "n": 1}
+    with pytest.raises(br.ReportError):                       # the coverage guard still holds
+        br.report(path, [a, write(tmp_path, "b_short", details(samples, wrong)[1:])])

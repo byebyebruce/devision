@@ -4,9 +4,11 @@ dataset card. Plan 1.5.
     uv run python scripts/data/r13/sources/countbench.py --root data [--force]
 
 Source: vikhyatk/CountBenchQA (Hugging Face, data/test-*.parquet, pictures inside). Each row -> choice "How many
-<things> are there in the image?" (the dataset's own question) among a fixed candidate set: the gold count and
-gold +-1, +-2, keeping those >= 1 (so 4-5 options; never shrunk to make it easy). The score is not comparable with
-the open-ended counting protocol of the paper / moondream.
+<things> are there in the image?" (the dataset's own question) among ONE common candidate set for every question,
+"1" to "10" (the benchmark's counts are 2-10), in a per-question shuffled order. The options never depend on the
+question's gold: the earlier gold-1..gold+2 set let "take the middle option" score 491/491 without the picture
+(critic R13-I07). The MANIFEST reports the picture-blind baselines (uniform guess, the best constant answer, the
+median option). The score is not comparable with the open-ended counting protocol of the paper / moondream.
 Near duplicates: every picture's dHash is compared with the project's training history (scripts/data/r13/identity.py,
 `near_seen`: photos without traceable ids, e.g. PixMo / Cauldron web pictures) and with every picture of the round-13
 training sources already built (data/r13/<source>/train.jsonl); hits within 2 bits are kept but flagged
@@ -24,8 +26,24 @@ from base import already_built, base_args, finish_bench, hf_files, save_bytes  #
 REPO = "vikhyatk/CountBenchQA"
 
 
+CANDIDATES = [str(m) for m in range(1, 11)]
+
+
 def candidates(n: int):
-    return [str(m) for m in (n - 2, n - 1, n, n + 1, n + 2) if m >= 1]
+    """The same ten options for every question (n is only checked to be one of them)."""
+    assert str(n) in CANDIDATES, n
+    return list(CANDIDATES)
+
+
+def option_baselines(rows) -> dict:
+    """Accuracy of picture-blind rules that read only the options (and, for the best constant, the gold
+    distribution: an upper bound for any rule that ignores the picture and the question)."""
+    golds = [r["answer_key"] for r in rows]
+    median = lambda opts: sorted(opts, key=int)[(len(opts) - 1) // 2]
+    best = max(set(golds), key=golds.count)
+    return {"uniform_guess": round(1 / len(CANDIDATES), 4),
+            "median_option": round(sum(median(list(r["questions"]["q"]["criteria"])) == g for r, g in zip(rows, golds)) / len(rows), 4),
+            "best_constant_answer": {"answer": best, "accuracy": round(golds.count(best) / len(rows), 4)}}
 
 
 def main(argv=None):
@@ -57,7 +75,10 @@ def main(argv=None):
     finish_bench(a.root, "countbench", rows, {
         "near_training": sum(1 for r in rows if r["near_training"]),
         "near_training_by": {k: sum(1 for r in rows if r["near_training"] == k) for k in set(hits.values())},
-        "note": "choice among gold, gold+-1, gold+-2 (>= 1); not the open-ended protocol"})
+        "candidates": CANDIDATES,
+        "option_baselines": option_baselines(rows),
+        "note": "choice among the common candidates 1-10 for every question (no gold-dependent options); "
+                "not the open-ended protocol"})
 
 
 def near_training(root: str, rows) -> dict:

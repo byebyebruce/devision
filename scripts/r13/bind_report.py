@@ -19,8 +19,9 @@ which every picture asks about both kinds.
             (1.0) but scores <= ~0.55 on another and cannot give both kinds right on most pictures, so it fails.
 Also reported: accuracy of exists_true / exists_trap / exists_absent / compare, the share of wrong colour/count
 answers that are the salient kind's value, and counts (questions, pictures, families) with the data SHA-256.
-Differences B - A (first details file = baseline) resample whole scene families, 2,000 draws, seed 0; both files
-must cover the same units, so the denominators are identical.
+Differences B - A (first details file = baseline) resample whole scene families, 2,000 draws, seed 0, for the
+fixed-unit metrics (binding, strata, tasks); both files must cover the same units, so the denominators are
+identical. wrong_is_salient is reported per model only: its denominator is that model's wrong answers.
 """
 import argparse
 import hashlib
@@ -170,7 +171,9 @@ def report(data_path: str, details_paths: List[str]) -> Dict[str, Any]:
         entry: Dict[str, Any] = {"details": path, "summary": totals(fam)}
         entry["gate"] = gate(entry["summary"])
         if len(fams) > 1:
-            keys = ["binding", "wrong_is_salient"] + ["stratum:" + s for s in STRATA] + \
+            # fixed-unit metrics only: wrong_is_salient's denominator is the model's own wrong answers, so it differs
+            # between models by design (critic R13-I06); it stays in each model's summary, not in the paired list
+            keys = ["binding"] + ["stratum:" + s for s in STRATA] + \
                 ["task:" + t for t in ("colour", "count", "exists_true", "exists_trap", "exists_absent", "compare")]
             entry["vs_baseline"] = {k: paired(fams[0], fam, k) for k in keys}
         out["models"].append(entry)
