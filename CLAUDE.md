@@ -26,7 +26,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **`confidence = (n·p_max−1)/(n−1)`**（Jev 口径），不用 Laya 的熵式定义。
 - **CPU 是主要的推理场景之一，但不是硬约束**（负责人 2026-10-05）：模型应能在没有 GPU 的机器上跑，有 GPU 时也能用（`devision.load(device=...)`、`devision-serve --device`，默认 `auto`）。结构上的改动（更多视觉 token、更高输入分辨率、更大的编码器）可以考虑，不因"必须只用 CPU"而排除；但方案和结果里要实测并写明 CPU 延迟的变化，作为取舍依据。**我们自己的训练和评测用最快的设备**：训练在本地 Mac（MPS），`devision-eval` / `devision-calibrate` 默认 `--device auto`（CUDA > MPS > CPU），流水线把 YAML 的 `device` 传给评测；延迟数字只在要验证部署时用 `--device cpu` 单独测。
 - 当前仅：英文、单图、letterbox 到 256×256、题型 `noul`/`choice`（`score` 返回 422）。
-- **许可**：代码和发布的模型权重用 **Apache-2.0**（负责人 2026-10-07：选最宽松的；与 Laya、SigLIP2、ModernBERT 三个基座一致）。训练数据各有条款，部分非商用（如 ScienceQA 为 CC BY-NC-SA），模型卡的 metadata 列出训练数据集，正文说明这一点。可用 laya-vision（CC BY-NC-SA）做 baseline。许可相关改动需先确认。
+- **许可**：代码和发布的模型权重用 **Apache-2.0**（负责人 2026-10-07：选最宽松的；与 Laya、SigLIP2、ModernBERT 三个基座一致）。训练数据各有条款，部分非商用（如 ScienceQA 为 CC BY-NC-SA），模型卡的 metadata 列出训练数据集，正文说明这一点。**本项目只做研究、不商用**（负责人 2026-10-08）：选训练数据看能否提升能力，数据集的许可只记录、不作为排除条件（如 VAW、CounterCurate 这类非商用数据可以训练）。可用 laya-vision（CC BY-NC-SA）做 baseline。许可相关改动需先确认。
 
 ## 测试
 

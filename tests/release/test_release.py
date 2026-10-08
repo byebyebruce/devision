@@ -65,3 +65,11 @@ def test_verify_catches_different_answers(release):
     smoke["answers"][pic]["person"]["noul"] += 0.01
     (rel / "smoke.json").write_text(json.dumps(smoke))
     assert any(p.startswith("smoke:") for p in hf.verify(str(rel), str(out), latency=False))
+
+
+def test_build_refuses_to_replace_a_folder_holding_the_source_checkpoint(release):
+    rel, out = release
+    cfg = yaml.safe_load((rel / "release.yaml").read_text())
+    with pytest.raises(SystemExit):
+        hf.build(str(rel), cfg["round"])
+    assert os.path.exists(os.path.join(cfg["round"], "stage2", "model.safetensors"))

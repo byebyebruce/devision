@@ -28,3 +28,14 @@ def test_loading_a_checkpoint_does_not_depend_on_the_seed(tmp_path):
     seed_all(1)
     y = Decider.load(tmp_path / "ckpt").model.state_dict()
     assert all(torch.equal(x[k], y[k]) for k in x)
+
+
+def test_init_checkpoint_loads_straight_onto_the_requested_device(tmp_path):
+    import argparse
+
+    from conftest import tiny_decider
+
+    from devision.train.cli import _decider
+    tiny_decider().save(str(tmp_path / "ck"))
+    d = _decider(argparse.Namespace(init=str(tmp_path / "ck"), device="cpu"))
+    assert {p.device.type for p in d.model.parameters()} == {"cpu"}

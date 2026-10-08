@@ -41,7 +41,7 @@ def _decider(a):
     from ..model import ModelConfig, from_pretrained
 
     if a.init:
-        return Decider.load(a.init)
+        return Decider.load(a.init, device=getattr(a, "device", "auto"))   # straight onto the training device
     model, tok, cfg = from_pretrained(a.laya, a.vision, ModelConfig(model_name=a.model_name,
                                                                     visual_shuffle=a.visual_shuffle))
     return Decider(model, tok, cfg)

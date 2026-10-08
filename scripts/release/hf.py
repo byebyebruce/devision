@@ -289,6 +289,9 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
     round_dir = os.path.join(ROOT, cfg["round"]) if not os.path.isabs(cfg["round"]) else cfg["round"]
     ckpt = os.path.join(round_dir, cfg["stage"])
     out = out or build_dir(cfg)
+    real_out, real_ckpt = os.path.realpath(out), os.path.realpath(ckpt)
+    if real_ckpt == real_out or real_ckpt.startswith(real_out + os.sep) or real_out in (ROOT, os.path.realpath(ROOT)):
+        raise SystemExit("refusing to replace %s: it holds the source checkpoint or the repository" % out)
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(os.path.join(out, "evaluation"))
