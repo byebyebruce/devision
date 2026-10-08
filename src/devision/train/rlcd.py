@@ -18,10 +18,11 @@ import os
 import random
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
+import torch.nn as nn
 from laya.common import QTYPES, clamp_temperature, collate_items, ece_score, proper_reward
 from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
@@ -29,7 +30,7 @@ from PIL import Image
 from .samples import Sample
 from .tracking import Tracker, TrainLog
 from ..infer import Decider, image_tensor, question_item
-from ..model import ModelConfig, option_bucket, pick_temperature, text_encoder
+from ..model import ModelConfig, option_bucket, pick_temperature, question_mask, text_encoder
 from ..infer import best_device
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
@@ -61,6 +62,52 @@ class TrainConfig:
     amp: str = "cuda"            # bf16 autocast of the forward pass: "cuda" (on CUDA only), "mps" (on CUDA or MPS), "off"
     swanlab_project: str = ""    # "" disables SwanLab; the CLI defaults to "devision"
     run_name: str = ""
+    # round 13 screens (docs/experiments/2026-10-08-r13-binding-plan.md)
+    grounding_weight: float = 0.0   # S1: weight of the grounding loss (questions whose sample has boxes); 0: off
+    question_conditioning: bool = False   # S2: add question-conditioned visual tokens (model.QuestionConditioning)
+    lr_cond: float = 1e-4        # learning rate of the S2 module and the S1 grounding head
+
+
+GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
+
+
+def box_grid(boxes, width: int, height: int, size: int, grid: int = GRID, smooth: float = 0.1) -> List[float]:
+    """Where the named object is, as a distribution over the grid x grid visual tokens: each [x, y, w, h] box
+    (picture pixels) is letterboxed exactly as the picture is (image.letterbox), the share of each cell it
+    covers is summed over boxes and normalised, then mixed with the uniform distribution (`smooth`)."""
+    scale = size / max(width, height)
+    ox, oy = (size - round(width * scale)) // 2, (size - round(height * scale)) // 2
+    cell = size / grid
+    cover = [0.0] * (grid * grid)
+    for x, y, w, h in boxes:
+        x0, y0, x1, y1 = ox + x * scale, oy + y * scale, ox + (x + w) * scale, oy + (y + h) * scale
+        for r in range(grid):
+            for c in range(grid):
+                ix = max(0.0, min(x1, (c + 1) * cell) - max(x0, c * cell))
+                iy = max(0.0, min(y1, (r + 1) * cell) - max(y0, r * cell))
+                cover[r * grid + c] += ix * iy / (cell * cell)
+    total = sum(cover)
+    if total <= 0:
+        return []
+    return [(1 - smooth) * v / total + smooth / len(cover) for v in cover]
+
+
+class GroundingHead(nn.Module):
+    """S1, training only: from the encoder's last layer (a global-attention layer), the mean of the question's
+    tokens scores each visual token; trained towards where the named object is (KL to box_grid)."""
+
+    def __init__(self, dim: int, inner: int = 256):
+        super().__init__()
+        self.q, self.k, self.inner = nn.Linear(dim, inner), nn.Linear(dim, inner), inner
+
+    def forward(self, hidden, n_visual: int, qmask):
+        """hidden [B, L+V, D] (visual at 1..V), qmask [B, L] over text positions -> log-probs [B, V]."""
+        text = torch.cat([hidden[:, :1], hidden[:, 1 + n_visual:]], 1)
+        m = qmask.unsqueeze(-1).to(text.dtype)
+        q = (text * m).sum(1) / m.sum(1).clamp(min=1)
+        k = hidden[:, 1:1 + n_visual]
+        scores = (self.k(k) @ self.q(q).unsqueeze(-1)).squeeze(-1) / self.inner ** 0.5
+        return torch.log_softmax(scores.float(), -1)
 
 
 def grouped_order(items: Sequence[Dict[str, Any]], rng: Any = random) -> List[int]:
@@ -97,6 +144,12 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             it["source"] = s.get("source", "")
             if "group" in s:
                 it["group"] = s["group"]   # questions of one scene family stay adjacent when shuffled
+            boxes = (s.get("boxes") or {}).get(qid)
+            if boxes and s.get("width") and s.get("height"):
+                side = decider.cfg.image_size // int(cast(int, decider.model.vision.config.patch_size)) // decider.cfg.visual_shuffle
+                grid = box_grid(boxes, s["width"], s["height"], decider.cfg.image_size, grid=side)
+                if grid:
+                    it["grid"] = grid
             items.append(it)
     return items
 
@@ -113,12 +166,13 @@ class _Images:
             return image_tensor(img, self.decider.cfg)
 
 
-def _forward(model, batch, pixels, device):
+def _forward(model, batch, pixels, device, return_hidden: bool = False):
     with torch.no_grad():
         patches = model.vision(pixel_values=pixels.to(device)).last_hidden_state
     visual = model.projector(patches)
     return model(*(batch[k].to(device) for k in
-                   ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")), visual=visual)
+                   ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
+                 visual=visual, patches=patches, return_hidden=return_hidden)
 
 
 def _rlcd_loss(logits, mask, target, qtype, sigma, group_size):
@@ -290,7 +344,8 @@ def calibrate(decider: Decider, samples: Sequence[Sample], data_root, device: st
 RESUME = "resume.pt"
 # what must match for a resume state to continue a run (logging and saving settings may change)
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
-                "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed")
+                "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
+                "grounding_weight", "question_conditioning", "lr_cond")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -342,6 +397,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     model, tok = decider.model, decider.tok
 
     model.vision.requires_grad_(False)
+    if c.question_conditioning and model.condition is None:   # S2: new module, zero output layer
+        model.add_question_conditioning()
+        decider.cfg.question_conditioning = True
+    if c.grounding_weight > 0:   # S1: training-only head, removed before saving
+        model.grounding = GroundingHead(text_encoder(model.decision).config.hidden_size)
     peft_encoder = get_peft_model(text_encoder(model.decision), LoraConfig(
         r=c.lora_r, lora_alpha=c.lora_alpha, lora_dropout=0.0, target_modules=LORA_TARGETS))
     model.decision.encoder = peft_encoder
@@ -368,6 +428,10 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
         {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},
     ] + ([{"params": unfrozen, "lr": c.lr_encoder}] if unfrozen else [])
+    extra = [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
+             for p in getattr(model, name).parameters()]
+    if extra:
+        groups.append({"params": extra, "lr": c.lr_cond})
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
     steps = c.epochs * max(1, -(-len(train_items) // c.micro_batch))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
@@ -437,10 +501,24 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
             pixels = torch.stack([images(it["image"]) for it in chunk])
+            grounded = [i for i, it in enumerate(chunk) if "grid" in it] if c.grounding_weight > 0 else []
             with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
-                logits = _forward(model, batch, pixels, device).float()
+                if grounded:
+                    logits, hidden = _forward(model, batch, pixels, device, return_hidden=True)
+                else:
+                    logits = _forward(model, batch, pixels, device)
+                logits = logits.float()
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
                               batch["qtype"].to(device), sigma, c.group_size)
+            ground = None
+            if grounded:
+                idx = torch.tensor(grounded, device=device)
+                ids, mpos = batch["input_ids"].to(device)[idx], batch["marker_pos"].to(device)[idx]
+                head = cast(GroundingHead, getattr(model, "grounding"))
+                logp = head(hidden[idx], hidden.size(1) - ids.size(1), question_mask(ids, mpos))
+                target = torch.tensor([chunk[i]["grid"] for i in grounded], device=device)
+                ground = (target * (target.log() - logp)).sum(-1).mean()
+                loss = loss + c.grounding_weight * ground
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
@@ -451,7 +529,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                    == batch["target"].to(device).argmax(-1)).float().mean()
             log.add(len(chunk), loss=loss.item(), nll=nll.item(), accuracy=hit.item(),
                     batch_tokens=float(batch["input_ids"].shape[1]),   # padded length; long batches drive memory
-                    grad_norm=grad_norm.item(), sigma=sigma)
+                    grad_norm=grad_norm.item(), sigma=sigma,
+                    **({"grounding_kl": ground.item()} if ground is not None else {}))
             means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
                                                        "head": optimizer.param_groups[1]["lr"],
                                                        "lora": optimizer.param_groups[2]["lr"],
@@ -468,6 +547,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         val_accuracy.append(run_eval()["val/accuracy"])
 
     model.decision.encoder = peft_encoder.merge_and_unload()
+    if hasattr(model, "grounding"):   # S1's head is a training device, not part of the model that answers
+        del model.grounding
     model.eval()
     set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device) for name, its in sets.items()}
     temperature, by_options = fit_temperatures(set_logits["val"], calib)

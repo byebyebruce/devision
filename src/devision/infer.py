@@ -282,13 +282,14 @@ class Decider:
         batch = collate_items([items], self.tok.pad_token_id)
         assert batch is not None
         dev = next(self.model.parameters()).device
-        visual = None
-        if image is not None:
+        visual = patches = None
+        if image is not None:   # the picture is encoded once and shared by every question
             pixels = image_tensor(image, self.cfg)[None].to(dev)
-            visual = self.model.encode_image(pixels).expand(len(items), -1, -1)
+            patches, visual = self.model.image_features(pixels)
+            patches, visual = patches.expand(len(items), -1, -1), visual.expand(len(items), -1, -1)
         logits = self.model(*(batch[k].to(dev) for k in
                               ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
-                            visual=visual).cpu()
+                            visual=visual, patches=patches).cpu()
         n_visual = 0 if visual is None else visual.size(1)
         answers = {}
         for i, qid in enumerate(qids):

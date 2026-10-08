@@ -27,6 +27,9 @@ class ModelConfig:
     # A bucket that is absent (too few questions to fit it, or a checkpoint from before buckets) uses its
     # type's entry in `temperature`.
     temperature_by_options: Dict[str, float] = field(default_factory=dict)
+    # Round 13 screen S2: each question re-reads the SigLIP patches and adds what it finds to the visual tokens
+    # (QuestionConditioning). False for every checkpoint before it; those load and answer exactly as before.
+    question_conditioning: bool = False
 
     def temperature_for(self, qtype: int, k: int) -> float:
         """The temperature `decide` divides a `qtype` question's `k` option logits by."""
@@ -68,6 +71,34 @@ class Projector(nn.Module):
         return self.mlp(x.reshape(b, (g // s) ** 2, s * s * d))
 
 
+class QuestionConditioning(nn.Module):
+    """Question-conditioned visual tokens: every visual token, shifted by the question's mean word embedding,
+    attends over the 256 SigLIP patches; the result is added to the token. The output layer starts at zero, so
+    a model that gains this module answers exactly as before until it is trained."""
+
+    def __init__(self, vision_dim: int, text_dim: int, heads: int = 8):
+        super().__init__()
+        self.question = nn.Linear(text_dim, text_dim)
+        self.patches = nn.Linear(vision_dim, text_dim)
+        self.attend = nn.MultiheadAttention(text_dim, heads, batch_first=True)
+        self.out = nn.Linear(text_dim, text_dim)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+
+    def forward(self, visual, patches, word_embeds, question_mask):
+        m = question_mask.unsqueeze(-1).to(word_embeds.dtype)
+        q = (word_embeds * m).sum(1) / m.sum(1).clamp(min=1)
+        query = visual + self.question(q).unsqueeze(1)
+        kv = self.patches(patches.to(visual.dtype))
+        return visual + self.out(self.attend(query, kv, kv, need_weights=False)[0])
+
+
+def question_mask(input_ids: torch.Tensor, marker_pos: torch.Tensor) -> torch.Tensor:
+    """[B, L] True on the question's text: after [CLS], before the [SEP] that precedes the first option marker."""
+    pos = torch.arange(input_ids.size(1), device=input_ids.device)[None]
+    return (pos >= 1) & (pos < marker_pos[:, :1] - 1)
+
+
 def text_encoder(decision: DecisionModel) -> PreTrainedModel:
     return cast(PreTrainedModel, decision.encoder)
 
@@ -83,11 +114,22 @@ class VisionDecisionModel(nn.Module):
         self.decision = decision
         self.projector = Projector(vision.config.hidden_size, text_encoder(decision).config.hidden_size,
                                    cfg.visual_shuffle)
+        self.condition: Optional[QuestionConditioning] = None
+        if cfg.question_conditioning:
+            self.add_question_conditioning()
+
+    def add_question_conditioning(self) -> None:
+        self.condition = QuestionConditioning(self.vision.config.hidden_size,
+                                              text_encoder(self.decision).config.hidden_size)
+
+    def image_features(self, pixel_values: torch.Tensor):
+        """[B, 3, H, W] -> (SigLIP patches [B, 256, D_vision], visual tokens [B, V, D_text])."""
+        patches = self.vision(pixel_values=pixel_values).last_hidden_state
+        return patches, self.projector(patches)
 
     def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """[B, 3, H, W] -> [B, V, D_text] visual tokens."""
-        patches = self.vision(pixel_values=pixel_values).last_hidden_state
-        return self.projector(patches)
+        return self.image_features(pixel_values)[1]
 
     def encode(self, input_ids, attention_mask, visual: Optional[torch.Tensor] = None):
         """Encoder states for [CLS] <visual> <rest of input_ids>: (hidden [B, L+V, D], attention mask).
@@ -102,10 +144,19 @@ class VisionDecisionModel(nn.Module):
         return encoder(inputs_embeds=embeds, attention_mask=attention_mask).last_hidden_state, attention_mask
 
     def forward(self, input_ids, attention_mask, marker_pos, marker_mask, qtype,
-                visual: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """Option logits [B, K] (masked slots at -1e4). `visual` is [B, V, D] or None for text-only."""
+                visual: Optional[torch.Tensor] = None, patches: Optional[torch.Tensor] = None,
+                return_hidden: bool = False):
+        """Option logits [B, K] (masked slots at -1e4). `visual` is [B, V, D] or None for text-only; `patches`
+        (the SigLIP patches the visual tokens came from) is needed when the model has question conditioning.
+        `return_hidden` also returns the encoder's last-layer states [B, L+V, D] (before the decision head)."""
         dm = self.decision
+        if self.condition is not None and visual is not None:
+            if patches is None:
+                raise ValueError("this model conditions the visual tokens on the question: pass patches")
+            embeds = text_encoder(dm).get_input_embeddings()(input_ids)
+            visual = self.condition(visual, patches, embeds, question_mask(input_ids, marker_pos))
         h, attention_mask = self.encode(input_ids, attention_mask, visual)
+        encoded = h
         if visual is not None:
             marker_pos = marker_pos + visual.size(1)
         # Laya's head, minus the act head we do not serve.
@@ -115,8 +166,8 @@ class VisionDecisionModel(nn.Module):
             for layer in dm.head.layers:
                 h = layer(h, src_key_padding_mask=pad)
         idx = marker_pos.clamp(min=0)[:, :, None].expand(-1, -1, h.size(-1))
-        logits = dm.scorer(torch.gather(h, 1, idx)).squeeze(-1).float()
-        return logits.masked_fill(~marker_mask, -1e4)
+        logits = dm.scorer(torch.gather(h, 1, idx)).squeeze(-1).float().masked_fill(~marker_mask, -1e4)
+        return (logits, encoded) if return_hidden else logits
 
 
 def build_model(encoder_config: PretrainedConfig, vision_config: SiglipVisionConfig,
