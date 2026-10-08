@@ -22,5 +22,5 @@ evaluate:
   image_identity: data/v5/image_identity.json
   sets:
     dev_mix: data/v5/dev_mix.jsonl
-    dev_bind_cf: {path: data/r13/synth/dev_bind_cf.jsonl, role: monitoring}
+    dev_bind_cf: {path: data/r13/synth-v2/dev_bind_cf.jsonl, role: monitoring}
     dev_bind_gqa: {path: data/r13/gqa/dev_bind_gqa.jsonl, role: monitoring}

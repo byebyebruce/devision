@@ -110,15 +110,33 @@ class GroundingHead(nn.Module):
         return torch.log_softmax(scores.float(), -1)
 
 
-def grouped_order(items: Sequence[Dict[str, Any]], rng: Any = random) -> List[int]:
-    """A shuffled item order in which items sharing a "group" (a scene family: a picture, its edited or mirrored
-    versions, every question about them) stay next to each other, so pairs land in the same micro batch."""
-    groups: Dict[Any, List[int]] = {}
+def plan_batches(items: Sequence[Dict[str, Any]], micro_batch: int, rng: Any = random) -> List[List[int]]:
+    """Micro batches (lists of item indices) in which every counterfactual unit is whole: the items that ask
+    the same question (same "group" and question id) about a scene family's pictures -- base, recolours, count
+    edit -- always share a batch, so the model sees the pair in one update (critic R13-I02). Items without a
+    group are units of one and fill the remaining slots. Units are shuffled, packed first-fit, and the batches
+    shuffled; a unit larger than a batch is split into batch-sized pieces."""
+    units: Dict[Any, List[int]] = {}
     for i, it in enumerate(items):
-        groups.setdefault(it.get("group", i), []).append(i)
-    keys = list(groups)
-    rng.shuffle(keys)
-    return [i for k in keys for i in groups[k]]
+        key = (it["group"], it.get("qid")) if "group" in it else ("", i)
+        units.setdefault(key, []).append(i)
+    pieces = [u[j:j + micro_batch] for u in units.values() for j in range(0, len(u), micro_batch)]
+    rng.shuffle(pieces)
+    pieces.sort(key=len, reverse=True)   # first-fit decreasing: the big units first, singletons fill the gaps
+    batches: List[List[int]] = []
+    open_: List[List[int]] = []
+    for u in pieces:
+        for bt in open_:
+            if len(bt) + len(u) <= micro_batch:
+                bt.extend(u)
+                break
+        else:
+            bt = list(u)
+            batches.append(bt)
+            open_.append(bt)
+        open_ = [bt for bt in open_ if len(bt) < micro_batch]
+    rng.shuffle(batches)
+    return batches
 
 
 def _device(name: str) -> torch.device:
@@ -142,10 +160,12 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             it["target"] = [t / total for t in target]
             it["image"] = s["image"]
             it["source"] = s.get("source", "")
+            it["qid"] = qid
             if "group" in s:
-                it["group"] = s["group"]   # questions of one scene family stay adjacent when shuffled
+                it["group"] = s["group"]   # a scene family: its counterfactual pairs share a micro batch
             boxes = (s.get("boxes") or {}).get(qid)
-            if boxes and s.get("width") and s.get("height"):
+            present = ((s.get("meta") or {}).get(qid) or {}).get("referent_present", True)
+            if boxes and present and s.get("width") and s.get("height"):   # an absent referent is never a target
                 side = decider.cfg.image_size // int(cast(int, decider.model.vision.config.patch_size)) // decider.cfg.visual_shuffle
                 grid = box_grid(boxes, s["width"], s["height"], decider.cfg.image_size, grid=side)
                 if grid:
@@ -433,7 +453,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if extra:
         groups.append({"params": extra, "lr": c.lr_cond})
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
-    steps = c.epochs * max(1, -(-len(train_items) // c.micro_batch))
+    grouped = any("group" in it for it in train_items)
+    first_plan = plan_batches(train_items, c.micro_batch) if grouped else []
+    steps = c.epochs * (len(first_plan) if grouped else max(1, -(-len(train_items) // c.micro_batch)))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
     use_amp = device.type in {"cuda": ("cuda",), "mps": ("cuda", "mps"), "off": ()}[c.amp]
@@ -441,7 +463,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     losses: List[float] = []
     val_accuracy: List[float] = []
     evals: List[Dict[str, float]] = []
-    order: List[int] = []            # this epoch's item order (indices into train_items)
+    order: List[List[int]] = []      # this epoch's micro batches (lists of indices into train_items)
     start_epoch, start_b = 0, 0
     resume_path = os.path.join(str(out_dir), RESUME) if out_dir else ""
     trainable = {n: p for n, p in model.named_parameters() if p.requires_grad}
@@ -490,14 +512,15 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     log = TrainLog(tracker, device, steps, c.log_every)
     for epoch in range(start_epoch, c.epochs):
         if not (resumed and epoch == start_epoch):
-            if any("group" in it for it in train_items):
-                order = grouped_order(train_items)
+            if grouped:
+                order = first_plan if epoch == 0 and first_plan else plan_batches(train_items, c.micro_batch)
             else:   # no groups: the order (and the RNG use) of every run before round 13
-                order = order or list(range(len(train_items)))
-                random.shuffle(order)
-        for b in range(start_b if resumed and epoch == start_epoch else 0, len(train_items), c.micro_batch):
+                flat = [i for bt in order for i in bt] or list(range(len(train_items)))
+                random.shuffle(flat)
+                order = [flat[j:j + c.micro_batch] for j in range(0, len(flat), c.micro_batch)]
+        for b in range(start_b if resumed and epoch == start_epoch else 0, len(order)):
             sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * len(losses) / max(1, steps - 1)
-            chunk = [train_items[i] for i in order[b:b + c.micro_batch]]
+            chunk = [train_items[i] for i in order[b]]
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
             pixels = torch.stack([images(it["image"]) for it in chunk])
@@ -543,7 +566,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:
-                save_state(epoch, b + c.micro_batch)
+                save_state(epoch, b + 1)
         val_accuracy.append(run_eval()["val/accuracy"])
 
     model.decision.encoder = peft_encoder.merge_and_unload()

@@ -44,7 +44,7 @@ def main():
     a = p.parse_args()
     rng = random.Random(a.seed)
     q = a.questions
-    synth = take_groups(rows(os.path.join(a.root, "r13/synth/train.jsonl")), lambda s: s["group"], q * 0.5, rng)
+    synth = take_groups(rows(os.path.join(a.root, "r13/synth-v2/train.jsonl")), lambda s: s["group"], q * 0.5, rng)
     gqa = take_groups(rows(os.path.join(a.root, "r13/gqa/train.jsonl")), lambda s: s.get("group", s["image_id"]), q * 0.3, rng)
     replay = take_groups(rows(os.path.join(a.root, "ext/train_mix.jsonl")), lambda s: s["image_id"], q * 0.2, rng)
     for s in gqa + replay:
@@ -54,7 +54,7 @@ def main():
     with open(os.path.join(a.out, "train.jsonl"), "w") as f:
         for s in mix:
             f.write(json.dumps(s) + "\n")
-    dev = rows(os.path.join(a.root, "r13/synth/dev_bind_cf.jsonl"))
+    dev = rows(os.path.join(a.root, "r13/synth-v2/dev_bind_cf.jsonl"))
     fams = sorted({s["group"] for s in dev})
     keep = set(random.Random(1).sample(fams, 150))
     watch = [s for s in dev if s["group"] in keep]

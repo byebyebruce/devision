@@ -1,84 +1,143 @@
-"""Binding metrics on the counterfactual sets (dev_bind_cf / test_bind_cf), round 13 plan revision 2.
+"""Binding metrics and the screening gate on the counterfactual sets (dev_bind_cf / test_bind_cf), round 13 plan
+revision 2 (as corrected after critic R13-I04 / R13-I05).
 
-    uv run python scripts/r13/bind_report.py data/r13/synth/dev_bind_cf.jsonl \
-        runs/v12-ext/eval/dev_bind_cf.details.jsonl runs/r13-s0/eval/dev_bind_cf.details.jsonl \
-        [--out runs/r13-s0/eval/compare/bind_cf.json]
+    uv run python scripts/r13/bind_report.py data/r13/synth-v2/dev_bind_cf.jsonl \
+        runs/r13/v12-synth-v2/dev_bind_cf.details.jsonl runs/exp13-s0/eval/dev_bind_cf.details.jsonl \
+        [--out runs/exp13-s0/eval/compare/bind_cf.json]
 
-Per model (the first details file is the baseline, usually v12; the others are compared with it):
-  binding     share of (picture, task) pairs answered right for EVERY kind in the picture, tasks colour, count
-              and exists_trap ("Is there a <other kind's colour> <shape>?"): the "same picture, every kind right"
-              score the plan's gates use
-  per task    accuracy of colour, count, exists_true, exists_trap, compare
-  strata      accuracy over colour + count + exists_trap questions in each salience stratum, next to the two
-              name-blind baselines (answer read off the most salient kind / the least salient kind) for
-              colour + count in that stratum
-  salient     share of colour / count answers that equal the most salient kind's value when that is wrong
-Differences B - A with 95% intervals resample whole scene families (`group`), 2,000 draws, seed 0.
+Input checks (any failure stops the report): every (sample, question) of the data file has exactly one
+prediction row -- no missing, duplicate or extra rows -- each prediction is one of the question's options, the
+row's gold equals the data file's, and when the summary JSON next to the details names a data SHA-256 it must be
+this data file's. Partial files are refused, never scored.
+
+Scored task set (the SAME for the model, the name-blind baselines and the gate): colour and count questions,
+which every picture asks about both kinds.
+  binding   share of (picture, task) units in which BOTH kinds are answered right
+  strata    per-question accuracy in each salience stratum, next to the two name-blind policies (answer every
+            question with the most salient kind's value / the least salient kind's value)
+  gate      binding >= 0.8 and every stratum >= 0.7. A name-blind policy is right on one stratum by construction
+            (1.0) but scores <= ~0.55 on another and cannot give both kinds right on most pictures, so it fails.
+Also reported: accuracy of exists_true / exists_trap / exists_absent / compare, the share of wrong colour/count
+answers that are the salient kind's value, and counts (questions, pictures, families) with the data SHA-256.
+Differences B - A (first details file = baseline) resample whole scene families, 2,000 draws, seed 0; both files
+must cover the same units, so the denominators are identical.
 """
 import argparse
+import hashlib
 import json
+import os
 import random
 from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 
-TASKS = ("colour", "count", "exists_trap")
+SCORED = ("colour", "count")
+GATE = {"binding": 0.8, "stratum": 0.7}
+STRATA = ("target_salient", "close", "target_minor")
 
 
-def rows(path):
-    return [json.loads(l) for l in open(path) if l.strip()]
+class ReportError(ValueError):
+    pass
 
 
-def correct(details):
-    out = {}
+def rows(path: str) -> List[Dict[str, Any]]:
+    return [json.loads(line) for line in open(path) if line.strip()]
+
+
+def sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def answer(gold: Dict[str, Any]) -> str:
+    p = gold["probabilities"]
+    return max(p, key=p.get)
+
+
+def predictions(samples, details: List[Dict[str, Any]], data_sha: str, summary: Optional[Dict[str, Any]] = None
+                ) -> Dict[Tuple[str, str], str]:
+    """(sample id, qid) -> predicted option, after checking the details match the data one to one."""
+    want = {(s["id"], q): s for s in samples for q in s["questions"]}
+    got: Dict[Tuple[str, str], str] = {}
     for r in details:
-        out[(r["sample_id"], r["qid"])] = bool(r["correct"])
-        out[("pred", r["sample_id"], r["qid"])] = r["prediction"]
-    return out
+        key = (r["sample_id"], r["qid"])
+        if key in got:
+            raise ReportError("duplicate prediction for %s" % (key,))
+        if key not in want:
+            raise ReportError("prediction for a question not in the data: %s" % (key,))
+        s = want[key]
+        options = ["false", "true"] if s["questions"][key[1]]["type"] == "noul" else list(s["questions"][key[1]]["criteria"])
+        if r["prediction"] not in options:
+            raise ReportError("prediction %r for %s is not an option" % (r["prediction"], key))
+        if "gold" in r and answer({"probabilities": r["gold"]}) != answer(s["gold"][key[1]]):
+            raise ReportError("gold of %s differs from the data file (another data version?)" % (key,))
+        got[key] = r["prediction"]
+    missing = set(want) - set(got)
+    if missing:
+        raise ReportError("%d of %d questions have no prediction, e.g. %s" % (len(missing), len(want), sorted(missing)[0]))
+    named = ((summary or {}).get("run") or {}).get("data_sha256")
+    if named and named != data_sha:
+        raise ReportError("the evaluation ran on data %s, not this file (%s)" % (named[:12], data_sha[:12]))
+    return got
 
 
-def units(samples, hit):
-    """Per family: list of (binding_hits, binding_n, per-task hits/n, per-stratum hits/n, salient hits/n)."""
-    fam = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+def family_counts(samples, pred, policy: Optional[str] = None):
+    """Per family: name -> [hits, n]. `policy` ("salient" / "minor") replaces the model's answers on the scored
+    tasks with that name-blind policy (used for the baselines and the gate's self-check)."""
+    fam: Dict[str, Dict[str, List[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     for s in samples:
-        g = s["group"]
-        by_task = defaultdict(list)
+        f = fam[s["group"]]
+        per_task: Dict[str, List[bool]] = defaultdict(list)
         for qid, m in s["meta"].items():
-            key = (s["id"], qid)
-            if key not in hit:
+            gold = answer(s["gold"][qid])
+            if policy and m["task"] not in SCORED:   # the policies are defined on the scored tasks only
                 continue
-            ok = hit[key]
-            by_task[m["task"]].append(ok)
-            fam[g]["task:" + m["task"]][0] += ok
-            fam[g]["task:" + m["task"]][1] += 1
-            if m["task"] in TASKS:
-                fam[g]["stratum:" + m["stratum"]][0] += ok
-                fam[g]["stratum:" + m["stratum"]][1] += 1
-            if m["task"] in ("colour", "count"):
-                gold = max(s["gold"][qid]["probabilities"], key=s["gold"][qid]["probabilities"].get)
-                for base in ("salient", "minor"):
-                    fam[g]["%s:%s" % (base, m["stratum"])][0] += m[base] == gold
-                    fam[g]["%s:%s" % (base, m["stratum"])][1] += 1
-                if m["salient"] != gold:
-                    fam[g]["answered_salient"][0] += hit[("pred", s["id"], qid)] == m["salient"]
-                    fam[g]["answered_salient"][1] += 1
-        for t in TASKS:
-            if by_task[t]:
-                fam[g]["binding"][0] += all(by_task[t])
-                fam[g]["binding"][1] += 1
+            said = m[policy] if policy else pred[(s["id"], qid)]
+            ok = said == gold
+            f["task:" + m["task"]][0] += ok
+            f["task:" + m["task"]][1] += 1
+            if m["task"] in SCORED:
+                per_task[m["task"]].append(ok)
+                f["stratum:" + m["stratum"]][0] += ok
+                f["stratum:" + m["stratum"]][1] += 1
+                if m["salient"] != gold and not ok:
+                    f["wrong_is_salient"][0] += said == m["salient"]
+                    f["wrong_is_salient"][1] += 1
+        for task in SCORED:
+            if len(per_task[task]) != len(s["scene"]):
+                raise ReportError("%s: %s asked about %d of %d kinds" % (s["id"], task, len(per_task[task]), len(s["scene"])))
+            f["binding"][0] += all(per_task[task])
+            f["binding"][1] += 1
     return fam
 
 
-def summarise(fam):
-    tot = defaultdict(lambda: [0, 0])
+def totals(fam) -> Dict[str, Any]:
+    t: Dict[str, List[int]] = defaultdict(lambda: [0, 0])
     for f in fam.values():
         for k, (h, n) in f.items():
-            tot[k][0] += h
-            tot[k][1] += n
-    return {k: round(h / n, 4) for k, (h, n) in sorted(tot.items()) if n}
+            t[k][0] += h
+            t[k][1] += n
+    return {k: {"accuracy": round(h / n, 4), "n": n} for k, (h, n) in sorted(t.items()) if n}
 
 
-def paired(fa, fb, key, draws=2000, seed=0):
-    groups = [g for g in fa if fa[g][key][1] and fb[g][key][1]]
-    vals = [(fa[g][key][0], fb[g][key][0], fa[g][key][1]) for g in groups]
+def gate(summary: Dict[str, Any]) -> Dict[str, Any]:
+    strata = {s: summary.get("stratum:" + s, {}).get("accuracy", 0.0) for s in STRATA}
+    ok = summary.get("binding", {}).get("accuracy", 0.0) >= GATE["binding"] and all(v >= GATE["stratum"] for v in strata.values())
+    return {"passes": ok, "binding": summary.get("binding", {}).get("accuracy"), "strata": strata, "thresholds": GATE}
+
+
+def paired(fa, fb, key: str, draws: int = 2000, seed: int = 0) -> Optional[Dict[str, Any]]:
+    if set(fa) != set(fb):
+        raise ReportError("the two evaluations cover different scene families")
+    vals = []
+    for g in sorted(fa):
+        (ha, na), (hb, nb) = fa[g][key], fb[g][key]
+        if na != nb:
+            raise ReportError("family %s: %s has %d units in one file and %d in the other" % (g, key, na, nb))
+        if na:
+            vals.append((ha, hb, na))
     if not vals:
         return None
     n = sum(v[2] for v in vals)
@@ -90,7 +149,32 @@ def paired(fa, fb, key, draws=2000, seed=0):
         boots.append((sum(v[1] for v in smp) - sum(v[0] for v in smp)) / sum(v[2] for v in smp))
     boots.sort()
     return {"difference": round(diff, 4), "ci95": [round(boots[int(0.025 * draws)], 4), round(boots[int(0.975 * draws) - 1], 4)],
-            "families": len(groups)}
+            "families": len(vals), "units": n}
+
+
+def report(data_path: str, details_paths: List[str]) -> Dict[str, Any]:
+    samples = rows(data_path)
+    data_sha = sha256(data_path)
+    out: Dict[str, Any] = {"data": data_path, "data_sha256": data_sha, "pictures": len(samples),
+                           "families": len({s["group"] for s in samples}),
+                           "questions": sum(len(s["questions"]) for s in samples), "models": []}
+    for policy in ("salient", "minor"):
+        summary = totals(family_counts(samples, {}, policy))
+        out["policy_" + policy] = {"summary": summary, "gate": gate(summary)}
+    fams = []
+    for path in details_paths:
+        side = path.replace(".details.jsonl", ".json")
+        summary_json = json.load(open(side)) if os.path.exists(side) else None
+        fam = family_counts(samples, predictions(samples, rows(path), data_sha, summary_json))
+        fams.append(fam)
+        entry: Dict[str, Any] = {"details": path, "summary": totals(fam)}
+        entry["gate"] = gate(entry["summary"])
+        if len(fams) > 1:
+            keys = ["binding", "wrong_is_salient"] + ["stratum:" + s for s in STRATA] + \
+                ["task:" + t for t in ("colour", "count", "exists_true", "exists_trap", "exists_absent", "compare")]
+            entry["vs_baseline"] = {k: paired(fams[0], fam, k) for k in keys}
+        out["models"].append(entry)
+    return out
 
 
 def main():
@@ -99,30 +183,25 @@ def main():
     p.add_argument("details", nargs="+", help="baseline first")
     p.add_argument("--out")
     a = p.parse_args()
-    samples = rows(a.samples)
-    fams = [units(samples, correct(rows(d))) for d in a.details]
-    report = {"samples": a.samples, "models": []}
-    for path, fam in zip(a.details, fams):
-        entry = {"details": path, "summary": summarise(fam)}
-        if fam is not fams[0]:
-            keys = ["binding", "answered_salient"] + ["task:" + t for t in ("colour", "count", "exists_true", "exists_trap", "compare")] \
-                + ["stratum:" + s for s in ("target_salient", "close", "target_minor")]
-            entry["vs_baseline"] = {k: paired(fams[0], fam, k) for k in keys}
-        report["models"].append(entry)
-        s = entry["summary"]
-        print("%s\n  binding %.3f | colour %.3f count %.3f trap %.3f true %.3f | answered salient %.3f" % (
-            path, s.get("binding", 0), s.get("task:colour", 0), s.get("task:count", 0), s.get("task:exists_trap", 0),
-            s.get("task:exists_true", 0), s.get("answered_salient", 0)))
-        for st in ("target_salient", "close", "target_minor"):
-            print("  %-15s model %.3f | name-blind salient %.3f minor %.3f" % (
-                st, s.get("stratum:" + st, 0), s.get("salient:" + st, 0), s.get("minor:" + st, 0)))
-        for k, v in (entry.get("vs_baseline") or {}).items():
+    r = report(a.samples, a.details)
+    print("data %s (sha256 %s): %d pictures, %d families, %d questions" % (
+        r["data"], r["data_sha256"][:12], r["pictures"], r["families"], r["questions"]))
+    for policy in ("salient", "minor"):
+        g = r["policy_" + policy]["gate"]
+        print("name-blind %-7s binding %.3f strata %s gate %s" % (policy, g["binding"], g["strata"], g["passes"]))
+    for m in r["models"]:
+        s, g = m["summary"], m["gate"]
+        acc = lambda k: s.get(k, {}).get("accuracy", float("nan"))
+        print("%s\n  binding %.3f | colour %.3f count %.3f | exists true %.3f trap %.3f absent %.3f | compare %.3f | wrong=salient %.3f"
+              % (m["details"], acc("binding"), acc("task:colour"), acc("task:count"), acc("task:exists_true"),
+                 acc("task:exists_trap"), acc("task:exists_absent"), acc("task:compare"), acc("wrong_is_salient")))
+        print("  strata %s -> gate %s" % ({k: round(v, 3) for k, v in g["strata"].items()}, "PASS" if g["passes"] else "fail"))
+        for k, v in (m.get("vs_baseline") or {}).items():
             if v:
                 print("  vs baseline %-22s %+.3f [%+.3f, %+.3f]" % (k, v["difference"], *v["ci95"]))
     if a.out:
-        import os
         os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
-        json.dump(report, open(a.out, "w"), indent=1)
+        json.dump(r, open(a.out, "w"), indent=1)
 
 
 if __name__ == "__main__":

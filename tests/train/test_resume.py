@@ -76,3 +76,22 @@ def test_a_resume_state_from_different_settings_is_refused(tmp_path, samples, mo
     monkeypatch.undo()
     with pytest.raises(ValueError, match="different run"):
         run(tmp_path, "x", samples, save_every=4, lr_head=1e-4)
+
+
+def test_a_stopped_run_with_counterfactual_groups_resumes_to_the_same_model(tmp_path, samples, monkeypatch):
+    grouped = [dict(s, group="fam%d" % (i // 3)) for i, s in enumerate(samples)]
+    whole, r_whole = run(tmp_path, "gwhole", grouped, save_every=2)
+    real_save = rlcd._save_state
+
+    def save_then_stop(path, state):
+        real_save(path, state)
+        if len(state["losses"]) == 4:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(rlcd, "_save_state", save_then_stop)
+    with pytest.raises(KeyboardInterrupt):
+        run(tmp_path, "gparts", grouped, save_every=2)
+    monkeypatch.setattr(rlcd, "_save_state", real_save)
+    parts, r_parts = run(tmp_path, "gparts", grouped, save_every=2)
+    assert r_parts["losses"] == pytest.approx(r_whole["losses"])
+    assert sum(answers(parts), []) == pytest.approx(sum(answers(whole), []))

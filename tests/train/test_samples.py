@@ -1,11 +1,11 @@
 """Decision samples are checked before training (broken gold is an error, never a uniform target), and scene
-families stay adjacent when the training order is shuffled."""
+families' counterfactual units never straddle a micro batch."""
 import json
 import random
 
 import pytest
 
-from devision.train.rlcd import grouped_order
+from devision.train.rlcd import plan_batches
 from devision.train.samples import read_decision_jsonl, sample_errors
 
 
@@ -42,12 +42,44 @@ def test_the_reader_names_file_line_and_id(tmp_path):
         read_decision_jsonl(str(p))
 
 
-def test_grouped_order_keeps_each_scene_family_together_and_shuffles_families():
-    items = [{"group": "a"}, {"group": "b"}, {"group": "a"}, {"group": "c"}, {"group": "b"}, {}]
-    order = grouped_order(items, random.Random(0))
-    assert sorted(order) == list(range(6))
-    seen = [items[i].get("group", i) for i in order]
-    for g in ("a", "b"):
-        first = seen.index(g)
-        assert seen[first:first + 2] == [g, g]
-    assert {tuple(grouped_order(items, random.Random(s))) for s in range(10)} != {tuple(order)}
+def units_of(items):
+    u = {}
+    for i, it in enumerate(items):
+        if "group" in it:
+            u.setdefault((it["group"], it["qid"]), set()).add(i)
+    return u
+
+
+def check(items, mb, seed):
+    batches = plan_batches(items, mb, random.Random(seed))
+    flat = [i for b in batches for i in b]
+    assert sorted(flat) == list(range(len(items)))          # every item once
+    assert all(1 <= len(b) <= mb for b in batches)
+    where = {i: n for n, b in enumerate(batches) for i in b}
+    for key, idx in units_of(items).items():
+        if len(idx) <= mb:
+            assert len({where[i] for i in idx}) == 1, key     # a unit never crosses a batch
+    return batches
+
+
+def test_counterfactual_units_share_a_micro_batch():
+    rng = random.Random(0)
+    items = []
+    for fam in range(40):                     # families of 4 pictures x 9-11 questions: 36-44 items, > a batch
+        for qid in range(9 + fam % 3):
+            for _ in range(4):
+                items.append({"group": "f%d" % fam, "qid": "q%d" % qid})
+    items += [{"qid": "q"} for _ in range(37)]   # replay / GQA without groups, odd count for a ragged tail
+    rng.shuffle(items)
+    for seed in range(5):
+        batches = check(items, 8, seed)
+        assert len(batches) == -(-len(items) // 8)   # packs tightly: no extra steps
+    assert check(items, 8, 0) != check(items, 8, 1)
+
+
+def test_a_unit_larger_than_a_batch_is_split_into_batch_sized_pieces():
+    items = [{"group": "g", "qid": "q"} for _ in range(11)] + [{"qid": "x"}]
+    batches = plan_batches(items, 4, random.Random(0))
+    assert sorted(len(b) for b in batches) == [4, 4, 4]          # pieces 4 + 4 + 3, the singleton fills the gap
+    assert sum(1 for b in batches if any(i < 11 for i in b)) == 3
+    assert sorted(i for b in batches for i in b) == list(range(12))

@@ -149,3 +149,25 @@ def test_boolean_training_flags_parse_false_as_false():
     args = ["--data", "d", "--out", "o", "--question-conditioning"]
     assert p.parse_args(args + ["False"]).question_conditioning is False
     assert p.parse_args(args + ["True"]).question_conditioning is True
+
+
+def test_only_referents_in_the_picture_are_grounding_targets(tmp_path):
+    """An "Is there a yellow square?" with no yellow square is not pointed at the other square (critic R13-I03);
+    a false comparison whose objects are both there still is."""
+    from devision.train.rlcd import _items
+    d = tiny_decider()
+    box = [[20, 90, 80, 80]]
+    s = {"id": "s", "image": "a.png", "width": 256, "height": 256,
+         "questions": {"trap": {"type": "noul", "instructions": "Is there a yellow square?"},
+                       "more": {"type": "noul", "instructions": "Are there more squares than circles?"},
+                       "colour": {"type": "choice", "instructions": "What color is the square?",
+                                  "criteria": {"red": None, "blue": None}}},
+         "gold": {"trap": {"probabilities": {"false": 1.0, "true": 0.0}},
+                  "more": {"probabilities": {"false": 1.0, "true": 0.0}},
+                  "colour": {"probabilities": {"red": 1.0, "blue": 0.0}}},
+         "meta": {"trap": {"referent_present": False}, "more": {"referent_present": True}},
+         "boxes": {"trap": box, "more": box, "colour": box}}   # even if a box was written for the absent one
+    items = {it["qid"]: it for it in _items(d, [s])}
+    assert "grid" not in items["trap"]
+    assert "grid" in items["more"] and "grid" in items["colour"]
+    assert abs(sum(items["colour"]["grid"]) - 1) < 1e-6
