@@ -63,6 +63,17 @@ class TrainConfig:
     run_name: str = ""
 
 
+def grouped_order(items: Sequence[Dict[str, Any]], rng: Any = random) -> List[int]:
+    """A shuffled item order in which items sharing a "group" (a scene family: a picture, its edited or mirrored
+    versions, every question about them) stay next to each other, so pairs land in the same micro batch."""
+    groups: Dict[Any, List[int]] = {}
+    for i, it in enumerate(items):
+        groups.setdefault(it.get("group", i), []).append(i)
+    keys = list(groups)
+    rng.shuffle(keys)
+    return [i for k in keys for i in groups[k]]
+
+
 def _device(name: str) -> torch.device:
     if name == "auto":
         return torch.device(best_device())
@@ -79,9 +90,13 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             keys = ["false", "true"] if q["type"] == "noul" else list(q["criteria"])
             target = [float(probs.get(k, 0.0)) for k in keys]
             total = sum(target)
-            it["target"] = [t / total for t in target] if total > 0 else [1 / len(keys)] * len(keys)
+            if not total > 0:   # read_decision_jsonl rejects these; never turn a broken label into a uniform one
+                raise ValueError("sample %s question %r: gold probabilities sum to 0" % (s.get("id"), qid))
+            it["target"] = [t / total for t in target]
             it["image"] = s["image"]
             it["source"] = s.get("source", "")
+            if "group" in s:
+                it["group"] = s["group"]   # questions of one scene family stay adjacent when shuffled
             items.append(it)
     return items
 
@@ -411,8 +426,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     log = TrainLog(tracker, device, steps, c.log_every)
     for epoch in range(start_epoch, c.epochs):
         if not (resumed and epoch == start_epoch):
-            order = order or list(range(len(train_items)))
-            random.shuffle(order)   # reshuffles last epoch's order, as shuffling the items in place did
+            if any("group" in it for it in train_items):
+                order = grouped_order(train_items)
+            else:   # no groups: the order (and the RNG use) of every run before round 13
+                order = order or list(range(len(train_items)))
+                random.shuffle(order)
         for b in range(start_b if resumed and epoch == start_epoch else 0, len(train_items), c.micro_batch):
             sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * len(losses) / max(1, steps - 1)
             chunk = [train_items[i] for i in order[b:b + c.micro_batch]]

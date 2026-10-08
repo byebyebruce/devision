@@ -2,8 +2,9 @@
 import argparse
 import json
 import os
+from typing import Any, Dict, Sequence
 
-from .samples import read_jsonl
+from .samples import read_decision_jsonl, read_jsonl
 
 
 def _parser(doc: str, config) -> argparse.ArgumentParser:
@@ -88,9 +89,10 @@ def train_main(argv=None) -> None:
     a = p.parse_args(argv)
     config = TrainConfig(**{k: getattr(a, k) for k in vars(TrainConfig())})
     seed_all(config.seed)
-    report = train(_decider(a), read_jsonl(a.data), a.data_root, a.out, config,
-                   val_samples=read_jsonl(a.val) if a.val else None,
-                   eval_sets={name: read_jsonl(path) for name, path in (e.split("=", 1) for e in a.eval)})
+    data = read_decision_jsonl(a.data)   # every file checked before the model loads
+    val = read_decision_jsonl(a.val) if a.val else None
+    sets: Dict[str, Sequence[Any]] = {name: read_decision_jsonl(path) for name, path in (e.split("=", 1) for e in a.eval)}
+    report = train(_decider(a), data, a.data_root, a.out, config, val_samples=val, eval_sets=sets)
     _write_report(a.out, "train_report.json", report)
 
 
@@ -152,7 +154,7 @@ def eval_main(argv=None) -> None:
     decider = Decider.load(a.checkpoint, device=a.device)
     if a.no_temperature:
         decider.cfg.temperature, decider.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}
-    result = evaluate(decider, read_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records,
+    result = evaluate(decider, read_decision_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records,
                       max_questions=None if a.no_group else a.max_questions)
     result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
                      "device": str(next(decider.model.parameters()).device),
@@ -203,7 +205,7 @@ def calibrate_main(argv=None) -> None:
 
     decider = Decider.load(a.checkpoint, device=a.device)
     device = str(next(decider.model.parameters()).device)
-    report = calibrate(decider, read_jsonl(a.data), a.data_root, device=device, min_bucket=a.min_bucket)
+    report = calibrate(decider, read_decision_jsonl(a.data), a.data_root, device=device, min_bucket=a.min_bucket)
     report["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data),
                      "code": _code_version()}
     print("temperature (choice, score, noul): %s -> %s" % (
