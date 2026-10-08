@@ -87,7 +87,9 @@ git tag -a v0.2.0 -m "devision 0.2.0" && git push origin v0.2.0   # 发布 Pytho
 
 ## 评论（`critic/`）
 
-`critic/critic.md` 是另一位评审（按 `AGENTS.md` 工作，只读审查）对最近改动写的评论；`critic/` 已 gitignore。用户说「看评论」时：
+`critic/critic.md` 是另一位评审（按 `AGENTS.md` 工作，只读审查）对最近改动写的评论；`critic/` 已 gitignore。
+
+**请评审来审**：`.local-dev/talktoCritic.sh "<给评审的话>"`（`.local-dev/` 已 gitignore，脚本经 `cc-send.sh` 发到评审的会话；返回 0 并打印 `Timer created` 即已送达，评审会在提示的时间开始）。消息里写清：worktree / 分支和提交范围、方案或文档路径、本批要看什么、哪些还没完成不必审、评论追加到主仓库 `critic/critic.md` 末尾。先提交再请审，让评审按提交号审查。用户说「看评论」时：
 
 1. 先读 `critic/critic.md`，只处理尚未回复的内容（文件末尾最后一条回复之后的部分）。
 2. **甄别，不要被评论带着走。** 每一条分开判断三件事，不能因为事实属实就照单全收：
