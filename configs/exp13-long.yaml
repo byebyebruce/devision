@@ -18,7 +18,7 @@ stages:
     val: data/v5/dev_mix.jsonl              # temperature fit (calibration_fit)
     eval: {bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, bind_cf: data/r13/screen/dev_bind_cf_watch.jsonl}
     params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, lr_cond: 1.0e-4, warmup: 200,
-             eval_every: 2000, save_every: 1000, amp: "off", seed: 0, question_conditioning: true}
+             eval_every: 2000, save_every: 500, amp: "off", seed: 0, question_conditioning: true}
 
 evaluate:
   image_identity: data/v5/image_identity.json
