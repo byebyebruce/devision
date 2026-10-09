@@ -8,3 +8,4 @@ __pycache__/
 /swanlog/
 /critic/
 /.claude/worktrees/
+/.local-dev/
