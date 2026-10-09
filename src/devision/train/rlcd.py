@@ -542,9 +542,12 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 target = torch.tensor([chunk[i]["grid"] for i in grounded], device=device)
                 ground = (target * (target.log() - logp)).sum(-1).mean()
                 loss = loss + c.grounding_weight * ground
-            if not math.isfinite(loss.item()) or (loss.item() == 0.0 and nll.item() == 0.0):
-                # an RLCD loss is never exactly 0: on 2026-10-10 the Apple GPU started ignoring command buffers
-                # mid-run and every result came back as zeros. Stop before the resume state is overwritten.
+            hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
+                   == batch["target"].to(device).argmax(-1)).float().mean()
+            if not math.isfinite(loss.item()) or (loss.item() == 0.0 and nll.item() == 0.0 and hit.item() < 1.0):
+                # a zero loss is only possible when every answer is right: on 2026-10-10 the Apple
+                # GPU started ignoring command buffers mid-run and every result came back as zeros. Stop before the
+                # resume state is overwritten.
                 raise RuntimeError("step %d: training loss is %r (nll %r): the device is returning invalid results; "
                                    "stopping with the last good resume state kept" % (len(losses), loss.item(), nll.item()))
             optimizer.zero_grad(set_to_none=True)
@@ -553,8 +556,6 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             optimizer.step()
             scheduler.step()
             losses.append(nll.item())  # .item() syncs the device, so step times are real
-            hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
-                   == batch["target"].to(device).argmax(-1)).float().mean()
             log.add(len(chunk), loss=loss.item(), nll=nll.item(), accuracy=hit.item(),
                     batch_tokens=float(batch["input_ids"].shape[1]),   # padded length; long batches drive memory
                     grad_norm=grad_norm.item(), sigma=sigma,

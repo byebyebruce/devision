@@ -102,12 +102,19 @@ def test_an_invalid_loss_stops_training_and_keeps_the_last_good_resume_state(tmp
     real_loss = rlcd._rlcd_loss
     calls = {"n": 0}
 
-    def zero_after_five(*args, **kw):
-        calls["n"] += 1
-        loss, nll = real_loss(*args, **kw)
-        return (loss * 0, nll * 0) if calls["n"] > 5 else (loss, nll)
+    real_forward = rlcd._forward
 
-    monkeypatch.setattr(rlcd, "_rlcd_loss", zero_after_five)
+    def zero_after_five(*args, **kw):          # what the failing GPU did: every number came back 0
+        calls["n"] += 1
+        out = real_forward(*args, **kw)
+        return out * 0 if calls["n"] > 5 else out
+
+    def loss_of_zeros(logits, *args, **kw):
+        loss, nll = real_loss(logits, *args, **kw)
+        return (loss * 0, nll * 0) if not logits.abs().sum() else (loss, nll)
+
+    monkeypatch.setattr(rlcd, "_forward", zero_after_five)
+    monkeypatch.setattr(rlcd, "_rlcd_loss", loss_of_zeros)
     with pytest.raises(RuntimeError, match="invalid results"):
         run(tmp_path, "bad", samples, save_every=4)
     import torch
