@@ -542,6 +542,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 target = torch.tensor([chunk[i]["grid"] for i in grounded], device=device)
                 ground = (target * (target.log() - logp)).sum(-1).mean()
                 loss = loss + c.grounding_weight * ground
+            if not math.isfinite(loss.item()) or (loss.item() == 0.0 and nll.item() == 0.0):
+                # an RLCD loss is never exactly 0: on 2026-10-10 the Apple GPU started ignoring command buffers
+                # mid-run and every result came back as zeros. Stop before the resume state is overwritten.
+                raise RuntimeError("step %d: training loss is %r (nll %r): the device is returning invalid results; "
+                                   "stopping with the last good resume state kept" % (len(losses), loss.item(), nll.item()))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)

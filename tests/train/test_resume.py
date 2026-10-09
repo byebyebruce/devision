@@ -95,3 +95,21 @@ def test_a_stopped_run_with_counterfactual_groups_resumes_to_the_same_model(tmp_
     parts, r_parts = run(tmp_path, "gparts", grouped, save_every=2)
     assert r_parts["losses"] == pytest.approx(r_whole["losses"])
     assert sum(answers(parts), []) == pytest.approx(sum(answers(whole), []))
+
+
+def test_an_invalid_loss_stops_training_and_keeps_the_last_good_resume_state(tmp_path, samples, monkeypatch):
+    """A device that starts returning zeros (the 2026-10-10 MPS failure) stops the run instead of training on."""
+    real_loss = rlcd._rlcd_loss
+    calls = {"n": 0}
+
+    def zero_after_five(*args, **kw):
+        calls["n"] += 1
+        loss, nll = real_loss(*args, **kw)
+        return (loss * 0, nll * 0) if calls["n"] > 5 else (loss, nll)
+
+    monkeypatch.setattr(rlcd, "_rlcd_loss", zero_after_five)
+    with pytest.raises(RuntimeError, match="invalid results"):
+        run(tmp_path, "bad", samples, save_every=4)
+    import torch
+    state = torch.load(tmp_path / "bad" / rlcd.RESUME, weights_only=False)
+    assert len(state["losses"]) == 4 and all(x > 0 for x in state["losses"])
