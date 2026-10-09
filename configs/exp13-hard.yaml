@@ -1,0 +1,29 @@
+# Round 13 hard-slice fitting diagnostic (plan section 6, proposal 2; owner approved 2026-10-09). Not a round.
+# S2's checkpoint trains repeatedly on the same 60 photo-background families with a kind of 3-4 objects that it saw
+# once in the screen (scripts/r13/hard_slice.py, data/r13/hard/): 3 passes = 990 steps, warmup 50, the screen's
+# learning rates, cosine to 0. Monitored every 250 steps on those training questions and on 60 unseen families of
+# the same slice (dev_bind_cf); the reading rules are in the plan, written before the run.
+#   nohup uv run devision-pipeline configs/exp13-hard.yaml > runs/exp13-hard.out 2>&1 &
+name: exp13-hard
+device: mps
+common:
+  log_every: 30
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/exp13-s2/stage2
+    data: data/r13/hard/hard_train.jsonl
+    val: data/v5/dev_mix.jsonl              # temperature fit; also shows forgetting
+    eval: {train_count34: data/r13/hard/hard_train_count.jsonl, dev_count34: data/r13/hard/hard_dev_count.jsonl,
+           train_all: data/r13/hard/hard_train.jsonl, dev_all: data/r13/hard/hard_dev.jsonl}
+    params: {epochs: 3, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, lr_cond: 1.0e-4, warmup: 50,
+             eval_every: 250, save_every: 250, amp: "off", seed: 0, question_conditioning: true}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  sets:
+    hard_train_count: {path: data/r13/hard/hard_train_count.jsonl, role: monitoring}
+    hard_dev_count: {path: data/r13/hard/hard_dev_count.jsonl, role: monitoring}
+    hard_train: {path: data/r13/hard/hard_train.jsonl, role: monitoring}
+    hard_dev: {path: data/r13/hard/hard_dev.jsonl, role: monitoring}
