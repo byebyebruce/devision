@@ -271,8 +271,11 @@ def backgrounds(root: str, split: str, n: int) -> List[str]:
     return [os.path.join(folder, x) for x in rng.sample(pool, min(n, len(pool)))]
 
 
-def build_split(root: str, split: str, families: int, version: str = VERSION) -> Dict[str, Any]:
-    rng = random.Random(SPLIT_SEED[split])
+def build_split(root: str, split: str, families: int, version: str = VERSION, photo_share: float = 0.5,
+                seed: Optional[int] = None) -> Dict[str, Any]:
+    """`photo_share`: share of families on a photo background (0.5 for v2; exp13-long's training part uses 0.75 with
+    its own seed, written to synth-<version> so the v2 files stay as they are)."""
+    rng = random.Random(SPLIT_SEED[split] if seed is None else seed)
     photos = backgrounds(root, split, families)
     out_dir = os.path.join(root, "r13", "synth-" + version)
     img_dir = os.path.join(out_dir, "images", split)
@@ -281,7 +284,8 @@ def build_split(root: str, split: str, families: int, version: str = VERSION) ->
     f = 0
     while f < families:
         base = base_scene(rng, split)
-        background = photos[f % len(photos)] if photos and f % 2 == 1 else rng.choice(PLAIN)
+        on_photo = f % 2 == 1 if photo_share == 0.5 else rng.random() < photo_share   # 0.5: exactly as v2 was built
+        background = photos[f % len(photos)] if photos and on_photo else rng.choice(PLAIN)
         instances = layout(base["kinds"], rng)
         vs = variants(base, instances, rng, split) if instances else None
         if not vs:
@@ -321,7 +325,13 @@ def main(argv=None):
     p.add_argument("--train", type=int, default=1400, help="scene families")
     p.add_argument("--dev", type=int, default=300)
     p.add_argument("--test", type=int, default=300)
+    p.add_argument("--photo75-train", type=int, default=0, help="only build a training split with 75%% photo "
+                   "backgrounds (seed 44) into synth-v2p75/, for exp13-long")
     a = p.parse_args(argv)
+    if a.photo75_train:
+        info = build_split(a.root, "train", a.photo75_train, version="v2p75", photo_share=0.75, seed=44)
+        print(json.dumps(info))
+        return
     manifest = {"version": VERSION, "held_out_combinations": sorted(map(list, HELD_OUT)), "splits": []}
     for split, n in (("train", a.train), ("dev", a.dev), ("test", a.test)):
         info = build_split(a.root, split, n)

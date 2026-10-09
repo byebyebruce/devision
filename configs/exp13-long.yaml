@@ -1,0 +1,28 @@
+# exp13-long (plan section 6, proposal 1; owner approved 2026-10-09). An experiment, not a round: S2 (question-
+# conditioned visual tokens) from v12 on ~86,000 questions, one pass (scripts/r13/long_mix.py -> data/r13/long/:
+# synthetic with 75% photo backgrounds, GQA binding, VisMin, TallyQA complex, VAW, PixMo two-kind, v12 replay with
+# floors). The screen's learning rates, warmup 200, cosine to 0, micro batches packed from counterfactual units,
+# last-step checkpoint, temperatures on dev_mix. Gates (a)(b)(c) and the three exits are in the plan, fixed before
+# the run; the result speaks for this whole recipe only.
+#   nohup uv run devision-pipeline configs/exp13-long.yaml > runs/exp13-long.out 2>&1 &
+name: exp13-long
+device: mps
+common:
+  log_every: 100
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v12-ext/stage2
+    data: data/r13/long/train.jsonl
+    val: data/v5/dev_mix.jsonl              # temperature fit (calibration_fit)
+    eval: {bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, bind_cf: data/r13/screen/dev_bind_cf_watch.jsonl}
+    params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, lr_cond: 1.0e-4, warmup: 200,
+             eval_every: 2000, save_every: 1000, amp: "off", seed: 0, question_conditioning: true}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl
+    dev_bind_cf: {path: data/r13/synth-v2/dev_bind_cf.jsonl, role: monitoring}
+    dev_bind_gqa: {path: data/r13/gqa/dev_bind_gqa.jsonl, role: monitoring}
