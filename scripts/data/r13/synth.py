@@ -326,10 +326,13 @@ def main(argv=None):
     p.add_argument("--dev", type=int, default=300)
     p.add_argument("--test", type=int, default=300)
     p.add_argument("--photo75-train", type=int, default=0, help="only build a training split with 75%% photo "
-                   "backgrounds (seed 44) into synth-v2p75/, for exp13-long")
+                   "backgrounds into synth-<--photo75-version>/ (exp13-long: v2p75, seed 44; round 13: r13p75, seed 46)")
+    p.add_argument("--photo75-version", default="v2p75")
+    p.add_argument("--photo75-seed", type=int, default=44)
     a = p.parse_args(argv)
     if a.photo75_train:
-        info = build_split(a.root, "train", a.photo75_train, version="v2p75", photo_share=0.75, seed=44)
+        info = build_split(a.root, "train", a.photo75_train, version=a.photo75_version, photo_share=0.75,
+                           seed=a.photo75_seed)
         print(json.dumps(info))
         return
     manifest = {"version": VERSION, "held_out_combinations": sorted(map(list, HELD_OUT)), "splits": []}
