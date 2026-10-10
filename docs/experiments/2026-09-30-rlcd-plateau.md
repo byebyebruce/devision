@@ -530,7 +530,7 @@ v7 的 ScienceQA 涨幅几乎都在社会科学；自然科学里同题面不同
 
 ## 追加：512 输入 + 4×4 合并没有显出好处——结构筛选 D（2026-10-06）
 
-方案 `critic/plan-round12-arch.md`（修订 1；评审意见与代码审查在 worktree `../devision-r12/critic/critic.md`）。代码在分支 `r12-arch`（worktree `../devision-r12`），没有合并回 master。判定脚本 `scripts/r12/judge.py` 在 D 训完之前写好，结果在 `runs/r12/judge.json`。
+方案 `critic/plan-round12-arch.md`（修订 1；评审意见与代码审查原在 worktree `../devision-r12/critic/critic.md`，2026-10-10 删除该 worktree 时移到主仓库 `critic/r12-arch-critic.md`，本地文件不进 git）。代码在分支 `r12-arch`（worktree 已删除，分支保留），没有合并回 master。判定脚本 `scripts/r12/judge.py` 在 D 训完之前写好，结果在 `runs/r12/judge.json`。
 
 **做法**：
 - D = v9b 换成 SigLIP2-B/16-512（revision a89f5c5），512 输入、4×4 合并，仍是 64 个视觉 token。
