@@ -13,6 +13,7 @@ scheduler, step, epoch order, RNG, metrics so far) is written to <out>/resume.pt
 one. Training the same out directory again picks up from there (the model must be built the same way,
 i.e. the same --init); the file is removed when training finishes.
 """
+import json
 import math
 import os
 import random
@@ -27,6 +28,7 @@ from laya.common import QTYPES, clamp_temperature, collate_items, ece_score, pro
 from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
 
+from .evaluate import score_records
 from .samples import Sample
 from .tracking import Tracker, TrainLog
 from ..infer import Decider, image_tensor, question_item
@@ -66,6 +68,10 @@ class TrainConfig:
     grounding_weight: float = 0.0   # S1: weight of the grounding loss (questions whose sample has boxes); 0: off
     question_conditioning: bool = False   # S2: add question-conditioned visual tokens (model.QuestionConditioning)
     lr_cond: float = 1e-4        # learning rate of the S2 module and the S1 grounding head
+    # v12 retrain (docs/experiments/2026-10-11-v12-retrain-plan.md, section 10): at every evaluation, also write
+    # each set's per-question records (devision-eval's details format, temperature 1) to
+    # <out>/monitor/step<N>/<set>.details.jsonl, and the fitted-temperature ones to <out>/monitor/final/
+    monitor_details: bool = False
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -161,6 +167,10 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             it["image"] = s["image"]
             it["source"] = s.get("source", "")
             it["qid"] = qid
+            # what a per-question monitor record needs (the same fields devision-eval writes)
+            it["sample_id"], it["image_id"] = s["id"], s["image_id"]
+            it["kind"], it["axis"], it["type"] = s.get("kind", ""), s.get("axis", ""), q["type"]
+            it["keys"], it["gold"] = keys, probs
             if "group" in s:
                 it["group"] = s["group"]   # a scene family: its counterfactual pairs share a micro batch
             boxes = (s.get("boxes") or {}).get(qid)
@@ -269,6 +279,33 @@ def _val_logits(model, items, images, pad_id, device):
     model.train(was_training)
     model.vision.eval()
     return out
+
+
+def monitor_records(logits, items, temperature: Optional[Sequence[float]] = None,
+                    by_options: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
+    """Per-question records of option logits, in devision-eval's details format (no latency: the questions
+    were not asked through decide()). Probabilities use the temperature decide() would (1 without one)."""
+    out = []
+    for z, it in zip(logits, items):
+        t = pick_temperature(temperature, by_options, it["qtype"], len(z)) if temperature else 1.0
+        p = torch.softmax(torch.tensor(z, dtype=torch.float64) / t, -1).tolist()
+        probs = dict(zip(it["keys"], p))
+        pred = max(probs, key=probs.__getitem__)
+        gold = it["gold"]
+        out.append({"sample_id": it["sample_id"], "qid": it["qid"], "image_id": it["image_id"],
+                    "image_used": it["image"], "source": it["source"], "kind": it["kind"], "axis": it["axis"],
+                    "type": it["type"], "options": list(it["keys"]), "gold": gold,
+                    "gold_answer": max(gold, key=gold.__getitem__), "probabilities": probs, "prediction": pred,
+                    "p_prediction": probs[pred], "control": "none", "latency_ms": None, "questions_in_request": None})
+    return score_records(out)
+
+
+def _write_records(path: str, records: List[Dict[str, Any]]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+    os.replace(path + ".tmp", path)
 
 
 def _accuracy(logits, items, qtype: Optional[int] = None) -> float:
@@ -501,7 +538,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             return evals[-1]
         row: Dict[str, float] = {}
         for name, its in sets.items():
-            row.update(_set_metrics(name, _val_logits(model, its, images, tok.pad_token_id, device), its))
+            logits = _val_logits(model, its, images, tok.pad_token_id, device)
+            row.update(_set_metrics(name, logits, its))
+            if c.monitor_details and out_dir:
+                _write_records(os.path.join(str(out_dir), "monitor", "step%d" % len(losses),
+                                            name + ".details.jsonl"), monitor_records(logits, its))
         tracker.log(row, step=len(losses))
         print("step %d %s" % (len(losses), {k: round(v, 4) for k, v in row.items()}), flush=True)
         evals.append(dict(row, step=len(losses)))
@@ -587,6 +628,10 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     # With the fitted temperatures, i.e. what decide() will return. val is also the fitting set.
     final = {k: v for name, its in sets.items()
              for k, v in _set_metrics(name, set_logits[name], its, temperature, by_options).items()}
+    if c.monitor_details and out_dir:
+        for name, its in sets.items():
+            _write_records(os.path.join(str(out_dir), "monitor", "final", name + ".details.jsonl"),
+                           monitor_records(set_logits[name], its, temperature, by_options))
     # the per-type temperatures alone (calibration before buckets), to see what the buckets add
     final_per_type = {k: v for name, its in sets.items()
                       for k, v in _set_metrics(name, set_logits[name], its, temperature).items()}
