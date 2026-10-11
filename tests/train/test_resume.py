@@ -76,3 +76,47 @@ def test_a_resume_state_from_different_settings_is_refused(tmp_path, samples, mo
     monkeypatch.undo()
     with pytest.raises(ValueError, match="different run"):
         run(tmp_path, "x", samples, save_every=4, lr_head=1e-4)
+
+
+def test_a_stopped_run_with_counterfactual_groups_resumes_to_the_same_model(tmp_path, samples, monkeypatch):
+    grouped = [dict(s, group="fam%d" % (i // 3)) for i, s in enumerate(samples)]
+    whole, r_whole = run(tmp_path, "gwhole", grouped, save_every=2)
+    real_save = rlcd._save_state
+
+    def save_then_stop(path, state):
+        real_save(path, state)
+        if len(state["losses"]) == 4:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(rlcd, "_save_state", save_then_stop)
+    with pytest.raises(KeyboardInterrupt):
+        run(tmp_path, "gparts", grouped, save_every=2)
+    monkeypatch.setattr(rlcd, "_save_state", real_save)
+    parts, r_parts = run(tmp_path, "gparts", grouped, save_every=2)
+    assert r_parts["losses"] == pytest.approx(r_whole["losses"])
+    assert sum(answers(parts), []) == pytest.approx(sum(answers(whole), []))
+
+
+def test_an_invalid_loss_stops_training_and_keeps_the_last_good_resume_state(tmp_path, samples, monkeypatch):
+    """A device that starts returning zeros (the 2026-10-10 MPS failure) stops the run instead of training on."""
+    real_loss = rlcd._rlcd_loss
+    calls = {"n": 0}
+
+    real_forward = rlcd._forward
+
+    def zero_after_five(*args, **kw):          # what the failing GPU did: every number came back 0
+        calls["n"] += 1
+        out = real_forward(*args, **kw)
+        return out * 0 if calls["n"] > 5 else out
+
+    def loss_of_zeros(logits, *args, **kw):
+        loss, nll = real_loss(logits, *args, **kw)
+        return (loss * 0, nll * 0) if not logits.abs().sum() else (loss, nll)
+
+    monkeypatch.setattr(rlcd, "_forward", zero_after_five)
+    monkeypatch.setattr(rlcd, "_rlcd_loss", loss_of_zeros)
+    with pytest.raises(RuntimeError, match="invalid results"):
+        run(tmp_path, "bad", samples, save_every=4)
+    import torch
+    state = torch.load(tmp_path / "bad" / rlcd.RESUME, weights_only=False)
+    assert len(state["losses"]) == 4 and all(x > 0 for x in state["losses"])

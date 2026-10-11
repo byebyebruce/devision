@@ -1,0 +1,39 @@
+# Round 13 full evaluation (plan, acceptance table): every test_* and bench_lv_* (with controls) as in round 12, the
+# sealed binding tests test_bind_cf / test_bind_gqa (first use), the transfer benches (SugarCrepe, What'sUp, CountBench
+# with common candidates, CoGenT B) and the counting test. Compared with v12 per question.
+#   uv run devision-pipeline configs/r13-binding-eval.yaml
+name: full
+stages: []
+
+evaluate:
+  checkpoint: runs/r13-binding/stage2
+  calibration_fit: data/v5/dev_mix.jsonl
+  history: [data/v6/dev_lr_pairs.jsonl, data/ext/dev_ext.jsonl, data/r13/gqa/dev_bind_gqa.jsonl, data/r13/screen/dev_bind_cf_watch.jsonl]
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl         # calibration_fit: reported, but not a held-out result
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl   # left/right on mirrored pictures: both right = grounded
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl   # laya-vision's benchmark
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
+    test_count_fresh: {path: data/v11/test_count_fresh.jsonl, role: heldout}
+    test_bind_cf: {path: data/r13/synth-v2/test_bind_cf.jsonl, role: heldout}
+    test_bind_gqa: {path: data/r13/gqa/test_bind_gqa.jsonl, role: heldout}
+    bench_sugarcrepe_att: {path: data/r13/bench/sugarcrepe_att.jsonl, role: heldout}
+    bench_sugarcrepe_rel: {path: data/r13/bench/sugarcrepe_rel.jsonl, role: heldout}
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_cogent_b: {path: data/r13/bench/cogent_b.jsonl, role: heldout}

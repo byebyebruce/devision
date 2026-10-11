@@ -18,10 +18,11 @@ import os
 import random
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
+import torch.nn as nn
 from laya.common import QTYPES, clamp_temperature, collate_items, ece_score, proper_reward
 from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
@@ -29,7 +30,7 @@ from PIL import Image
 from .samples import Sample
 from .tracking import Tracker, TrainLog
 from ..infer import Decider, image_tensor, question_item
-from ..model import ModelConfig, option_bucket, pick_temperature, text_encoder
+from ..model import ModelConfig, option_bucket, pick_temperature, question_mask, text_encoder
 from ..infer import best_device
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
@@ -61,6 +62,81 @@ class TrainConfig:
     amp: str = "cuda"            # bf16 autocast of the forward pass: "cuda" (on CUDA only), "mps" (on CUDA or MPS), "off"
     swanlab_project: str = ""    # "" disables SwanLab; the CLI defaults to "devision"
     run_name: str = ""
+    # round 13 screens (docs/experiments/2026-10-08-r13-binding-plan.md)
+    grounding_weight: float = 0.0   # S1: weight of the grounding loss (questions whose sample has boxes); 0: off
+    question_conditioning: bool = False   # S2: add question-conditioned visual tokens (model.QuestionConditioning)
+    lr_cond: float = 1e-4        # learning rate of the S2 module and the S1 grounding head
+
+
+GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
+
+
+def box_grid(boxes, width: int, height: int, size: int, grid: int = GRID, smooth: float = 0.1) -> List[float]:
+    """Where the named object is, as a distribution over the grid x grid visual tokens: each [x, y, w, h] box
+    (picture pixels) is letterboxed exactly as the picture is (image.letterbox), the share of each cell it
+    covers is summed over boxes and normalised, then mixed with the uniform distribution (`smooth`)."""
+    scale = size / max(width, height)
+    ox, oy = (size - round(width * scale)) // 2, (size - round(height * scale)) // 2
+    cell = size / grid
+    cover = [0.0] * (grid * grid)
+    for x, y, w, h in boxes:
+        x0, y0, x1, y1 = ox + x * scale, oy + y * scale, ox + (x + w) * scale, oy + (y + h) * scale
+        for r in range(grid):
+            for c in range(grid):
+                ix = max(0.0, min(x1, (c + 1) * cell) - max(x0, c * cell))
+                iy = max(0.0, min(y1, (r + 1) * cell) - max(y0, r * cell))
+                cover[r * grid + c] += ix * iy / (cell * cell)
+    total = sum(cover)
+    if total <= 0:
+        return []
+    return [(1 - smooth) * v / total + smooth / len(cover) for v in cover]
+
+
+class GroundingHead(nn.Module):
+    """S1, training only: from the encoder's last layer (a global-attention layer), the mean of the question's
+    tokens scores each visual token; trained towards where the named object is (KL to box_grid)."""
+
+    def __init__(self, dim: int, inner: int = 256):
+        super().__init__()
+        self.q, self.k, self.inner = nn.Linear(dim, inner), nn.Linear(dim, inner), inner
+
+    def forward(self, hidden, n_visual: int, qmask):
+        """hidden [B, L+V, D] (visual at 1..V), qmask [B, L] over text positions -> log-probs [B, V]."""
+        text = torch.cat([hidden[:, :1], hidden[:, 1 + n_visual:]], 1)
+        m = qmask.unsqueeze(-1).to(text.dtype)
+        q = (text * m).sum(1) / m.sum(1).clamp(min=1)
+        k = hidden[:, 1:1 + n_visual]
+        scores = (self.k(k) @ self.q(q).unsqueeze(-1)).squeeze(-1) / self.inner ** 0.5
+        return torch.log_softmax(scores.float(), -1)
+
+
+def plan_batches(items: Sequence[Dict[str, Any]], micro_batch: int, rng: Any = random) -> List[List[int]]:
+    """Micro batches (lists of item indices) in which every counterfactual unit is whole: the items that ask
+    the same question (same "group" and question id) about a scene family's pictures -- base, recolours, count
+    edit -- always share a batch, so the model sees the pair in one update (critic R13-I02). Items without a
+    group are units of one and fill the remaining slots. Units are shuffled, packed first-fit, and the batches
+    shuffled; a unit larger than a batch is split into batch-sized pieces."""
+    units: Dict[Any, List[int]] = {}
+    for i, it in enumerate(items):
+        key = (it["group"], it.get("qid")) if "group" in it else ("", i)
+        units.setdefault(key, []).append(i)
+    pieces = [u[j:j + micro_batch] for u in units.values() for j in range(0, len(u), micro_batch)]
+    rng.shuffle(pieces)
+    pieces.sort(key=len, reverse=True)   # first-fit decreasing: the big units first, singletons fill the gaps
+    batches: List[List[int]] = []
+    open_: List[List[int]] = []
+    for u in pieces:
+        for bt in open_:
+            if len(bt) + len(u) <= micro_batch:
+                bt.extend(u)
+                break
+        else:
+            bt = list(u)
+            batches.append(bt)
+            open_.append(bt)
+        open_ = [bt for bt in open_ if len(bt) < micro_batch]
+    rng.shuffle(batches)
+    return batches
 
 
 def _device(name: str) -> torch.device:
@@ -79,9 +155,21 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             keys = ["false", "true"] if q["type"] == "noul" else list(q["criteria"])
             target = [float(probs.get(k, 0.0)) for k in keys]
             total = sum(target)
-            it["target"] = [t / total for t in target] if total > 0 else [1 / len(keys)] * len(keys)
+            if not total > 0:   # read_decision_jsonl rejects these; never turn a broken label into a uniform one
+                raise ValueError("sample %s question %r: gold probabilities sum to 0" % (s.get("id"), qid))
+            it["target"] = [t / total for t in target]
             it["image"] = s["image"]
             it["source"] = s.get("source", "")
+            it["qid"] = qid
+            if "group" in s:
+                it["group"] = s["group"]   # a scene family: its counterfactual pairs share a micro batch
+            boxes = (s.get("boxes") or {}).get(qid)
+            present = ((s.get("meta") or {}).get(qid) or {}).get("referent_present", True)
+            if boxes and present and s.get("width") and s.get("height"):   # an absent referent is never a target
+                side = decider.cfg.image_size // int(cast(int, decider.model.vision.config.patch_size)) // decider.cfg.visual_shuffle
+                grid = box_grid(boxes, s["width"], s["height"], decider.cfg.image_size, grid=side)
+                if grid:
+                    it["grid"] = grid
             items.append(it)
     return items
 
@@ -98,12 +186,13 @@ class _Images:
             return image_tensor(img, self.decider.cfg)
 
 
-def _forward(model, batch, pixels, device):
+def _forward(model, batch, pixels, device, return_hidden: bool = False):
     with torch.no_grad():
         patches = model.vision(pixel_values=pixels.to(device)).last_hidden_state
     visual = model.projector(patches)
     return model(*(batch[k].to(device) for k in
-                   ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")), visual=visual)
+                   ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
+                 visual=visual, patches=patches, return_hidden=return_hidden)
 
 
 def _rlcd_loss(logits, mask, target, qtype, sigma, group_size):
@@ -275,7 +364,8 @@ def calibrate(decider: Decider, samples: Sequence[Sample], data_root, device: st
 RESUME = "resume.pt"
 # what must match for a resume state to continue a run (logging and saving settings may change)
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
-                "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed")
+                "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
+                "grounding_weight", "question_conditioning", "lr_cond")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -327,6 +417,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     model, tok = decider.model, decider.tok
 
     model.vision.requires_grad_(False)
+    if c.question_conditioning and model.condition is None:   # S2: new module, zero output layer
+        model.add_question_conditioning()
+        decider.cfg.question_conditioning = True
+    if c.grounding_weight > 0:   # S1: training-only head, removed before saving
+        model.grounding = GroundingHead(text_encoder(model.decision).config.hidden_size)
     peft_encoder = get_peft_model(text_encoder(model.decision), LoraConfig(
         r=c.lora_r, lora_alpha=c.lora_alpha, lora_dropout=0.0, target_modules=LORA_TARGETS))
     model.decision.encoder = peft_encoder
@@ -353,8 +448,14 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
         {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},
     ] + ([{"params": unfrozen, "lr": c.lr_encoder}] if unfrozen else [])
+    extra = [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
+             for p in getattr(model, name).parameters()]
+    if extra:
+        groups.append({"params": extra, "lr": c.lr_cond})
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
-    steps = c.epochs * max(1, -(-len(train_items) // c.micro_batch))
+    grouped = any("group" in it for it in train_items)
+    first_plan = plan_batches(train_items, c.micro_batch) if grouped else []
+    steps = c.epochs * (len(first_plan) if grouped else max(1, -(-len(train_items) // c.micro_batch)))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
     use_amp = device.type in {"cuda": ("cuda",), "mps": ("cuda", "mps"), "off": ()}[c.amp]
@@ -362,7 +463,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     losses: List[float] = []
     val_accuracy: List[float] = []
     evals: List[Dict[str, float]] = []
-    order: List[int] = []            # this epoch's item order (indices into train_items)
+    order: List[List[int]] = []      # this epoch's micro batches (lists of indices into train_items)
     start_epoch, start_b = 0, 0
     resume_path = os.path.join(str(out_dir), RESUME) if out_dir else ""
     trainable = {n: p for n, p in model.named_parameters() if p.requires_grad}
@@ -411,29 +512,54 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     log = TrainLog(tracker, device, steps, c.log_every)
     for epoch in range(start_epoch, c.epochs):
         if not (resumed and epoch == start_epoch):
-            order = order or list(range(len(train_items)))
-            random.shuffle(order)   # reshuffles last epoch's order, as shuffling the items in place did
-        for b in range(start_b if resumed and epoch == start_epoch else 0, len(train_items), c.micro_batch):
+            if grouped:
+                order = first_plan if epoch == 0 and first_plan else plan_batches(train_items, c.micro_batch)
+            else:   # no groups: the order (and the RNG use) of every run before round 13
+                flat = [i for bt in order for i in bt] or list(range(len(train_items)))
+                random.shuffle(flat)
+                order = [flat[j:j + c.micro_batch] for j in range(0, len(flat), c.micro_batch)]
+        for b in range(start_b if resumed and epoch == start_epoch else 0, len(order)):
             sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * len(losses) / max(1, steps - 1)
-            chunk = [train_items[i] for i in order[b:b + c.micro_batch]]
+            chunk = [train_items[i] for i in order[b]]
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
             pixels = torch.stack([images(it["image"]) for it in chunk])
+            grounded = [i for i, it in enumerate(chunk) if "grid" in it] if c.grounding_weight > 0 else []
             with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
-                logits = _forward(model, batch, pixels, device).float()
+                if grounded:
+                    logits, hidden = _forward(model, batch, pixels, device, return_hidden=True)
+                else:
+                    logits = _forward(model, batch, pixels, device)
+                logits = logits.float()
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
                               batch["qtype"].to(device), sigma, c.group_size)
+            ground = None
+            if grounded:
+                idx = torch.tensor(grounded, device=device)
+                ids, mpos = batch["input_ids"].to(device)[idx], batch["marker_pos"].to(device)[idx]
+                head = cast(GroundingHead, getattr(model, "grounding"))
+                logp = head(hidden[idx], hidden.size(1) - ids.size(1), question_mask(ids, mpos))
+                target = torch.tensor([chunk[i]["grid"] for i in grounded], device=device)
+                ground = (target * (target.log() - logp)).sum(-1).mean()
+                loss = loss + c.grounding_weight * ground
+            hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
+                   == batch["target"].to(device).argmax(-1)).float().mean()
+            if not math.isfinite(loss.item()) or (loss.item() == 0.0 and nll.item() == 0.0 and hit.item() < 1.0):
+                # a zero loss is only possible when every answer is right: on 2026-10-10 the Apple
+                # GPU started ignoring command buffers mid-run and every result came back as zeros. Stop before the
+                # resume state is overwritten.
+                raise RuntimeError("step %d: training loss is %r (nll %r): the device is returning invalid results; "
+                                   "stopping with the last good resume state kept" % (len(losses), loss.item(), nll.item()))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
             optimizer.step()
             scheduler.step()
             losses.append(nll.item())  # .item() syncs the device, so step times are real
-            hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
-                   == batch["target"].to(device).argmax(-1)).float().mean()
             log.add(len(chunk), loss=loss.item(), nll=nll.item(), accuracy=hit.item(),
                     batch_tokens=float(batch["input_ids"].shape[1]),   # padded length; long batches drive memory
-                    grad_norm=grad_norm.item(), sigma=sigma)
+                    grad_norm=grad_norm.item(), sigma=sigma,
+                    **({"grounding_kl": ground.item()} if ground is not None else {}))
             means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
                                                        "head": optimizer.param_groups[1]["lr"],
                                                        "lora": optimizer.param_groups[2]["lr"],
@@ -446,10 +572,12 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:
-                save_state(epoch, b + c.micro_batch)
+                save_state(epoch, b + 1)
         val_accuracy.append(run_eval()["val/accuracy"])
 
     model.decision.encoder = peft_encoder.merge_and_unload()
+    if hasattr(model, "grounding"):   # S1's head is a training device, not part of the model that answers
+        del model.grounding
     model.eval()
     set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device) for name, its in sets.items()}
     temperature, by_options = fit_temperatures(set_logits["val"], calib)

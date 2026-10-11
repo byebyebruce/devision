@@ -1,0 +1,20 @@
+# v12 on the round-13 test sets and benches (the paired baseline for r13-binding's acceptance). Eval only: results go
+# to runs/v12-ext/eval/. Run after r13-binding has trained so the two never share the GPU.
+#   uv run devision-pipeline configs/v12-r13-sets-eval.yaml
+name: r13sets
+stages: []
+
+evaluate:
+  checkpoint: runs/v12-ext/stage2
+  calibration_fit: data/v5/dev_mix.jsonl
+  history: [data/v6/dev_lr_pairs.jsonl, data/ext/dev_ext.jsonl]
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    test_bind_cf: {path: data/r13/synth-v2/test_bind_cf.jsonl, role: heldout}
+    test_bind_gqa: {path: data/r13/gqa/test_bind_gqa.jsonl, role: heldout}
+    bench_sugarcrepe_att: {path: data/r13/bench/sugarcrepe_att.jsonl, role: heldout}
+    bench_sugarcrepe_rel: {path: data/r13/bench/sugarcrepe_rel.jsonl, role: heldout}
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_cogent_b: {path: data/r13/bench/cogent_b.jsonl, role: heldout}
