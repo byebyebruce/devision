@@ -168,7 +168,7 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             it["source"] = s.get("source", "")
             it["qid"] = qid
             # what a per-question monitor record needs (the same fields devision-eval writes)
-            it["sample_id"], it["image_id"] = s["id"], s["image_id"]
+            it["sample_id"], it["image_id"] = s.get("id", ""), s.get("image_id", s["image"])
             it["kind"], it["axis"], it["type"] = s.get("kind", ""), s.get("axis", ""), q["type"]
             it["keys"], it["gold"] = keys, probs
             if "group" in s:
