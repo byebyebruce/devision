@@ -89,3 +89,9 @@ def test_yes_no_are_balanced():
     out = held.balance_noul(rows, random.Random(0))
     keys = [r["answer_key"] for r in out if r["questions"]["q"]["type"] == "noul"]
     assert keys.count("true") == keys.count("false") == 3 and sum(r["answer_key"] == "x" for r in out) == 5
+
+
+def test_cosyn_drops_empty_questions():
+    out, steps = cosyn.figure_questions("k", "x.png", "diagram", {"question": ["  ", "Is it red?"], "answer": ["Yes", "No"]},
+                                        random.Random(0))
+    assert len(out) == 1 and steps["empty question"] == 1

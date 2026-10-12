@@ -64,6 +64,9 @@ def figure_questions(key: str, image: str, branch: str, qa: dict, rng: random.Ra
     out, steps = [], Counter()
     for i, (q, a) in enumerate(pairs):
         q = " ".join(str(q).split())
+        if not q:
+            steps["empty question"] += 1
+            continue
         k = kind_of(q, a)
         sid = "pub-%s:%s:%d" % (SOURCE, key, i)
         if k == "yesno":
