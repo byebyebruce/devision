@@ -1,6 +1,7 @@
 """Per-question monitor files written during training (v12 retrain plan, section 10): the same records
 devision-eval writes for the same model and temperatures, so devision-compare can pair them."""
 import json
+from typing import Any, Dict
 
 import pytest
 from conftest import tiny_decider
@@ -9,7 +10,7 @@ from test_pipeline import synthetic_samples
 from devision.train.evaluate import evaluate_records
 from devision.train.rlcd import TrainConfig, train
 
-CONFIG = dict(epochs=1, micro_batch=4, lr_new=3e-3, lr_head=3e-3, lr_lora=3e-3, warmup=2, eval_every=3,
+CONFIG: Dict[str, Any] = dict(epochs=1, micro_batch=4, lr_new=3e-3, lr_head=3e-3, lr_lora=3e-3, warmup=2, eval_every=3,
               seed=0, device="cpu", monitor_details=True)
 
 

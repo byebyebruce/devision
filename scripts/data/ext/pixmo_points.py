@@ -11,8 +11,8 @@ Source: allenai/pixmo-points (train only; 2.38M rows over 228k pictures). Rows c
     high-frequency objects: no 1-3).
 Only counting rows are used. A deterministic sample of --images pictures (by URL hash) among those with a usable
 row; per picture at most --per-picture questions, one per phrase:
-  - count 4..10 -> "How many <phrase> are there?" choice among nearby counts that can occur (4..10, `options`):
-    offering 1-3, which never occur, would let a model rule them out without looking; counts flattened;
+  - count 4..10 -> "How many <phrase> are there?" choice: half with every candidate 0..10, half with a run of 3-5
+    consecutive numbers holding the gold at a random place (`options`); counts flattened;
   - "Are there any <phrase> in the image?" noul: yes from count > 0 (any count), no from count 0; balanced
     yes = no per phrase, so the phrase does not give the answer away (absent phrases are more specific).
 Phrases are cleaned by `phrase` (plural noun phrase, at most 6 words, plain characters, not starting with a number;
@@ -33,6 +33,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (HeldOut, already_built, balance_yes_no, base_args, choice, finish,  # noqa: E402
                     flatten_answers, hf_files, noul)
 from pixmo_count import LICENCE, benchmark_pictures, get_pictures, picture_rel  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pub"))
+from held import PubHeld, require_history, split_dev  # noqa: E402
 
 SOURCE = "pixmo_points"
 REPO = "allenai/pixmo-points"
@@ -103,11 +106,16 @@ def phrase(label: str) -> Optional[str]:
 # ---------------------------------------------------------------- conversion
 
 def options(n: int, rng: random.Random) -> List[str]:
-    """`n` (4..10) and 1-4 distractors within 3 of it among the counts that occur (4..10)."""
-    k = rng.choice([2, 3, 3, 4, 4, 5])
-    pool = [m for m in SUPPORT if m != n and abs(m - n) <= 3]
-    rng.shuffle(pool)
-    return [str(n)] + [str(m) for m in pool[:k - 1]]
+    """Candidates for a count `n` (0..10), half the time every number 0..10, else a run of 3-5 consecutive numbers
+    in which `n` sits at a uniformly random place (clipped to 0..10). The earlier rule (distractors within 3 of the
+    gold) let "pick the lower median" answer about half of such questions without the picture (v12 retrain plan,
+    R13-POST-02); with these, no option-only rule beats chance by much (exp14 MANIFEST)."""
+    if rng.random() < 0.5:
+        return [str(m) for m in range(11)]
+    k = rng.choice([3, 4, 5])
+    pos = rng.randrange(k)
+    lo = max(0, min(n - pos, 10 - (k - 1)))
+    return [str(m) for m in range(lo, lo + k)]
 
 
 def picture_questions(key: str, image: str, rows: List[dict], cap: int, rng: random.Random) -> List[dict]:
@@ -147,6 +155,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     if already_built(a.root, SOURCE, a.force):
         return
+    require_history(a.root)
     import pyarrow.parquet as pq
     rng = random.Random(a.seed)
     steps, dropped = Counter(), Counter()
@@ -174,7 +183,7 @@ def main(argv=None):
     chosen = sample_pictures([u for u in first.values() if u not in bench], a.images)
     steps["pictures_sampled"] = len(chosen)
     ok, pictures = get_pictures(a.root, SOURCE, [(u, sha_of[u]) for u in chosen], a.workers, require_sha=True)
-    near = HeldOut(a.root).near_held(ok, SOURCE)
+    near = PubHeld(a.root).near_held(ok, SOURCE)
     steps["pictures_near_held_out"] = len(near)
     out = []
     for u in sorted(chosen):
@@ -189,6 +198,7 @@ def main(argv=None):
     counts = flatten_answers([r for r in out if r["kind"] == "count"])
     out = [r for r in out if r["kind"] != "count"] + counts
     steps["after_count_flatten"] = len(out)
+    out, steps["dev_questions"] = split_dev(a.root, SOURCE, out)
     finish(a.root, SOURCE, out, dict(steps), {
         "licence": LICENCE, "dropped": dict(dropped), "download": pictures,
         "count_answers": dict(sorted(Counter(r["answer_key"] for r in counts).items(), key=lambda kv: int(kv[0]))),

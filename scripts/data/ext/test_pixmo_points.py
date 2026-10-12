@@ -1,5 +1,6 @@
 import os
 import random
+from collections import Counter
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -21,12 +22,19 @@ def test_phrases_become_plural_noun_phrases():
     assert phrase("14 features") is None                   # the number would give the count away
 
 
-def test_count_options_stay_where_counts_occur():
+def test_count_options_are_all_candidates_or_a_run_with_the_gold_anywhere():
+    places = Counter()
     for n in range(4, 11):
-        for seed in range(20):
-            opts = options(n, random.Random(seed))
-            assert opts[0] == str(n) and 2 <= len(opts) <= 5
-            assert all(4 <= int(o) <= 10 and abs(int(o) - n) <= 3 for o in opts)
+        for seed in range(200):
+            opts = [int(o) for o in options(n, random.Random(seed))]
+            assert n in opts and all(0 <= o <= 10 for o in opts)
+            if len(opts) == 11:
+                assert opts == list(range(11))
+            else:
+                assert 3 <= len(opts) <= 5 and opts == list(range(opts[0], opts[0] + len(opts)))
+                if n <= 7:                     # away from the top clip the gold takes every place
+                    places[(len(opts), opts.index(n))] += 1
+    assert all(places[(k, i)] > 0 for k in (3, 4, 5) for i in range(k))
 
 
 def test_picture_questions_one_per_phrase_with_answers_from_counts():

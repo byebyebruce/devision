@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(HERE))   # scripts/data: convert, fetch, v8_m
 
 Sample = Dict[str, Any]
 NOUL = ("false", "true")
+MAX_OPTIONS = 11              # counting with every candidate 0..10 (v12 retrain plan, section 11)
 PICTURE_SECONDS = 60          # one web picture may take at most this long (fetch_pictures)
 
 
@@ -247,9 +248,10 @@ def noul(sid: str, source: str, kind: str, image_id: str, image: str, question: 
 
 def choice(sid: str, source: str, kind: str, image_id: str, image: str, question: str, options: Sequence[str],
            answer: str, rng: random.Random, group: str = "", shuffle: bool = True, **extra) -> Sample:
-    """A choice question over `options` (2-10, distinct, containing `answer`), in shuffled order."""
+    """A choice question over `options` (2-11, distinct, containing `answer`; 11 = counting candidates 0..10), in
+    shuffled order."""
     opts = list(dict.fromkeys(o.strip() for o in options))
-    if answer not in opts or not 2 <= len(opts) <= 10:
+    if answer not in opts or not 2 <= len(opts) <= MAX_OPTIONS:
         raise ValueError("bad options %s for answer %r" % (opts, answer))
     if shuffle:
         rng.shuffle(opts)
@@ -277,7 +279,7 @@ def problems(r: Sample, root: Optional[str] = None) -> List[str]:
         if set(g) != set(NOUL):
             out.append("noul gold %s" % list(g))
     elif q["type"] == "choice":
-        if list(q["criteria"]) != list(g) or not 2 <= len(g) <= 10:
+        if list(q["criteria"]) != list(g) or not 2 <= len(g) <= MAX_OPTIONS:
             out.append("choice options %s / gold %s" % (list(q["criteria"]), list(g)))
     else:
         out.append("type %s" % q["type"])
