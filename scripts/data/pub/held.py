@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "ext"))
 sys.path.insert(0, os.path.join(HERE, ".."))
 from common import HeldOut, raw_dir, sha256  # noqa: E402
 
+MISSING_HISTORY = 3     # exit status: nothing to retry, the prerequisites are missing
 EXTRA = ("r13/gqa/dev_bind_gqa.jsonl", "r13/gqa/test_bind_gqa.jsonl", "r13/bench/countbench.jsonl",
          "r13/bench/whatsup.jsonl", "r13/bench/sugarcrepe_att.jsonl", "r13/bench/sugarcrepe_rel.jsonl",
          "r13/bench/cogent_b.jsonl", "r13b/val.jsonl", "r13b/panel_exist.jsonl", "r13b/panel_science.jsonl",
@@ -56,9 +57,10 @@ def require_history(root: str) -> None:
     need = ["v2/test_exist.jsonl", "v5/dev_mix.jsonl", "lv_bench/pope.jsonl", "ext/dev_ext.jsonl", "r13/gqa/test_bind_gqa.jsonl"]
     missing = [n for n in need if not os.path.exists(os.path.join(root, n))]
     if missing:
-        raise SystemExit("the held-out sets are missing (%s): build or copy the project's data first "
-                         "(scripts/data/build_all.sh, scripts/data/ext/build_ext.sh, scripts/data/r13/...) -- "
-                         "without them the new pictures cannot be checked against the evaluation sets" % missing)
+        print("the held-out sets are missing (%s): copy the project's data first (on the machine that has it: "
+              "uv run python scripts/data/pub/export_list.py, then rsync; see that script) -- without them the new "
+              "pictures cannot be checked against the evaluation sets" % missing, file=sys.stderr)
+        sys.exit(MISSING_HISTORY)
 
 
 def split_dev(root: str, source: str, rows, share: float = 0.03, key=lambda r: r["image_id"]):
