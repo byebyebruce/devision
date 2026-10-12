@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "ext"))
 sys.path.insert(0, HERE)
 from common import already_built, base_args, download, finish, problems, raw_dir, save_bytes  # noqa: E402
-from held import PubHeld, require_history, balance_noul  # noqa: E402
+from held import balance_noul, get_held  # noqa: E402
 
 SOURCE = "vizwiz"
 BASE = "https://vizwiz.cs.colorado.edu/VizWiz_final/"
@@ -70,10 +70,9 @@ def main(argv=None):
     a = p.parse_args(argv)
     if already_built(a.root, SOURCE, a.force):
         return
-    require_history(a.root)
     raw = raw_dir(a.root, SOURCE)
     anns = zipfile.ZipFile(download(BASE + "vqa_data/Annotations.zip", os.path.join(raw, "Annotations.zip")))
-    held, steps, out = PubHeld(a.root), Counter(), {}
+    held, steps, out = get_held(a.root), Counter(), {}
     for split in ("train", "val"):
         z = zipfile.ZipFile(download(BASE + "images/%s.zip" % split, os.path.join(raw, split + ".zip")))
         names = {os.path.basename(n): n for n in z.namelist() if n.lower().endswith((".jpg", ".png"))}

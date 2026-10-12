@@ -27,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "ext"))
 sys.path.insert(0, HERE)
 from common import already_built, base_args, choice, download, finish, raw_dir  # noqa: E402
-from held import PubHeld, require_history, split_dev  # noqa: E402
+from held import get_held, split_dev  # noqa: E402
 
 SOURCE = "abo"
 BASE = "https://amazon-berkeley-objects.s3.amazonaws.com/archives/"
@@ -79,7 +79,6 @@ def main(argv=None):
     a = p.parse_args(argv)
     if already_built(a.root, SOURCE, a.force):
         return
-    require_history(a.root)
     rng = random.Random(a.seed)
     raw = raw_dir(a.root, SOURCE)
     small = download(BASE + "abo-images-small.tar", os.path.join(raw, "abo-images-small.tar"))
@@ -109,7 +108,7 @@ def main(argv=None):
     steps["products_with_a_picture"] = len(uniq)
     types = Counter(it[2] for it in uniq)
     good_types = sorted(t for t, n in types.items() if n >= MIN_TYPE and t and not BAD_TYPE.search(t))
-    held = PubHeld(a.root)
+    held = get_held(a.root)
     rels = {it[1]: os.path.join("ext", SOURCE, "images", "small", path_of[it[1]]) for it in uniq}
     near = held.near_held([rels[it[1]] for it in uniq if it[3] or it[2] in good_types], SOURCE)
     rows = []

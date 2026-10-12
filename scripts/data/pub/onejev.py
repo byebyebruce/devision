@@ -20,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "ext"))
 sys.path.insert(0, HERE)
 from common import already_built, base_args, finish, hf_file, hf_files, save_bytes  # noqa: E402
-from held import PubHeld, require_history, split_dev, balance_noul  # noqa: E402
+from held import balance_noul, get_held, split_dev  # noqa: E402
 
 SOURCE = "onejev"
 REPO = "OmniJev/OneJev-Data"
@@ -76,7 +76,6 @@ def main(argv=None):
     a = p.parse_args(argv)
     if already_built(a.root, SOURCE, a.force):
         return
-    require_history(a.root)
     import pyarrow.parquet as pq
     rows, steps = [], Counter()
     for f in hf_files(a.root, REPO, "data/train-*.parquet"):
@@ -92,7 +91,7 @@ def main(argv=None):
                 save_bytes(os.path.join(a.root, rel), data)
                 r["image"], r["image_id"] = rel, "onejev:" + os.path.basename(rel).rsplit(".", 1)[0]
                 rows.append(r)
-    near = PubHeld(a.root).near_held([r["image"] for r in rows], SOURCE)
+    near = get_held(a.root).near_held([r["image"] for r in rows], SOURCE)
     steps["near a held-out photo"] = sum(r["image"] in near for r in rows)
     rows = [r for r in rows if r["image"] not in near]
     rows = balance_noul(rows, random.Random(a.seed))

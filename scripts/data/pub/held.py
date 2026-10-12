@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "ext"))
 sys.path.insert(0, os.path.join(HERE, ".."))
 from common import HeldOut, raw_dir, sha256  # noqa: E402
 
+SNAPSHOT = os.path.join(HERE, "held_snapshot.json.gz")   # held_snapshot.py
 MISSING_HISTORY = 3     # exit status: nothing to retry, the prerequisites are missing
 EXTRA = ("r13/gqa/dev_bind_gqa.jsonl", "r13/gqa/test_bind_gqa.jsonl", "r13/bench/countbench.jsonl",
          "r13/bench/whatsup.jsonl", "r13/bench/sugarcrepe_att.jsonl", "r13/bench/sugarcrepe_rel.jsonl",
@@ -50,6 +51,41 @@ class PubHeld(HeldOut):
                 json.dump({"key": key, "hashes": {k: str(v) for k, v in extra.items()}}, open(cache, "w"))
             self._hashes = {**base, **extra}
         return self._hashes
+
+
+class SnapshotHeld:
+    """The held-out picture checks from held_snapshot.json.gz, for a machine without the project's data."""
+
+    def __init__(self, root: str):
+        import gzip
+        self.root = root
+        with gzip.open(SNAPSHOT, "rt") as f:
+            snap = json.load(f)
+        self._hashes = {"held:%d" % i: int(v) for i, v in enumerate(snap["photo_dhash"])}
+        self._pixels = set(snap["diagram_pixels"])
+        self.built = snap["built"]
+
+    def photo_hashes(self) -> Dict[str, int]:
+        return self._hashes
+
+    def diagram_pixels(self) -> set:
+        return self._pixels
+
+    same_diagram = HeldOut.same_diagram
+    near_held = HeldOut.near_held
+
+
+def get_held(root: str):
+    """PubHeld when this machine has the project's held-out sets, else the committed snapshot of their hashes."""
+    need = ["v2/test_exist.jsonl", "v5/dev_mix.jsonl", "lv_bench/pope.jsonl", "ext/dev_ext.jsonl"]
+    if all(os.path.exists(os.path.join(root, n)) for n in need):
+        return PubHeld(root)
+    if os.path.exists(SNAPSHOT):
+        h = SnapshotHeld(root)
+        print("held-out check from %s (built %s): the project's data is not on this machine" % (SNAPSHOT, h.built),
+              flush=True)
+        return h
+    require_history(root)
 
 
 def require_history(root: str) -> None:

@@ -35,7 +35,7 @@ from common import (HeldOut, already_built, balance_yes_no, base_args, choice, f
 from pixmo_count import LICENCE, benchmark_pictures, get_pictures, picture_rel  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pub"))
-from held import PubHeld, require_history, split_dev  # noqa: E402
+from held import get_held, split_dev  # noqa: E402
 
 SOURCE = "pixmo_points"
 REPO = "allenai/pixmo-points"
@@ -155,7 +155,6 @@ def main(argv=None):
     a = p.parse_args(argv)
     if already_built(a.root, SOURCE, a.force):
         return
-    require_history(a.root)
     import pyarrow.parquet as pq
     rng = random.Random(a.seed)
     steps, dropped = Counter(), Counter()
@@ -183,7 +182,7 @@ def main(argv=None):
     chosen = sample_pictures([u for u in first.values() if u not in bench], a.images)
     steps["pictures_sampled"] = len(chosen)
     ok, pictures = get_pictures(a.root, SOURCE, [(u, sha_of[u]) for u in chosen], a.workers, require_sha=True)
-    near = PubHeld(a.root).near_held(ok, SOURCE)
+    near = get_held(a.root).near_held(ok, SOURCE)
     steps["pictures_near_held_out"] = len(near)
     out = []
     for u in sorted(chosen):

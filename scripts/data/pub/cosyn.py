@@ -26,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "ext"))
 sys.path.insert(0, HERE)
 from common import already_built, base_args, cap_per_picture, choice, finish, hf_files, noul, save_bytes  # noqa: E402
-from held import PubHeld, require_history, split_dev, balance_noul  # noqa: E402
+from held import balance_noul, get_held, split_dev  # noqa: E402
 
 SOURCE = "cosyn"
 REPO = "allenai/CoSyn-400k"
@@ -93,10 +93,9 @@ def main(argv=None):
     a = p.parse_args(argv)
     if already_built(a.root, SOURCE, a.force):
         return
-    require_history(a.root)
     import pyarrow.parquet as pq
     rng = random.Random(a.seed)
-    held = PubHeld(a.root)
+    held = get_held(a.root)
     rows, steps, per_branch = [], Counter(), defaultdict(Counter)
     for branch in a.branches.split(","):
         for f in hf_files(a.root, REPO, "%s/train-*.parquet" % branch):
