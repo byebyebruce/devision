@@ -1,0 +1,22 @@
+# exp15 step 2 (owner 2026-10-12, not a round): balanced 0-10 counting block (25%; half every candidate, half runs) on the exp14 base.
+# Data: scripts/exp15/build.py --block count -> data/exp15/train_count.jsonl = exp14-pixmo's 12,000-question replay
+# subset + 4,000 new-block questions. Control: exp14-base (pure replay; same seed, 2,000 steps, learning rates, panels).
+# Compared per question at monitor/step2000 (temperature 1): scripts/exp14/report.py --arm exp15-count; reading rules
+# in docs/experiments/2026-10-12-exp15-steps.md, written before the run.
+name: exp15-count
+device: mps
+common:
+  log_every: 100
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v12-ext/stage2
+    data: data/exp15/train_count.jsonl
+    val: data/r13b/val.jsonl
+    eval: {exist: data/r13b/panel_exist.jsonl, science: data/r13b/panel_science.jsonl, ext: data/ext/dev_ext.jsonl,
+           bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, count_narrow: data/v11/dev_count_transfer.jsonl,
+           count_wide: data/r13b/count_wide.jsonl, px_wide: data/exp14/pixmo_count_wide.jsonl,
+           px_narrow: data/exp14/pixmo_count_narrow.jsonl, px_exist: data/exp14/pixmo_exist.jsonl}
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 100, eval_every: 2000,
+             save_every: 500, amp: "off", seed: 0, monitor_details: true}
