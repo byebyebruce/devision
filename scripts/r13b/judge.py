@@ -58,11 +58,11 @@ def monitor(rules, stage_dir):
             print("step %6d  %-20s %s%s" % (step, rule["id"], fmt(r), "  STOP" if fired else ("  (hit)" if hit else "")))
             if fired:
                 stop.append((step, rule["id"]))
-    json.dump({"rules": RULES, "checks": out, "stop": stop}, open(os.path.join(mon, "judge.json"), "w"), indent=1)
+    json.dump({"rules": rules.get("_doc", ""), "checks": out, "stop": stop}, open(os.path.join(mon, "judge.json"), "w"), indent=1)
     return 3 if stop else 0
 
 
-def final(rules, cand, base, bind_cf):
+def final(rules, cand, base, bind_cf=None):
     out, ok = [], True
     for rule in rules["final"]:
         if "bind_cf" in rule:
@@ -81,7 +81,7 @@ def final(rules, cand, base, bind_cf):
         out.append({"rule": "report:%s/%s" % (rule["set"], rule["metric"]), **r})
         print("%-20s %s" % ("report " + rule["set"], fmt(r)))
     print("verdict:", "pass" if ok else "fail")
-    json.dump({"rules": RULES, "checks": out, "pass": ok}, open(os.path.join(cand, "judge_final.json"), "w"), indent=1)
+    json.dump({"rules": rules.get("_doc", ""), "checks": out, "pass": ok}, open(os.path.join(cand, "judge_final.json"), "w"), indent=1)
     return 0 if ok else 1
 
 
@@ -95,12 +95,13 @@ def pick(rules, d_eval, s2_eval):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--rules", default=RULES, help="frozen rule file (default: the v12 retrain's)")
     sub = p.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("monitor"); m.add_argument("stage_dir")
-    f = sub.add_parser("final"); f.add_argument("cand"); f.add_argument("base"); f.add_argument("--bind-cf", required=True)
+    f = sub.add_parser("final"); f.add_argument("cand"); f.add_argument("base"); f.add_argument("--bind-cf", help="bind_report JSON, needed only by rules naming bind_cf")
     k = sub.add_parser("pick"); k.add_argument("d_eval"); k.add_argument("s2_eval")
     a = p.parse_args()
-    rules = json.load(open(RULES))
+    rules = json.load(open(a.rules))
     if a.cmd == "monitor":
         sys.exit(monitor(rules, a.stage_dir))
     if a.cmd == "final":
