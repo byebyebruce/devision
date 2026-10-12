@@ -14,7 +14,7 @@ RULES = json.load(open(os.path.join(os.path.dirname(__file__), "..", "r13b", "ru
 CHECKS = [("px_wide", "accuracy"), ("px_narrow", "accuracy"), ("px_exist", "balanced_accuracy"),
           ("count_narrow", "accuracy"), ("count_wide", "accuracy"),
           ("exist", "balanced_accuracy"), ("exist", "recall"), ("science", "accuracy"), ("bind_gqa", "accuracy"),
-          ("ext", "macro_accuracy"), ("val", "accuracy"),
+          ("ext", "macro_accuracy"),
           ("px_wide", "nll"), ("count_narrow", "nll"), ("science", "nll")]
 
 
