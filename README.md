@@ -44,8 +44,10 @@ print(result["answers"]["room"]["probabilities"])   # 每个选项的概率，�
 ## HTTP 服务
 
 ```bash
-devision-serve --checkpoint lukbit/devision --port 8000   # 浏览器打开 http://127.0.0.1:8000 是 web demo
+devision-serve   # 浏览器打开 http://127.0.0.1:8000 是 web demo
 ```
+
+仓库内运行 `uv run devision-serve`。默认加载 `lukbit/devision`，也可用 `--checkpoint` 指定其他模型仓库或本地 checkpoint 目录。
 
 常用参数：`--revision v0.2` 固定版本，`--device cpu|cuda|mps`（默认自动），`--no-demo` 只开接口。
 

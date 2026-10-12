@@ -1,6 +1,6 @@
 """HTTP serving: the Jev-compatible API, the web demo and the `devision-serve` command.
 
-    devision-serve --checkpoint lukbit/devision --port 8000
+    devision-serve
 
 - POST /v1/systemone -> Decider.decide (the response follows Jev; the request is Jev's plus the picture, either a
   top-level `image` -- an http(s) URL, data URI or base64, never a server-side file -- or an image part in `state`)
@@ -89,7 +89,10 @@ def serve_main(argv=None) -> None:
     import uvicorn
 
     p = argparse.ArgumentParser(description=serve_main.__doc__)
-    p.add_argument("--checkpoint", required=True, help="checkpoint directory or Hugging Face repo id")
+    p.add_argument(
+        "--checkpoint", default="lukbit/devision",
+        help="checkpoint directory or Hugging Face repo id (default: %(default)s)",
+    )
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--examples", default="examples", help="directory of demo images")
