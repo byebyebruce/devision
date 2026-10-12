@@ -17,7 +17,7 @@ common:
 stages:
   - name: stage2
     kind: train
-    init: runs/v12-ext/stage2          # v12; on a fresh machine the Hugging Face id lukbit/devision also works
+    init: lukbit/devision              # v12 as released (v0.2, the hub's latest on 2026-10-12), downloaded to the HF cache on first use; for a pinned copy: uv run hf download lukbit/devision --revision v0.2 --local-dir runs/v12-ext/stage2 and put that path here
     data: data/pub/train_mix.jsonl
     val: data/r13b/val.jsonl           # temperature fit; the panels' pictures are not in it
     eval: {exist: data/r13b/panel_exist.jsonl, science: data/r13b/panel_science.jsonl, ext: data/ext/dev_ext.jsonl,
