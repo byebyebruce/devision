@@ -1,0 +1,66 @@
+# Single A100 80GB: v12 (runs/v12-ext/stage2, released as v0.2) trained on the weak-point mix of the public-data
+# pack (scripts/data/pub/build_pub.sh -> data/pub/train_mix.jsonl, ~117k questions). Based on scratch-a100.yaml
+# (CUDA, micro batch 32, BF16 autocast for the decision stage) and pub-v12.yaml (data, panels, learning rates).
+# Batch 32 gives a quarter of the optimizer updates of micro batch 8 at unchanged learning rates; warmup, evaluation
+# and resume intervals are scaled to keep about the same sample counts. A100 throughput, memory and quality are not
+# measured yet. Not a round: copy to configs/r<N>-<name>.yaml and set `name` once the owner names it.
+# Resumable: running the same YAML again continues from runs/<name>/stage2/resume.pt.
+#   bash scripts/data/pub/build_pub.sh data                       # once, resumable
+#   nohup uv run devision-pipeline configs/pub-v12-a100.yaml > runs/pub-v12-a100.out 2>&1 &
+# Third CUDA GPU (zero-based index 2, ordered by PCI bus):
+#   CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=2 uv run devision-pipeline configs/pub-v12-a100.yaml
+name: pub-v12-a100
+device: cuda
+common:
+  log_every: 25
+
+stages:
+  - name: stage2
+    kind: train
+    init: lukbit/devision              # v12 as released (v0.2, the hub's latest on 2026-10-12), downloaded to the HF cache on first use; for a pinned copy: uv run hf download lukbit/devision --revision v0.2 --local-dir runs/v12-ext/stage2 and put that path here
+    data: data/pub/train_mix.jsonl
+    val: data/r13b/val.jsonl           # temperature fit; the panels' pictures are not in it
+    eval: {exist: data/r13b/panel_exist.jsonl, science: data/r13b/panel_science.jsonl, ext: data/ext/dev_ext.jsonl,
+           bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, count_narrow: data/v11/dev_count_transfer.jsonl,
+           count_wide: data/r13b/count_wide.jsonl, pub: data/pub/dev_pub.jsonl}
+    params:
+      epochs: 1
+      micro_batch: 32
+      lr_new: 2.0e-5
+      lr_head: 1.0e-5
+      lr_lora: 5.0e-5
+      lora_r: 16
+      warmup: 75
+      eval_every: 500
+      save_every: 125
+      amp: cuda
+      seed: 0
+      monitor_details: true
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  history: [data/ext/dev_ext.jsonl, data/r13/gqa/dev_bind_gqa.jsonl, data/r13b/panel_exist.jsonl,
+            data/r13b/panel_science.jsonl, data/r13b/count_wide.jsonl, data/v11/dev_count_transfer.jsonl, data/pub/dev_pub.jsonl]
+  controls: true
+  sets:
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    test_count_fresh: {path: data/v11/test_count_fresh.jsonl, role: heldout}
+    test_bind_gqa: {path: data/r13/gqa/test_bind_gqa.jsonl, role: heldout}
+    test_bind_cf: {path: data/r13/synth-v2/test_bind_cf.jsonl, role: heldout}
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}

@@ -1,0 +1,39 @@
+# v12 retrain (docs/experiments/2026-10-11-v12-retrain-plan.md, sections 3, 4, 9, 10, 11), arm D: v12 structure, data recipe only.
+# Starts from runs/v12-ext/stage2 (owner 2026-10-11: R13 is not a starting point). Both arms: the same data
+# (scripts/r13b/build.py -> data/r13b/, 92,010 questions), seed, schedule and panels. Monitor panels every 2,000
+# steps with per-question records (monitor_details) judged by scripts/r13b/judge.py against step 0 (v12);
+# end-of-run requirements against v12 recalibrated on the same val (configs/r13b-v12-base.yaml; its results sit next to the recalibrated copy).
+name: r13b-v12-data
+device: mps
+common:
+  log_every: 100
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v12-ext/stage2
+    data: data/r13b/train.jsonl
+    val: data/r13b/val.jsonl                 # temperature fit; the panels' pictures are not in it
+    eval: {exist: data/r13b/panel_exist.jsonl, science: data/r13b/panel_science.jsonl, ext: data/ext/dev_ext.jsonl,
+           bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, count_narrow: data/v11/dev_count_transfer.jsonl,
+           count_wide: data/r13b/count_wide.jsonl}
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 2000,
+             save_every: 500, amp: "off", seed: 0, monitor_details: true, question_conditioning: false}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  sets:
+    exist: {path: data/r13b/panel_exist.jsonl, role: monitoring}
+    science: {path: data/r13b/panel_science.jsonl, role: monitoring}
+    ext: {path: data/ext/dev_ext.jsonl, role: monitoring}
+    bind_gqa: {path: data/r13/gqa/dev_bind_gqa.jsonl, role: monitoring}
+    count_narrow: {path: data/v11/dev_count_transfer.jsonl, role: monitoring}
+    count_wide: {path: data/r13b/count_wide.jsonl, role: monitoring}
+    val: {path: data/r13b/val.jsonl, role: calibration_fit}
+    dev_bind_cf: {path: data/r13/screen/dev_bind_cf_watch.jsonl, role: monitoring}
+  commands:
+    - "uv run devision-eval --checkpoint {checkpoint} --data data/r13/gqa/dev_bind_gqa.jsonl --data-root data --role monitoring --control mismatched --out {eval_dir}/bind_gqa.mismatched.json"
+    - "uv run devision-eval --checkpoint {checkpoint} --data data/v11/dev_count_transfer.jsonl --data-root data --role monitoring --control mismatched --out {eval_dir}/count_narrow.mismatched.json"
+    - "uv run devision-eval --checkpoint {checkpoint} --data data/r13b/count_wide.jsonl --data-root data --role monitoring --control mismatched --out {eval_dir}/count_wide.mismatched.json"
+    - "mkdir -p {eval_dir}/compare && uv run python scripts/r13/bind_report.py data/r13/screen/dev_bind_cf_watch.jsonl runs/r13b-v12-base/stage2-recal/dev_bind_cf.details.jsonl {eval_dir}/dev_bind_cf.details.jsonl --out {eval_dir}/compare/bind_cf.json"
+    - "uv run python scripts/r13b/judge.py final {eval_dir} runs/r13b-v12-base/stage2-recal --bind-cf {eval_dir}/compare/bind_cf.json || true"

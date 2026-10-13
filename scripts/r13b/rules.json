@@ -1,0 +1,34 @@
+{
+ "_doc": "v12 retrain decision rules (docs/experiments/2026-10-11-v12-retrain-plan.md 6.1, 6.2, 9.1, 9.2, 10.1), frozen before training. Differences are candidate - baseline, in proportions (0.03 = 3 points). stop: hit = stop the arm. require: must hold to pass. fail_if: hit = fail.",
+ "ext_sources": ["clevr", "clevr_math", "figureqa", "iconqa", "mapqa", "objects365", "pixmo_count", "snli_ve",
+                 "spatialsense", "superclevr", "tallyqa", "vision_flan", "visonlyqa"],
+ "monitor": [
+  {"id": "6.1-exist-recall", "set": "exist", "metric": "recall", "stop_if": {"difference_le": -0.03, "hi_lt": 0}},
+  {"id": "6.1-exist-ba", "set": "exist", "metric": "balanced_accuracy", "stop_if": {"difference_le": -0.02, "hi_lt": 0}},
+  {"id": "6.1-count-narrow", "set": "count_narrow", "metric": "accuracy", "stop_if": {"difference_le": -0.03, "hi_lt": 0}},
+  {"id": "6.1-science", "set": "science", "metric": "accuracy", "stop_if": {"difference_le": -0.03, "hi_lt": 0}},
+  {"id": "6.1-bind-gqa", "set": "bind_gqa", "metric": "accuracy", "stop_if": {"difference_le": -0.03, "hi_lt": 0}},
+  {"id": "9.2-ext-macro", "set": "ext", "metric": "macro_accuracy", "stop_if": {"difference_le": -0.03, "hi_lt": 0}},
+  {"id": "6.1-nll-exist", "set": "exist", "metric": "nll", "stop_if": {"difference_ge": 0.10, "lo_gt": 0}, "consecutive": 2},
+  {"id": "6.1-nll-count", "set": "count_narrow", "metric": "nll", "stop_if": {"difference_ge": 0.10, "lo_gt": 0}, "consecutive": 2},
+  {"id": "6.1-nll-science", "set": "science", "metric": "nll", "stop_if": {"difference_ge": 0.10, "lo_gt": 0}, "consecutive": 2}
+ ],
+ "final": [
+  {"id": "6.2-bind-gqa", "set": "bind_gqa", "metric": "accuracy", "require": {"difference_gt": 0, "lo_gt": 0}},
+  {"id": "6.2-bind-cf", "bind_cf": "binding", "require": {"difference_gt": 0, "lo_gt": 0}},
+  {"id": "6.2-exist-recall", "set": "exist", "metric": "recall", "require": {"lo_gt": -0.02}},
+  {"id": "6.2-exist-ba", "set": "exist", "metric": "balanced_accuracy", "require": {"lo_gt": -0.02}},
+  {"id": "6.2-exist-fpr", "set": "exist", "metric": "fpr", "require": {"hi_lt": 0.02}},
+  {"id": "6.2-count-narrow", "set": "count_narrow", "metric": "accuracy", "require": {"lo_gt": -0.02}},
+  {"id": "6.2-science", "set": "science", "metric": "accuracy", "require": {"lo_gt": -0.02}},
+  {"id": "9.2-ext-macro", "set": "ext", "metric": "macro_accuracy", "require": {"lo_gt": -0.02}},
+  {"id": "6.2-nll-count", "set": "count_narrow", "metric": "nll", "fail_if": {"difference_gt": 0.02, "lo_gt": 0}},
+  {"id": "6.2-nll-science", "set": "science", "metric": "nll", "fail_if": {"difference_gt": 0.02, "lo_gt": 0}}
+ ],
+ "report_only": [
+  {"set": "count_wide", "metric": "accuracy"}, {"set": "count_wide", "metric": "nll"},
+  {"set": "exist", "metric": "nll"}, {"set": "ext", "metric": "accuracy"}, {"set": "val", "metric": "accuracy"}
+ ],
+ "pick": {"_doc": "both arms pass: S2 only if S2 - D on bind_gqa has lo > 0, else D (9.1)",
+          "set": "bind_gqa", "metric": "accuracy", "choose_s2_if": {"lo_gt": 0}}
+}

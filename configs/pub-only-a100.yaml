@@ -1,0 +1,43 @@
+# Single A100 80GB, public data only (owner 2026-10-12: train v0.2 on the public data on another machine, without
+# the project's own data). Start: lukbit/devision (v0.2 = v12), fetched to the Hugging Face cache on first use.
+# Data: bash scripts/data/pub/build_pub.sh data  -> data/pub/train_mix.jsonl (public sources only, ~55k questions:
+# PixMo-Points counting / existence, CoSyn, ABO, VizWiz, OneJev), val_pub.jsonl (temperature fit) and dev_pub.jsonl
+# (monitoring) = the sources' dev splits cut in two by picture. The held-out check used the committed hashes of the
+# project's evaluation pictures (scripts/data/pub/held_snapshot.json.gz).
+# Caveats: no replay of v12's own data, so old abilities are not protected here, and the temperatures are fitted on
+# public dev questions only. Bring the checkpoint back and run the project's evaluation (and devision-calibrate on
+# data/r13b/val.jsonl) before comparing it with v12. Not a round: copy to configs/r<N>-<name>.yaml and set `name`
+# once the owner names it. Resumable: running the same YAML again continues from runs/<name>/stage2/resume.pt.
+#   HF_ENDPOINT=https://hf-mirror.com bash scripts/data/pub/build_pub.sh data
+#   HF_ENDPOINT=https://hf-mirror.com nohup uv run devision-pipeline configs/pub-only-a100.yaml > runs/pub-only-a100.out 2>&1 &
+# Third CUDA GPU (zero-based index 2, ordered by PCI bus):
+#   CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=2 uv run devision-pipeline configs/pub-only-a100.yaml
+name: pub-only-a100
+device: cuda
+common:
+  log_every: 25
+
+stages:
+  - name: stage2
+    kind: train
+    init: lukbit/devision              # v0.2 (= v12); pin with: uv run hf download lukbit/devision --revision v0.2 --local-dir runs/v12-ext/stage2
+    data: data/pub/train_mix.jsonl
+    val: data/pub/val_pub.jsonl
+    eval: {pub: data/pub/dev_pub.jsonl}
+    params:
+      epochs: 1
+      micro_batch: 32
+      lr_new: 2.0e-5
+      lr_head: 1.0e-5
+      lr_lora: 5.0e-5
+      lora_r: 16
+      warmup: 75
+      eval_every: 250
+      save_every: 125
+      amp: cuda
+      seed: 0
+      monitor_details: true
+
+evaluate:
+  sets:
+    dev_pub: {path: data/pub/dev_pub.jsonl, role: monitoring}

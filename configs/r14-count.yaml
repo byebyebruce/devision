@@ -1,0 +1,63 @@
+# Round 14 (r14-count; owner 2026-10-12: "可以直接训了"): v12 + the blocks that passed the exp14 / exp15 quick checks
+# (balanced 0-10 counting, PixMo existence / runs-only counting) scaled up, with 71% replay of v12's own data
+# (scripts/r14/build.py -> data/r14/train.jsonl, 81,876 questions, ~10,234 steps). Same learning rates as the quick
+# checks, warmup 300, cosine to 0, seed 0, v12 structure (no S2). Monitor panels every 2,000 steps with per-question
+# records, judged against step 0 by the frozen stop rules (scripts/r14/rules.json, via runs/r14/chain.sh). End:
+# panels against v12 recalibrated on the same val, then the full evaluation against v12 per question; acceptance in
+# docs/experiments/2026-10-12-r14-count.md, written before training.
+name: r14-count
+device: mps
+common:
+  log_every: 100
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v12-ext/stage2
+    data: data/r14/train.jsonl
+    val: data/r13b/val.jsonl
+    eval: {exist: data/r13b/panel_exist.jsonl, science: data/r13b/panel_science.jsonl, ext: data/ext/dev_ext.jsonl,
+           bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, count_narrow: data/v11/dev_count_transfer.jsonl,
+           count_wide: data/r13b/count_wide.jsonl, px_wide: data/exp14/pixmo_count_wide.jsonl,
+           px_narrow: data/exp14/pixmo_count_narrow.jsonl, px_exist: data/exp14/pixmo_exist.jsonl}
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 2000,
+             save_every: 500, amp: "off", seed: 0, monitor_details: true}
+
+evaluate:
+  calibration_fit: data/r13b/val.jsonl
+  history: [data/ext/dev_ext.jsonl, data/r13/gqa/dev_bind_gqa.jsonl, data/r13b/panel_exist.jsonl, data/r13b/panel_science.jsonl,
+            data/r13b/count_wide.jsonl, data/v11/dev_count_transfer.jsonl, data/exp14/pixmo_count_wide.jsonl,
+            data/exp14/pixmo_count_narrow.jsonl, data/exp14/pixmo_exist.jsonl]
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    exist: {path: data/r13b/panel_exist.jsonl, role: monitoring}
+    science: {path: data/r13b/panel_science.jsonl, role: monitoring}
+    ext: {path: data/ext/dev_ext.jsonl, role: monitoring}
+    bind_gqa: {path: data/r13/gqa/dev_bind_gqa.jsonl, role: monitoring}
+    count_narrow: {path: data/v11/dev_count_transfer.jsonl, role: monitoring}
+    count_wide: {path: data/r13b/count_wide.jsonl, role: monitoring}
+    dev_mix: data/v5/dev_mix.jsonl
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
+    test_count_fresh: {path: data/v11/test_count_fresh.jsonl, role: heldout}
+    test_bind_gqa: {path: data/r13/gqa/test_bind_gqa.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+  commands:
+    - "uv run python scripts/r13b/judge.py --rules scripts/r14/rules.json final {eval_dir} runs/r13b-v12-base/stage2-recal || true"
+    - "uv run python scripts/lv_report.py {eval_dir} --prev runs/v12-ext/eval || true"

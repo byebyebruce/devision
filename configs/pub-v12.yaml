@@ -1,0 +1,21 @@
+# Template: train v12 on the weak-point mix of the public-data pack (scripts/data/pub/build_pub.sh -> data/pub/).
+# Not a round yet: copy to configs/r<N>-<name>.yaml and set `name` when the owner names it (round numbers are given
+# by people). Resumable: running the same YAML again continues from <stage>/resume.pt (written every 500 steps).
+#   bash scripts/data/pub/build_pub.sh data          # once, on the training machine (resumable)
+#   nohup uv run devision-pipeline configs/pub-v12.yaml > runs/pub-v12.out 2>&1 &
+name: pub-v12
+device: auto           # CUDA > MPS > CPU
+common:
+  log_every: 100
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v12-ext/stage2          # or the Hugging Face id lukbit/devision
+    data: data/pub/train_mix.jsonl
+    val: data/r13b/val.jsonl           # temperature fit (panels' pictures excluded)
+    eval: {exist: data/r13b/panel_exist.jsonl, science: data/r13b/panel_science.jsonl, ext: data/ext/dev_ext.jsonl,
+           bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, count_narrow: data/v11/dev_count_transfer.jsonl,
+           count_wide: data/r13b/count_wide.jsonl, pub: data/pub/dev_pub.jsonl}
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 2000,
+             save_every: 500, amp: "off", seed: 0, monitor_details: true}

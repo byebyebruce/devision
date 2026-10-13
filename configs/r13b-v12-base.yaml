@@ -1,0 +1,23 @@
+# v12 retrain baseline (plan section 11): v12 with temperatures refitted on data/r13b/val.jsonl (the same calibration
+# set as both arms; v12's own weights untouched, a copy at runs/r13b-v12-base/stage2-recal made by
+#   uv run devision-calibrate --checkpoint runs/v12-ext/stage2 --data data/r13b/val.jsonl --data-root data --out runs/r13b-v12-base/stage2-recal
+# ) on the same panels the arms are judged on. Evaluation only, not a round.
+name: r13b-v12-base
+stages: []
+
+evaluate:
+  checkpoint: runs/r13b-v12-base/stage2-recal
+  image_identity: data/v5/image_identity.json
+  sets:
+    exist: {path: data/r13b/panel_exist.jsonl, role: monitoring}
+    science: {path: data/r13b/panel_science.jsonl, role: monitoring}
+    ext: {path: data/ext/dev_ext.jsonl, role: monitoring}
+    bind_gqa: {path: data/r13/gqa/dev_bind_gqa.jsonl, role: monitoring}
+    count_narrow: {path: data/v11/dev_count_transfer.jsonl, role: monitoring}
+    count_wide: {path: data/r13b/count_wide.jsonl, role: monitoring}
+    val: {path: data/r13b/val.jsonl, role: calibration_fit}
+    dev_bind_cf: {path: data/r13/screen/dev_bind_cf_watch.jsonl, role: monitoring}
+  commands:
+    - "uv run devision-eval --checkpoint {checkpoint} --data data/r13/gqa/dev_bind_gqa.jsonl --data-root data --role monitoring --control mismatched --out {eval_dir}/bind_gqa.mismatched.json"
+    - "uv run devision-eval --checkpoint {checkpoint} --data data/v11/dev_count_transfer.jsonl --data-root data --role monitoring --control mismatched --out {eval_dir}/count_narrow.mismatched.json"
+    - "uv run devision-eval --checkpoint {checkpoint} --data data/r13b/count_wide.jsonl --data-root data --role monitoring --control mismatched --out {eval_dir}/count_wide.mismatched.json"

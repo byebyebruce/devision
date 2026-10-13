@@ -124,6 +124,12 @@ def evaluate_records(decider: Decider, samples: Sequence[Sample], data_root, con
                 "gold": gold, "gold_answer": max(gold, key=gold.__getitem__), "probabilities": probs,
                 "prediction": pred, "p_prediction": probs[pred], "control": control,
                 "latency_ms": ms, "questions_in_request": size})
+    return score_records(records)
+
+
+def score_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Add `correct`, `nll` (against the soft gold) and `brier` to records carrying gold / probabilities /
+    prediction / gold_answer; shared with the per-question monitor files written during training."""
     for r in records:
         r["correct"] = r["prediction"] == r["gold_answer"]
         r["nll"] = -sum(g * math.log(max(r["probabilities"].get(o, 0.0), 1e-12)) for o, g in r["gold"].items() if g > 0)
