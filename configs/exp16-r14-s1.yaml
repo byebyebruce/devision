@@ -1,0 +1,23 @@
+# exp16 (owner 2026-10-13: the quick option, critic R14-R1 A): r14's mix with seed 1 instead of 0, trained under the
+# full run's schedule (warmup 300, cosine over 10,235 steps) and stopped by scripts/exp16/chain.sh once the step-2000
+# monitor records are written. Paired with exp16-r14b-s1 on the same seed, it separates r14b's data replacement from
+# the training trajectory (docs/experiments/2026-10-13-exp16-seedpair.md). Same panels in both arms; no full evaluation.
+name: exp16-r14-s1
+device: mps
+common:
+  log_every: 100
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v12-ext/stage2
+    data: data/r14/train.jsonl
+    val: data/r13b/val.jsonl
+    eval: {exist: data/r13b/panel_exist.jsonl, science: data/r13b/panel_science.jsonl, ext: data/ext/dev_ext.jsonl,
+           bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, count_narrow: data/v11/dev_count_transfer.jsonl,
+           count_wide: data/r13b/count_wide.jsonl, px_wide: data/exp14/pixmo_count_wide.jsonl,
+           px_narrow: data/exp14/pixmo_count_narrow.jsonl, px_exist: data/exp14/pixmo_exist.jsonl,
+           flip: data/v6/dev_lr_pairs.jsonl, vsr: data/v5/dev_vsr.jsonl}
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 2000,
+             save_every: 500, amp: "off", seed: 1, monitor_details: true}
+
