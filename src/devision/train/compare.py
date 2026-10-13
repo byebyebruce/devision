@@ -5,6 +5,8 @@ resamples pictures, keeping all of a picture's questions together. An interval t
 data cannot tell the two apart -- not that they are equal.
 """
 import json
+import math
+import os
 import random
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -82,6 +84,59 @@ def _require_same(a: List[Record], b: List[Record]) -> None:
     bad = [k for k in ka if ka[k]["gold"] != kb[k]["gold"] or ka[k]["image_id"] != kb[k]["image_id"]]
     if bad:
         raise ValueError("%d questions differ in gold or picture, e.g. %s" % (len(bad), bad[0]))
+
+
+def _valid_probabilities(r: Record) -> bool:
+    p = r.get("probabilities") or {}
+    vals = list(p.values())
+    return (list(p) == list(r.get("options") or p) and len(vals) > 0
+            and all(isinstance(v, (int, float)) and math.isfinite(v) and 0.0 <= v <= 1.0 for v in vals)
+            and abs(sum(vals) - 1.0) < 1e-4)
+
+
+def _occurrences(records: List[Record]) -> Dict[Tuple[str, str, int], Record]:
+    """Records keyed by (sample_id, qid, n-th time this pair appears): a file may hold one id twice (e.g. 242 ids
+    of data/r13b/val.jsonl, original and rewritten options), each copy compared with the same copy of the other."""
+    seen: Dict[Tuple[str, str], int] = defaultdict(int)
+    out = {}
+    for r in records:
+        k = (r["sample_id"], r["qid"])
+        out[k + (seen[k],)] = r
+        seen[k] += 1
+    return out
+
+
+def same_start(a_dir: str, b_dir: str, tolerance: float) -> Dict[str, Any]:
+    """Two runs' per-question records of one evaluation step (<dir>/<set>.details.jsonl, e.g. both runs' step 0)
+    are of the same model: the same sets, each non-empty with the same questions (an id repeated within a file is
+    matched by occurrence), pictures, options and gold, every probability finite and summing to 1, and no probability further apart than `tolerance`.
+    Returns {"sets": {set: largest difference}, "largest": ...}; raises ValueError naming the first failure."""
+    names = lambda d: sorted(f[:-len(".details.jsonl")] for f in os.listdir(d) if f.endswith(".details.jsonl"))
+    sa, sb = names(a_dir), names(b_dir)
+    if not sa or sa != sb:
+        raise ValueError("different or no evaluation sets: %s vs %s" % (sa, sb))
+    out: Dict[str, float] = {}
+    for name in sa:
+        a = load_records(os.path.join(a_dir, name + ".details.jsonl"))
+        b = load_records(os.path.join(b_dir, name + ".details.jsonl"))
+        if not a or not b:
+            raise ValueError("%s: no records" % name)
+        ka, kb = _occurrences(a), _occurrences(b)
+        if ka.keys() != kb.keys():
+            raise ValueError("%s: the records differ in questions: %d only in A, %d only in B"
+                             % (name, len(ka.keys() - kb.keys()), len(kb.keys() - ka.keys())))
+        worst = 0.0
+        for key, r in ka.items():
+            x = kb[key]
+            if r["gold"] != x["gold"] or r["image_id"] != x["image_id"] or r["options"] != x["options"]:
+                raise ValueError("%s: gold, picture or options differ on %s" % (name, key))
+            if not (_valid_probabilities(r) and _valid_probabilities(x)):
+                raise ValueError("%s: invalid probabilities on %s" % (name, r["sample_id"]))
+            worst = max(worst, max(abs(r["probabilities"][k] - x["probabilities"][k]) for k in r["options"]))
+        if not worst <= tolerance:
+            raise ValueError("%s: probabilities differ by %.3g > %.3g" % (name, worst, tolerance))
+        out[name] = worst
+    return {"sets": out, "largest": max(out.values()), "tolerance": tolerance}
 
 
 def _positive(r: Record) -> bool:

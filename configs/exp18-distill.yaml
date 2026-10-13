@@ -2,7 +2,8 @@
 # exp16-r14-s1 exactly (r14 mix, seed 1, r14's schedule over 10,235 steps, stopped by scripts/exp18/chain.sh once the
 # step-2000 monitor records are written) plus one term: on the questions of r14's replay blocks, KL(v12 || student)
 # over the options at temperature 1, weight 1, per micro batch of 8. RLCD and gold unchanged on every question;
-# count_balanced and pixmo are not constrained. Baseline B = runs/exp16-r14-s1 (reused); readout scripts/exp18/report.py.
+# count_balanced and pixmo are not constrained. Baseline B = runs/exp16-r14-s1 (reused): before the first update the
+# step-0 records must match B's (start_check), else training stops with START_MISMATCH. Readout scripts/exp18/report.py.
 name: exp18-distill
 device: mps
 common:
@@ -22,5 +23,6 @@ stages:
     params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 2000,
              save_every: 500, amp: "off", seed: 1, monitor_details: true,
              distill_weight: 1.0, distill_teacher: runs/v12-ext/stage2,
-             distill_blocks: "existence,count_original,science,general,ext"}
+             distill_blocks: "existence,count_original,science,general,ext",
+             start_check: runs/exp16-r14-s1/stage2/monitor/step0, start_tolerance: 1.0e-5}
 

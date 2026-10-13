@@ -4,8 +4,9 @@ temperature-1 monitor records at step 2000: D (teacher term) against B (exp16-r1
 
     uv run python scripts/exp18/report.py      # -> runs/exp18-distill/report.json, text on stdout
 
-Before anything, D's step 0 must match B's step 0 (both are v12): otherwise B is not D's baseline and no verdict
-is given.
+Before anything, D's step 0 must match B's step 0 (both are v12; the training already checked this before its first
+update, TrainConfig.start_check): otherwise B is not D's baseline, no verdict is given and the exit status is 2.
+Any other failure (missing or broken records) also exits non-zero.
 """
 import json
 import os
@@ -14,7 +15,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from devision.train.compare import load_records, paired_metric
+from devision.train.compare import load_records, paired_metric, same_start
 
 D = "runs/exp18-distill/stage2/monitor"
 B = "runs/exp16-r14-s1/stage2/monitor"
@@ -22,7 +23,7 @@ OLD = ("exist", "science", "bind_gqa", "ext", "count_narrow", "flip", "vsr")
 NEW = "count_wide"
 REPORT = ("px_wide", "px_narrow", "px_exist")
 EXT_SOURCES = json.load(open(os.path.join(os.path.dirname(__file__), "..", "r14b", "rules.json")))["ext_sources"]
-STEP0_TOLERANCE = 1e-5   # MPS float differences between runs are ~1e-7
+STEP0_TOLERANCE = 1e-5   # the same as configs/exp18-distill.yaml's start_tolerance
 
 
 def recs(root, step, panel):
@@ -32,16 +33,6 @@ def recs(root, step, panel):
 def picture(r):
     """Resampling unit: a picture, its mirror image counted with it (flip panel)."""
     return r["image_id"].removesuffix(":flip")
-
-
-def step0_mismatch():
-    worst = 0.0
-    for panel in OLD + (NEW,) + REPORT:
-        a = {(r["sample_id"], r["qid"]): r for r in recs(B, 0, panel)}
-        for r in recs(D, 0, panel):
-            x = a[(r["sample_id"], r["qid"])]
-            worst = max(worst, max(abs(r["probabilities"][k] - x["probabilities"][k]) for k in r["probabilities"]))
-    return worst
 
 
 def macro_nll(a_dir, b_dir, resamples=2000, seed=0):
@@ -67,17 +58,21 @@ def macro_nll(a_dir, b_dir, resamples=2000, seed=0):
             "pictures": len(m), "panels": list(OLD)}
 
 
-def pm(a_dir, b_dir, panel, metric):
-    return paired_metric(recs(*a_dir, panel), recs(*b_dir, panel), metric,
-                         sources=EXT_SOURCES if metric == "macro_accuracy" else None)
+def pm(a_dir, b_dir, panel, metric, by_original=False):
+    """paired_metric on one panel; by_original: a picture and its mirror image resampled together (flip panel)."""
+    a, b = recs(*a_dir, panel), recs(*b_dir, panel)
+    if by_original:
+        a, b = ([dict(r, image_id=picture(r)) for r in x] for x in (a, b))
+    return paired_metric(a, b, metric, sources=EXT_SOURCES if metric == "macro_accuracy" else None)
 
 
 def main():
-    out = {"step0_max_abs_difference": step0_mismatch()}
-    print("step 0, D vs B, largest probability difference: %.2e" % out["step0_max_abs_difference"])
-    if out["step0_max_abs_difference"] > STEP0_TOLERANCE:
-        print("D and B do not start from the same model: no verdict")
+    try:
+        out = {"step0": same_start(os.path.join(D, "step0"), os.path.join(B, "step0"), STEP0_TOLERANCE)}
+    except ValueError as e:
+        print("D and B do not start from the same model: no verdict (%s)" % e)
         sys.exit(2)
+    print("step 0, D vs B, largest probability difference: %.2e" % out["step0"]["largest"])
     d, b, v12 = (D, 2000), (B, 2000), (D, 0)
 
     p1 = macro_nll(b, d)
@@ -99,6 +94,8 @@ def main():
         verdict = "inconclusive"
     out["verdict"] = verdict
     print("verdict:", verdict)
+    print("(P1 measures the equal-weight mean gold NLL of the old panels against B, not the distance to the teacher's"
+          " predictions, and not every old panel separately)")
 
     out["report_only"] = {}
     print("\nreport only (accuracy in points, NLL raw; temperature 1):")
@@ -110,11 +107,18 @@ def main():
             row["D-B"]["macro_accuracy"] = pm(b, d, panel, "macro_accuracy")
         if panel == "exist":
             row["D-B"]["recall"] = pm(b, d, panel, "recall")
+        if panel == "flip":   # 596 original pictures, each with its mirror (critic EXP18-N02)
+            row["D-B"]["accuracy_by_original"] = pm(b, d, panel, "accuracy", by_original=True)
+            row["D-v12"]["accuracy_by_original"] = pm(v12, d, panel, "accuracy", by_original=True)
         out["report_only"][panel] = row
         print("  %-13s " % panel + "  ".join(
             "%s acc %+.2f [%+.2f, %+.2f] nll %+.4f [%+.4f, %+.4f]" % (
                 name, *(100 * x for x in (r["accuracy"]["difference"], *r["accuracy"]["ci95"])),
                 r["nll"]["difference"], *r["nll"]["ci95"]) for name, r in row.items()))
+        if panel == "flip":
+            print("  %-13s " % "flip/original" + "  ".join("%s acc %+.2f [%+.2f, %+.2f] (%d pictures)" % (
+                name, *(100 * x for x in (r["accuracy_by_original"]["difference"], *r["accuracy_by_original"]["ci95"])),
+                r["accuracy_by_original"]["pictures"]) for name, r in row.items()))
     os.makedirs("runs/exp18-distill", exist_ok=True)
     json.dump(out, open("runs/exp18-distill/report.json", "w"), indent=1)
 

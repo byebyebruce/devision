@@ -79,3 +79,24 @@ def test_kl_over_the_options_only():
     assert torch.equal(rlcd._distill_kl(s2, t, mask), kl)
     p = torch.softmax(t[0, :2], -1)
     assert kl[0] == pytest.approx(float((p * (p.log() - torch.log_softmax(s[0, :2], -1))).sum()), abs=1e-6)
+
+
+def test_the_noise_draws_see_the_same_random_state(tmp_path, samples, teacher, monkeypatch):
+    """The RNG state at every RLCD noise draw is the same with and without the teacher (critic EXP18-N01): the
+    seeding, LoRA init and batch order before the first draw, and the teacher's forward passes between draws,
+    consume nothing. (A first-step gold NLL alone would not show this.)"""
+    states = {}
+    real = rlcd._rlcd_loss
+
+    def spy(name):
+        def f(*a):
+            states.setdefault(name, []).append(torch.get_rng_state().clone())
+            return real(*a)
+        return f
+
+    monkeypatch.setattr(rlcd, "_rlcd_loss", spy("base"))
+    run(tmp_path, "base", samples, monkeypatch)
+    monkeypatch.setattr(rlcd, "_rlcd_loss", spy("dist"))
+    run(tmp_path, "dist", samples, monkeypatch, distill_weight=1.0, distill_teacher=teacher, distill_blocks="old")
+    assert len(states["base"]) == len(states["dist"]) > 2
+    assert all(torch.equal(a, b) for a, b in zip(states["base"], states["dist"]))

@@ -28,6 +28,7 @@ from laya.common import QTYPES, clamp_temperature, collate_items, ece_score, pro
 from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
 
+from .compare import same_start
 from .evaluate import score_records
 from .samples import Sample
 from .tracking import Tracker, TrainLog
@@ -79,6 +80,11 @@ class TrainConfig:
     distill_weight: float = 0.0
     distill_teacher: str = ""
     distill_blocks: str = ""
+    # a run that reuses another as its baseline (exp18): after the step-0 evaluation, before the first update, its
+    # per-question records must match the baseline's step-0 records in this directory (same questions, valid
+    # probabilities, none further apart than start_tolerance); otherwise START_MISMATCH is written and training stops
+    start_check: str = ""
+    start_tolerance: float = 1e-5
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -191,6 +197,14 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
                     it["grid"] = grid
             items.append(it)
     return items
+
+
+class StartMismatch(RuntimeError):
+    """The run does not start from its baseline's model (TrainConfig.start_check): not a device failure, so not
+    something to retry."""
+
+
+START_MISMATCH = "START_MISMATCH"
 
 
 class _Images:
@@ -468,6 +482,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     c = config or TrainConfig()
     device = _device(c.device)
     distill_blocks = {b for b in c.distill_blocks.split(",") if b}
+    if c.start_check and not (c.monitor_details and out_dir):
+        raise ValueError("start_check compares step-0 records: it needs monitor_details and an out directory")
     teacher = None
     if c.distill_weight > 0:
         if not c.distill_teacher or not distill_blocks:
@@ -581,6 +597,18 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
 
     if resumed is None:
         run_eval()
+        if c.start_check:
+            step0 = os.path.join(str(out_dir), "monitor", "step0")
+            try:
+                check = same_start(step0, c.start_check, c.start_tolerance)
+            except ValueError as e:
+                with open(os.path.join(str(out_dir), START_MISMATCH), "w") as f:
+                    f.write("%s vs %s: %s\n" % (step0, c.start_check, e))
+                tracker.finish()
+                raise StartMismatch("step 0 does not match %s: %s" % (c.start_check, e)) from e
+            with open(os.path.join(str(out_dir), "start_check.json"), "w") as f:
+                json.dump(dict(check, baseline=c.start_check), f, indent=1)
+            print("step 0 matches %s (largest difference %.2g)" % (c.start_check, check["largest"]), flush=True)
     log = TrainLog(tracker, device, steps, c.log_every)
     for epoch in range(start_epoch, c.epochs):
         if not (resumed and epoch == start_epoch):
