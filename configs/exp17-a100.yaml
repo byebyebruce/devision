@@ -1,0 +1,20 @@
+# exp17 (docs/experiments/2026-10-13-exp17-interp.md): alpha 1.0 = r14's own weights (curve only, not selectable),
+# temperatures refitted on data/r13b/val.jsonl, on the r14b development panels. Evaluation only, not a round; judged
+# against runs/r13b-v12-base/stage2-recal by scripts/r13b/judge.py --rules scripts/r14b/rules.json final.
+name: exp17-a100
+stages: []
+
+evaluate:
+  checkpoint: runs/exp17-interp/a100
+  calibration_fit: data/r13b/val.jsonl
+  image_identity: data/v5/image_identity.json
+  sets:
+    exist: {path: data/r13b/panel_exist.jsonl, role: monitoring}
+    science: {path: data/r13b/panel_science.jsonl, role: monitoring}
+    ext: {path: data/ext/dev_ext.jsonl, role: monitoring}
+    bind_gqa: {path: data/r13/gqa/dev_bind_gqa.jsonl, role: monitoring}
+    count_narrow: {path: data/v11/dev_count_transfer.jsonl, role: monitoring}
+    count_wide: {path: data/r13b/count_wide.jsonl, role: monitoring}
+    flip: {path: data/v6/dev_lr_pairs.jsonl, role: monitoring}
+    vsr: {path: data/v5/dev_vsr.jsonl, role: monitoring}
+    val: {path: data/r13b/val.jsonl, role: calibration_fit}
