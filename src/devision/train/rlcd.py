@@ -72,6 +72,13 @@ class TrainConfig:
     # each set's per-question records (devision-eval's details format, temperature 1) to
     # <out>/monitor/step<N>/<set>.details.jsonl, and the fitted-temperature ones to <out>/monitor/final/
     monitor_details: bool = False
+    # exp18 (docs/experiments/2026-10-13-exp18-distill-plan.md): questions of the samples whose "block" is in
+    # distill_blocks (comma-separated) also get distill_weight * KL(teacher || student) over their options, the
+    # teacher being the frozen checkpoint distill_teacher (eval, no RLCD noise, temperature 1); the sum over those
+    # questions is divided by the micro batch size. The RLCD loss and gold of every question are unchanged.
+    distill_weight: float = 0.0
+    distill_teacher: str = ""
+    distill_blocks: str = ""
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -173,6 +180,8 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             it["keys"], it["gold"] = keys, probs
             if "group" in s:
                 it["group"] = s["group"]   # a scene family: its counterfactual pairs share a micro batch
+            if "block" in s:
+                it["block"] = s["block"]   # the data block it was mixed from (round 14 mixes); picks distilled questions
             boxes = (s.get("boxes") or {}).get(qid)
             present = ((s.get("meta") or {}).get(qid) or {}).get("referent_present", True)
             if boxes and present and s.get("width") and s.get("height"):   # an absent referent is never a target
@@ -218,6 +227,14 @@ def _rlcd_loss(logits, mask, target, qtype, sigma, group_size):
     logp = -(((z - logits.unsqueeze(0)) ** 2) * mask).sum(-1) / (2 * sigma ** 2)
     ce = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
     return -(adv * logp).mean() + ce, ce
+
+
+def _distill_kl(student_logits, teacher_logits, mask):
+    """Per question KL(teacher || student) over its options (mask: the real options, padding excluded), both
+    softmaxed at temperature 1 from raw logits."""
+    s = torch.log_softmax(student_logits.masked_fill(~mask, -1e4), -1)
+    t = torch.softmax(teacher_logits.masked_fill(~mask, -1e4), -1)
+    return ((t * (t.clamp_min(1e-12).log() - s)) * mask).sum(-1)
 
 
 def _fit_temperature(rows) -> float:
@@ -402,7 +419,8 @@ RESUME = "resume.pt"
 # what must match for a resume state to continue a run (logging and saving settings may change)
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
-                "grounding_weight", "question_conditioning", "lr_cond")
+                "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
+                "distill_blocks")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -449,6 +467,13 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     """
     c = config or TrainConfig()
     device = _device(c.device)
+    distill_blocks = {b for b in c.distill_blocks.split(",") if b}
+    teacher = None
+    if c.distill_weight > 0:
+        if not c.distill_teacher or not distill_blocks:
+            raise ValueError("distill_weight > 0 needs distill_teacher and distill_blocks")
+        # loaded before the seeds below, so the batch order, LoRA init and RLCD noise are those of a run without it
+        teacher = Decider.load(c.distill_teacher, device="cpu").model.to(device).eval().requires_grad_(False)
     random.seed(c.seed)
     torch.manual_seed(c.seed)
     model, tok = decider.model, decider.tok
@@ -478,6 +503,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         calib, train_items = holdout_by_image(items, min(400, int(len(items) * c.calib_fraction)))
 
     sets = {"val": calib, **{name: _items(decider, ss) for name, ss in (eval_sets or {}).items()}}
+    if teacher is not None:
+        found = {it.get("block") for it in train_items}
+        if not distill_blocks <= found:
+            raise ValueError("distill_blocks %s not in the training data (blocks: %s)"
+                             % (sorted(distill_blocks - found), sorted(b for b in found if b)))
 
     groups = [
         {"params": list(model.projector.parameters()), "lr": c.lr_new},
@@ -507,8 +537,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     resumed = None
     if resume_path and os.path.exists(resume_path):
         resumed = torch.load(resume_path, map_location="cpu", weights_only=False)
-        changed = {k: (resumed["config"].get(k), getattr(c, k)) for k in _RESUME_KEYS
-                   if resumed["config"].get(k) != getattr(c, k)}
+        defaults = asdict(TrainConfig())   # a state written before a setting existed ran with its default
+        changed = {k: (resumed["config"].get(k, defaults[k]), getattr(c, k)) for k in _RESUME_KEYS
+                   if resumed["config"].get(k, defaults[k]) != getattr(c, k)}
         if changed or resumed["train_items"] != len(train_items):
             raise ValueError("%s was written by a different run (%s); delete it to start over"
                              % (resume_path, changed or "different training data"))
@@ -583,6 +614,18 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 target = torch.tensor([chunk[i]["grid"] for i in grounded], device=device)
                 ground = (target * (target.log() - logp)).sum(-1).mean()
                 loss = loss + c.grounding_weight * ground
+            distill = None
+            kept = [i for i, it in enumerate(chunk) if it.get("block") in distill_blocks] if teacher is not None else []
+            if kept:
+                idx = torch.tensor(kept, device=device)
+                sub = {k: batch[k].to(device)[idx] for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")}
+                with torch.no_grad():
+                    t_logits = _forward(teacher, sub, pixels[kept], device).float()
+                mask = sub["marker_mask"]
+                kl = _distill_kl(logits[idx], t_logits, mask)
+                loss = loss + c.distill_weight * kl.sum() / len(chunk)
+                distill = (kl.mean().item(), (t_logits.masked_fill(~mask, -1e4).argmax(-1)
+                                              == batch["target"].to(device)[idx].argmax(-1)).float().mean().item())
             hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
                    == batch["target"].to(device).argmax(-1)).float().mean()
             if not math.isfinite(loss.item()) or (loss.item() == 0.0 and nll.item() == 0.0 and hit.item() < 1.0):
@@ -600,16 +643,19 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             log.add(len(chunk), loss=loss.item(), nll=nll.item(), accuracy=hit.item(),
                     batch_tokens=float(batch["input_ids"].shape[1]),   # padded length; long batches drive memory
                     grad_norm=grad_norm.item(), sigma=sigma,
-                    **({"grounding_kl": ground.item()} if ground is not None else {}))
+                    **({"grounding_kl": ground.item()} if ground is not None else {}),
+                    **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}))
             means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
                                                        "head": optimizer.param_groups[1]["lr"],
                                                        "lora": optimizer.param_groups[2]["lr"],
                                                        **({"encoder": optimizer.param_groups[3]["lr"]}
                                                           if len(optimizer.param_groups) > 3 else {})})
             if means:
-                print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f" % (
+                print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f%s" % (
                     epoch + 1, len(losses), steps, means["train/loss"], means["train/nll"],
-                    means["train/accuracy"], means["perf/step_s"]), flush=True)
+                    means["train/accuracy"], means["perf/step_s"],
+                    " distill_kl %.4f teacher_acc %.3f" % (means["train/distill_kl"], means["train/teacher_accuracy"])
+                    if "train/distill_kl" in means else ""), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:

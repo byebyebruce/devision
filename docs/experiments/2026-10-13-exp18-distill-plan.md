@@ -27,7 +27,7 @@
 L = L_RLCD（全部题，gold，不变） + λ · (1/|B|) · Σ_{i ∈ 本批的旧回放题} KL(p_T,i ‖ p_S,i)
 
 - **范围**：`scripts/r14/build.py:94` 定义的 `REPLAY` 五块（existence、count_original、science、general、ext）。新任务 `count_balanced`、`pixmo` 不加约束，继续只学真实 gold，不让它们模仿 v12 的计数短板。数据文件里每题已有 `block` 字段（已核对：ext 24,003、existence 10,000、general 9,998、science 7,875、count_original 6,000、count_balanced 12,000、pixmo 12,000）。
-- **教师**：`runs/v12-ext/stage2` 单独加载一份，`eval()`、不求梯度、不加 RLCD 噪声。输入与学生同一个 batch（同样的 token、选项标记位置和 padding）。冻结的 SigLIP2 两边相同（加载时断言权重一致），视觉特征算一次、两边共用，教师用自己的投影层。
+- **教师**：`runs/v12-ext/stage2` 单独加载一份，`eval()`、不求梯度、不加 RLCD 噪声。输入取学生同一个 batch 中旧回放题那几行（同样的 token、选项标记位置和 padding 长度）。教师自己跑一遍冻结的 SigLIP2，用自己的投影层。（实施时改为不共用视觉特征：SigLIP2 前向开销小，这样 `_forward` 不用改；方案原写的"共用并断言权重一致"作废。）
 - **分布**：在本题的选项上做 softmax（用 marker mask 屏蔽 padding，选项按位置对齐，两边的选项顺序来自同一个输入，所以一致）。学生用**加噪声之前**的 logits。蒸馏温度 τ = 1，就是原始 logits，和发布用的校准温度无关，也不读校准温度。
 - **系数与归一化（开训前冻结）**：λ = 1，只跑这一个值，不扫系数。除以 micro batch 大小 |B| = 8，而不是除以本批旧回放题数，这样一道旧回放题的 KL 和它的交叉熵在批均值里的权重相同。
 - **标签问题**：gold 不改、不过滤。教师答错的旧回放题也照样加约束，因为 gold 交叉熵仍在，两项互相拉。训练中记录教师在本批旧回放题上的准确率和"教师首选 ≠ gold"的比例，只报告。
@@ -80,3 +80,27 @@ L = L_RLCD（全部题，gold，不变） + λ · (1/|B|) · Σ_{i ∈ 本批的
 
 - 不为了镜像关系下界 −2.11 贴线在测试集上继续扫 α，不把新的校准口径当作原规则已通过，不为完整 r14b 一直换种子直到不报警。
 - 测试集已经多轮用于判断训练方向。以后的复测要披露这种适应性使用，不称为全新的独立验证。
+
+## 实施（2026-10-13，负责人："可以写测试代码，然后交给评论家来 review……没有问题你再开始训练"）
+
+代码已写好，**尚未训练**；评审没有问题后再启动。
+
+- `src/devision/train/rlcd.py`：
+  - `TrainConfig` 加 `distill_weight`（默认 0，即关闭）、`distill_teacher`、`distill_blocks`（逗号分隔）；
+  - `_items` 透传样本的 `block`；
+  - `_distill_kl` 只在选项上算 KL(教师 ‖ 学生)，padding 不参与；
+  - `train()` 在设种子之前加载教师；数据里没有某个指定的块就拒绝运行；
+  - 每步只对本批中属于指定块的题做教师前向，加上 λ · ΣKL / 8；
+  - 训练日志多记 `distill_kl` 和 `teacher_accuracy`；
+  - 这三个设置加进续训一致性检查。旧的 `resume.pt` 没有这些键时按默认值比较，所以老的续训文件仍能用。
+- `tests/train/test_distill.py`（tiny 模型，CPU）：
+  - λ = 0 时与不加蒸馏逐位相同，包括损失序列和批序；
+  - λ > 0 时批序相同、第 1 步的 nll 相同，之后的损失不同；
+  - 只有指定块的题进入 KL，题数等于 epoch 数 × 该块题数；
+  - 缺少的块和缺少的教师都会被拒绝；
+  - KL 的数值和 padding 无关。
+- 验证结果：`uv run pytest` 共 172 项通过（含新增 5 项），`uv run pyright` 0 错误。
+- `configs/exp18-distill.yaml`：与 `configs/exp16-r14-s1.yaml` 只差三项 distill 参数（流水线 `--dry-run` 检查通过）。
+- `scripts/exp18/chain.sh`：第 2,000 步的记录写完后停止训练，故障时从续训点最多重试 3 次，然后跑报告。
+- `scripts/exp18/report.py`：先核对 D 与 B 第 0 步的逐题概率（差别超过 1e-5 就不给判定），再算 P1 / P2、出口和只报告项。
+  - 试跑：把 exp16 的两组当作 D / B 跑通了，不作结论。两组 `step0` 的最大概率差为 0.0，说明同一 v12 在 MPS 上评测是确定的，起点核对可行。
