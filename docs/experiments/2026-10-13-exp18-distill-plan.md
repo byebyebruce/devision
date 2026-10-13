@@ -99,7 +99,7 @@ L = L_RLCD（全部题，gold，不变） + λ · (1/|B|) · Σ_{i ∈ 本批的
   - 只有指定块的题进入 KL，题数等于 epoch 数 × 该块题数；
   - 缺少的块和缺少的教师都会被拒绝；
   - KL 的数值和 padding 无关。
-- 验证结果：`uv run pytest` 共 172 项通过（含新增 5 项），`uv run pyright` 0 错误。
+- 验证结果：`uv run pytest` 共 167 项通过（含新增 5 项），`uv run pyright` 0 错误。
 - `configs/exp18-distill.yaml`：与 `configs/exp16-r14-s1.yaml` 只差三项 distill 参数（流水线 `--dry-run` 检查通过）。
 - `scripts/exp18/chain.sh`：第 2,000 步的记录写完后停止训练，故障时从续训点最多重试 3 次，然后跑报告。
 - `scripts/exp18/report.py`：先核对 D 与 B 第 0 步的逐题概率（差别超过 1e-5 就不给判定），再算 P1 / P2、出口和只报告项。
