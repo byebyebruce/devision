@@ -2,7 +2,7 @@
 
 每一轮训练一节（轮次 = YAML 的 `name`，目录 `runs/<name>/`），写清改了什么、结果、和上一轮比涨了多少。过程细节和失败的尝试在 `experiments/2026-09-30-rlcd-plateau.md`。
 
-**当前最佳：`v12-ext`**（`runs/v12-ext/stage2`，对外发布为 v0.2）。2026-10-07 由项目负责人决定取代 v11，作为取舍：事先写的主要条件（四个关心的留出集至少一项显著提高）没有满足，物体存在题 `test_exist` 已证明退化 −1.7 [−2.9, −0.5]（见 v12 一节）。已知短板：示意图 / 图表 / 地图上"找两处比较"仍没学会（扩展数据里 FigureQA、MapQA、VisOnlyQA 基本没涨）；ScienceQA 比 laya-vision 低 5.8 个点，必须看示意图的自然科学题 0.455 对 0.700；相对位置是非题原图与镜像同时答对 18.5%，仍低于随机的 25%；拟合温度 choice 1.96 / noul 1.64。
+**当前采用：`r15-vision`**（`runs/r15-vision/stage2`，模型 v0.3）。2026-10-14 负责人决定作为取舍取代 v12（v0.2）。相对 v12：CountBench +16.7、关系 +4.4、镜像关系 +2.9、ScienceQA +2.3 个百分点；旧能力保护四项未满足，原始 `candidate=false` 保留。接受的代价包括 VSR 正类召回 −5.3、A-OKVQA −1.3、计数对选项顺序更敏感、What'sUp 概率质量变差；测试集已多轮适应性使用。细节见下节及 `release/v0.3/adoption.md`。
 
 | 轮次 | 日期 | 配置 | 相对上一轮改了什么 | 状态 |
 |---|---|---|---|---|
@@ -17,13 +17,13 @@
 | v9b-lr-replay | 2026-10-05 | `configs/v9b-lr-replay.yaml` | 从 v8 接着训 2 遍：真实照片左右题 2,488 道（R 的原题，原图 + 镜像，几乎全是位置题）+ 回放 2,500（含 VSR / ScienceQA / Visual7W） | 被 v11 取代（曾为当前最佳：负责人决定取代 v8） |
 | v10-count | 2026-10-06 | `configs/v10-count.yaml`（全量评测 `configs/v10-count-eval.yaml`） | 从 v9b 接着训 2 遍：v9b 的左右原题 2,488 + 回放 2,488（计数占一半）；示意图路线在阶段 A 停止后的备选 | 未取代 v9b（计数在测试集上没有补回） |
 | v11-v9b-recovery | 2026-10-06 | `configs/v11-v9b-recovery.yaml`（筛选 `v11-recovery-screen.yaml`，全量评测 `v11-v9b-recovery-eval.yaml`） | 从 v9b 接着训 1 遍：9,988 道不同的题 = 计数 3,000 + 其他回放 4,500 + v9b 的左右原题 2,488；学习率同 v10 | 被 v12 取代（曾为当前最佳：负责人决定作为取舍取代 v9b） |
-| v12-ext | 2026-10-07 | `configs/v12-ext.yaml`（全量评测 `configs/v12-ext-eval.yaml`） | 从 v11 接着训一遍：扩展数据包 353,830 道（13 个新来源 315,342 + 回放 38,488，`data/ext/MIX.json`），架构不变 | **当前最佳**（负责人决定作为取舍取代 v11；发布为 v0.2） |
+| v12-ext | 2026-10-07 | `configs/v12-ext.yaml`（全量评测 `configs/v12-ext-eval.yaml`） | 从 v11 接着训一遍：扩展数据包 353,830 道（13 个新来源 315,342 + 回放 38,488，`data/ext/MIX.json`），架构不变 | 被 r15 取代（曾由负责人作为取舍采用；发布为 v0.2） |
 | r14-count | 2026-10-13 | `configs/r14-count.yaml` | 从 v12 接着训一遍：配平 0–10 计数 12,000 + PixMo 存在性 / 窄候选计数 12,000 + 回放 57,876（71%，扩展每源 2,400），81,876 题、10,235 步，结构不变 | 未取代 v12（CountBench +14.5，但镜像关系 −1.4 已证明退化、4 个集合未证明守住、What'sUp 概率警戒；待负责人决定） |
 | r14b-mirror | 2026-10-13 | `configs/r14b-mirror.yaml` | r14 配方中扩展回放每源 2,400 → 2,100，换成 v6 左右镜像对 2,000 + VSR 1,000（其余逐题相同） | 第 2,000 步止损（原格式计数面板 −3.3 [−6.3, −0.7]），未训完 |
-| r15-vision | 2026-10-14 | `configs/r15-vision.yaml` | r14b 数据 + 解冻 SigLIP 最上面 4 层（5e-6），种子 1，从 exp19 第 2,000 步接着训满 10,235 步 | 未取代 v12（CountBench +16.7、关系 +4.4、镜像关系 +2.9，无预写的概率警戒；4 个保护集合未守住，VSR 召回 −5.3、A-OKVQA −1.3、CountBench 对选项顺序更敏感；待负责人决定） |
+| r15-vision | 2026-10-14 | `configs/r15-vision.yaml` | r14b 数据 + 解冻 SigLIP 最上面 4 层（5e-6），种子 1，从 exp19 第 2,000 步接着训满 10,235 步 | **当前采用，发布为 v0.3**（负责人接受取舍；原始 candidate=false 保留） |
 | r13-binding | 2026-10-11 | `configs/r13-binding.yaml`（分支 `r13-binding`；全量评测 `configs/r13-binding-eval.yaml`） | 从 v12 接着训一遍：第 13 轮绑定数据 207,109 道（反事实合成 40,040 照片背景 75%、GQA 绑定、VisMin、CoGenT A、PixMo 两类计数、CounterCurate、TallyQA 复杂、VAW + 回放 40,000），加问题条件视觉 token（S2，零初始化） | 未取代 v12（主要条件通过，POPE 已证明退化、概率质量警戒触发；负责人 2026-10-11 决定不采用、不作下一轮起点） |
 
-## r15-vision（训满，按规则未取代 v12，待负责人决定）
+## r15-vision（训满，未通过原规则；负责人取舍采用，发布为 v0.3）
 
 r14b 数据（r14 + v6 镜像对 + VSR）加解冻 SigLIP 最上面 4 层（5e-6），种子 1，从 exp19 第 2,000 步接着训满 10,235 步。止损判定 6 次都没有触发。详见 `docs/experiments/2026-10-14-r15-vision.md`。
 

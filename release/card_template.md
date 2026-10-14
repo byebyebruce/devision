@@ -2,6 +2,8 @@
 
 # deVision {{version}}
 
+<p align="center"><img src="assets/logo.png" alt="deVision" width="200"></p>
+
 **Image + English questions → structured answers with calibrated probabilities.** deVision pairs a SigLIP2 vision encoder with Laya's ModernBERT decision model. It scores the options of yes/no (`noul`) and multiple-choice (`choice`) questions instead of generating text, follows the Jev answer format, and runs without a GPU. Several questions about one image share a single image encoding.
 
 ## Usage
@@ -13,7 +15,7 @@ pip install devision
 ```python
 import devision
 
-model = devision.load("{{hub_repo}}")   # latest release; revision="{{version}}" pins this one; device defaults to auto
+model = devision.load("{{hub_repo}}")   # latest release; device defaults to auto
 result = model.predict(
     image="photo.jpg",   # a path, an http(s) URL, a data URI, base64, bytes or a PIL image
     state="",            # text context; "" when there is none
@@ -41,7 +43,7 @@ Over HTTP, `image` is an http(s) URL, a data URI or base64; the server never rea
 
 ## Evaluation
 
-Accuracy through `decide` with the fitted temperatures. *Mismatched*: the same questions with every picture swapped for an unrelated one. Test sets use held-out pictures; they are project subsets, not official leaderboard scores.
+Accuracy through `decide` with the fitted temperatures. *Mismatched*: the same questions with every picture swapped for an unrelated one. These are project evaluation subsets, not official leaderboard scores. Although test pictures are excluded from training, these sets have informed successive experiments and release decisions; they are not a fresh independent test. See the release limitations below.
 
 {{eval_table}}
 
@@ -57,7 +59,7 @@ CPU latency: {{latency}}.
 
 | | |
 |---|---|
-| Vision | Frozen SigLIP2-B/16, {{image_size}} × {{image_size}} letterboxed input, {{visual_tokens}} visual tokens after a {{shuffle}} × {{shuffle}} merge and an MLP projector |
+| Vision | SigLIP2-B/16, {{image_size}} × {{image_size}} letterboxed input, {{visual_tokens}} visual tokens after a {{shuffle}} × {{shuffle}} merge and an MLP projector; training policy described below |
 | Decision | Laya-initialised ModernBERT-large and Laya's decision head; each option is scored at its `[MASK]`, then a temperature-scaled softmax |
 | Size | About 518M parameters, FP32, {{weights_gb}} GB (LoRA merged) |
 

@@ -3,6 +3,8 @@ card, verify accepts it, and verify catches a changed file, a missing file and c
 import importlib.util
 import json
 import os
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -73,3 +75,40 @@ def test_build_refuses_to_replace_a_folder_holding_the_source_checkpoint(release
     with pytest.raises(SystemExit):
         hf.build(str(rel), cfg["round"])
     assert os.path.exists(os.path.join(cfg["round"], "stage2", "model.safetensors"))
+
+
+@pytest.mark.parametrize("exists,private", [(True, False), (True, True), (False, True)])
+def test_publish_preserves_existing_visibility_and_creates_missing_repo_private(tmp_path, monkeypatch, exists, private):
+    import huggingface_hub
+    api = Mock()
+    api.repo_exists.return_value = exists
+    api.model_info.return_value = SimpleNamespace(private=private)
+    api.list_repo_refs.return_value = SimpleNamespace(tags=[])
+    api.upload_folder.return_value = SimpleNamespace(oid="uploaded-commit")
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda: api)
+    monkeypatch.setattr(hf, "verify", lambda *a, **k: [])
+    monkeypatch.setattr(hf, "release_config", lambda _: {
+        "hub_repo": "someone/model", "version": "v9.9", "git_tag": "model-v9.9"})
+    hf.publish("unused", True, str(tmp_path))
+    if exists:
+        api.create_repo.assert_not_called()
+    else:
+        api.create_repo.assert_called_once_with("someone/model", private=True, repo_type="model")
+    api.upload_folder.assert_called_once()
+    api.create_tag.assert_called_once_with("someone/model", tag="v9.9", revision="uploaded-commit",
+                                          tag_message="github model-v9.9")
+
+
+def test_publish_refuses_to_overwrite_an_existing_tag(tmp_path, monkeypatch):
+    import huggingface_hub
+    api = Mock()
+    api.repo_exists.return_value = True
+    api.model_info.return_value = SimpleNamespace(private=False)
+    api.list_repo_refs.return_value = SimpleNamespace(tags=[SimpleNamespace(name="v9.9")])
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda: api)
+    monkeypatch.setattr(hf, "verify", lambda *a, **k: [])
+    monkeypatch.setattr(hf, "release_config", lambda _: {
+        "hub_repo": "someone/model", "version": "v9.9", "git_tag": "model-v9.9"})
+    with pytest.raises(SystemExit, match="already exists"):
+        hf.publish("unused", True, str(tmp_path))
+    api.upload_folder.assert_not_called()

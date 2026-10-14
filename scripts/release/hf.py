@@ -33,7 +33,10 @@ TEST_SETS = [("test_exist", "COCO object presence"), ("test_vqa_choice", "VQAv2 
              ("test_size", "COCO size"), ("bench_pope", "POPE, project filtered set"), ("test_gqa", "GQA val subset"),
              ("test_position", "COCO position"), ("test_vqa_yesno", "VQAv2 yes/no subset"),
              ("test_relation", "COCO relative position"), ("test_vsr", "VSR, project held-out split"),
-             ("test_v7w", "Visual7W, project held-out split"), ("test_count_fresh", "Fresh counting test (unseen pictures)")]
+             ("test_v7w", "Visual7W, project held-out split"), ("test_count_fresh", "Fresh counting test (unseen pictures)"),
+             ("bench_countbench", "CountBench, 0–10 choices"), ("test_position_flip", "COCO mirrored position"),
+             ("test_relation_flip", "COCO mirrored relative position"), ("test_bind_gqa", "GQA binding test"),
+             ("bench_whatsup", "What'sUp")]
 LAYA_SETS = [("vqav2_yesno", "VQAv2 yes/no"), ("aokvqa", "A-OKVQA"), ("scienceqa", "ScienceQA with images")]
 SMOKE_QUESTIONS = {
     "person": {"type": "noul", "instructions": "Is there a person in the image?"},
@@ -156,12 +159,12 @@ def cpu_latency(path: Optional[str], checkpoint: str) -> Optional[Dict[str, Any]
 
 
 def eval_table(res: Dict[str, Any]) -> str:
-    rows = ["| Set | Questions | Accuracy | Mismatched | ECE |", "|---|---:|---:|---:|---:|"]
+    rows = ["| Set | Questions | Accuracy | Mismatched | NLL | ECE |", "|---|---:|---:|---:|---:|---:|"]
     for name, label in TEST_SETS:
         v = res["test_sets"].get(name)
         if v:
-            rows.append("| %s | %s | %.3f | %s | %.3f |" % (label, format(v["questions"], ","), v["accuracy"],
-                        "%.3f" % v["accuracy_mismatched"] if "accuracy_mismatched" in v else "–", v["ece"]))
+            rows.append("| %s | %s | %.3f | %s | %.3f | %.3f |" % (label, format(v["questions"], ","), v["accuracy"],
+                        "%.3f" % v["accuracy_mismatched"] if "accuracy_mismatched" in v else "–", v["nll"], v["ece"]))
     return "\n".join(rows)
 
 
@@ -316,6 +319,13 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
     with open(os.path.join(out, "README.md"), "w") as f:
         f.write(card(release_dir, cfg, res, config, os.path.getsize(os.path.join(out, "model.safetensors"))))
     shutil.copy(os.path.join(ROOT, "LICENSE"), os.path.join(out, "LICENSE"))
+    os.makedirs(os.path.join(out, "assets"))
+    shutil.copy(os.path.join(ROOT, "assets", "logo.png"), os.path.join(out, "assets", "logo.png"))
+    # Release-specific evidence and the owner's decision accompany the original acceptance verdict.
+    for name, source in cfg.get("evidence", {}).items():
+        if os.path.basename(name) != name:
+            raise SystemExit("evidence filenames must not contain directories: %s" % name)
+        shutil.copy(os.path.join(ROOT, source), os.path.join(out, "evaluation", name))
     with open(os.path.join(out, ".gitattributes"), "w") as f:
         f.write(GITATTRIBUTES)
     run = load_json(os.path.join(round_dir, "run.json")) if os.path.exists(os.path.join(round_dir, "run.json")) else {}
@@ -338,13 +348,14 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
     return out
 
 
-def verify(release_dir: str, folder: Optional[str] = None, latency: bool = True) -> List[str]:
+def verify(release_dir: str, folder: Optional[str] = None, latency: bool = True,
+           manifest_name: str = "MANIFEST.json") -> List[str]:
     """Problems of a built (or downloaded) release folder; [] when it is ready."""
     import yaml
     cfg = release_config(release_dir)
     folder = folder or build_dir(cfg)
     problems = ["missing %s" % f for f in REQUIRED if not os.path.exists(os.path.join(folder, f))]
-    want = load_json(os.path.join(release_dir, "MANIFEST.json"))
+    want = load_json(os.path.join(release_dir, manifest_name))
     got = manifest(folder)
     problems += ["%s: %s" % (rel, "missing" if rel not in got else "sha256 differs")
                  for rel, v in want.items() if rel not in got or got[rel]["sha256"] != v["sha256"]]
@@ -414,8 +425,8 @@ def publish(release_dir: str, push: bool, folder: Optional[str] = None, docs: bo
         return
     if not exists:
         api.create_repo(repo, private=True, repo_type="model")
-    if not api.model_info(repo).private:
-        raise SystemExit("%s is not private after creation; stopping" % repo)
+        if not api.model_info(repo).private:
+            raise SystemExit("%s is not private after creation; stopping" % repo)
     commit = api.upload_folder(repo_id=repo, folder_path=folder, repo_type="model",
                                commit_message="deVision %s (github %s, %s)" % (cfg["version"], cfg["git_tag"],
                                                                                 git_commit() or "?"))

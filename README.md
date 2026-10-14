@@ -4,7 +4,7 @@
 
 **deVision = Decision + Vision**：看图做决策。输入一张图片和若干英文问题，输出 Jev 格式的答案（`noul` 是非题 / `choice` 选择题）和校准过的概率。SigLIP2 看图，Laya 的 ModernBERT 决策头打分，不生成文字；没有 GPU 也能跑。
 
-模型在 Hugging Face：[`lukbit/devision`](https://huggingface.co/lukbit/devision)（当前 v0.2）。
+模型在 Hugging Face：[`lukbit/devision`](https://huggingface.co/lukbit/devision)（当前模型 **v0.3**）；ModelScope：[`baibaibai000/devision`](https://modelscope.cn/models/baibaibai000/devision)。
 
 ## 安装
 
@@ -21,7 +21,7 @@ pip install "devision[train]"   # 再加训练
 import devision
 
 decider = devision.load("lukbit/devision")   # Hugging Face 上的最新版；也可传本地 checkpoint 目录
-# 固定版本 revision="v0.2"；设备默认 auto（CUDA > MPS > CPU），可指定 device="cpu"
+# 设备默认 auto（CUDA > MPS > CPU），可指定 device="cpu"
 
 result = decider.predict(            # 与 decider.decide(...) 相同，predict 是 Laya 的叫法
     image="kitchen.jpg",
@@ -49,7 +49,7 @@ devision-serve   # 浏览器打开 http://127.0.0.1:8000 是 web demo
 
 仓库内运行 `uv run devision-serve`。默认加载 `lukbit/devision`，也可用 `--checkpoint` 指定其他模型仓库或本地 checkpoint 目录。
 
-常用参数：`--revision v0.2` 固定版本，`--device cpu|cuda|mps`（默认自动），`--no-demo` 只开接口。
+常用参数：`--device cpu|cuda|mps`（默认自动），`--no-demo` 只开接口。
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -d '{
@@ -65,7 +65,7 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 
 ```json
 {
-  "model": "devision-v0.2",
+  "model": "devision-v0.3",
   "answers": {
     "has_fork": {"type": "noul", "noul": 0.03},
     "room": {"type": "choice", "choice": "kitchen",
@@ -77,7 +77,7 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 
 - 请求：`image` 是 http(s) URL、Data URI 或 Base64（不读服务器本地文件）；`choice` 有 2–255 个选项，`criteria` 的值可以加一句说明帮模型区分；不支持 `score`。
 - 响应与 Jev 相同：`noul` 是陈述成立的概率；`confidence = (n·p_max − 1)/(n − 1)`。请求不合法返回 422。
-- 速度：Mac CPU 上单题约 0.15 秒；同一请求里多道题共用一次图片编码。
+- 速度：Mac CPU 上单题 P50 约 0.175 秒、P95 约 0.190 秒（4 线程、FP32、200 道单题请求，排除预热）；同一请求里多道题共用一次图片编码。
 
 ## 适合做什么
 
@@ -88,14 +88,16 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 
 ## 效果
 
-v0.2 与 laya-vision 201M 在同一批题上逐题比较（差值 95% 区间按图片重采样）：
+v0.3 与 laya-vision 201M 在同一批题上逐题比较（差值 95% 区间按图片重采样；POPE 仅比较公开汇总分，没有配对区间）：
 
-| 评测集 | 题数 | laya-vision | deVision v0.2 | 差值 |
+| 评测集 | 题数 | laya-vision | deVision v0.3 | 差值 |
 |---|---|---|---|---|
-| POPE random / popular / adversarial | 3 × 3,000 | 0.836 / 0.819 / 0.777 | **0.891 / 0.868 / 0.791** | +5.5 / +4.9 / +1.4 |
-| VQAv2 是非题 | 4,887 | 0.717 | **0.725** | +0.8 [−0.9, +2.3] |
-| A-OKVQA | 1,138 | 0.598 | **0.626** | +2.7 [−0.6, +6.0] |
-| ScienceQA（带图题） | 2,097 | **0.824** | 0.766 | −5.8 [−7.9, −3.6] |
+| POPE random / popular / adversarial | 3 × 3,000 | 0.836 / 0.819 / 0.777 | **0.880 / 0.859 / 0.805** | +4.4 / +4.0 / +2.8 |
+| VQAv2 是非题 | 4,887 | 0.717 | **0.725** | +0.8 [−0.7, +2.4] |
+| A-OKVQA | 1,138 | 0.598 | **0.612** | +1.4 [−1.8, +4.7] |
+| ScienceQA（带图题） | 2,097 | **0.824** | 0.789 | −3.5 [−5.6, −1.4] |
+
+相对 v0.2，CountBench +16.7、镜像关系 +2.9、ScienceQA +2.3 个百分点。v0.3 是负责人接受取舍后的采用：四项旧能力保护未通过，VSR 召回下降、A-OKVQA 可能下降，计数对选项顺序更敏感。这些集合已多轮用于实验决策，不是新的独立测试；详见 [采用说明](release/v0.3/adoption.md)。
 
 完整结果和每一轮的训练记录见 [`docs/training-log.md`](https://github.com/byebyebruce/devision/blob/master/docs/training-log.md)，模型结构和设计见 [`docs/spec/vision-decision-mvp.md`](https://github.com/byebyebruce/devision/blob/master/docs/spec/vision-decision-mvp.md)。
 
@@ -107,7 +109,7 @@ bash scripts/data/build_all.sh data              # 从公开数据集生成训�
 uv run devision-pipeline configs/scratch.yaml    # 从头训练
 ```
 
-每一轮训练是 `configs/` 里的一个 YAML，再跑同一个 YAML 是续跑。数据格式见 [`examples/train/`](https://github.com/byebyebruce/devision/tree/master/examples/train)，发布版 v0.2 的配置是 [`configs/v12-ext.yaml`](https://github.com/byebyebruce/devision/blob/master/configs/v12-ext.yaml)。
+每一轮训练是 `configs/` 里的一个 YAML，再跑同一个 YAML 是续跑。数据格式见 [`examples/train/`](https://github.com/byebyebruce/devision/tree/master/examples/train)，发布模型 v0.3 的配置是 [`configs/r15-vision.yaml`](https://github.com/byebyebruce/devision/blob/master/configs/r15-vision.yaml)（从 v0.2 继续训练，不是从零训练）。
 
 ## 许可
 
