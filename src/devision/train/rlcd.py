@@ -85,6 +85,10 @@ class TrainConfig:
     # probabilities, none further apart than start_tolerance); otherwise START_MISMATCH is written and training stops
     start_check: str = ""
     start_tolerance: float = 1e-5
+    # exp19 (docs/experiments/2026-10-14-exp19-vision-plan.md): also train the original weights of the SigLIP
+    # tower's top N encoder layers and its final layer norm, at lr_vision; 0: the tower stays frozen
+    vision_unfreeze_top: int = 0
+    lr_vision: float = 5e-6
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -219,8 +223,18 @@ class _Images:
             return image_tensor(img, self.decider.cfg)
 
 
+def _vision_params(vision, top: int) -> List[nn.Parameter]:
+    """The original weights of the SigLIP tower's top `top` encoder layers and its final layer norm."""
+    n = int(vision.config.num_hidden_layers)
+    if not 0 < top <= n:
+        raise ValueError("vision_unfreeze_top must be in 1..%d, got %d" % (n, top))
+    keys = tuple("encoder.layers.%d." % i for i in range(n - top, n)) + ("post_layernorm.",)
+    return [p for name, p in vision.named_parameters() if any(k in name for k in keys)]
+
+
 def _forward(model, batch, pixels, device, return_hidden: bool = False):
-    with torch.no_grad():
+    trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
+    with torch.set_grad_enabled(trains_vision):
         patches = model.vision(pixel_values=pixels.to(device)).last_hidden_state
     visual = model.projector(patches)
     return model(*(batch[k].to(device) for k in
@@ -434,7 +448,7 @@ RESUME = "resume.pt"
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
-                "distill_blocks")
+                "distill_blocks", "vision_unfreeze_top", "lr_vision")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -495,6 +509,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     model, tok = decider.model, decider.tok
 
     model.vision.requires_grad_(False)
+    vision_params = _vision_params(model.vision, c.vision_unfreeze_top) if c.vision_unfreeze_top else []
+    for p in vision_params:
+        p.requires_grad_(True)
     if c.question_conditioning and model.condition is None:   # S2: new module, zero output layer
         model.add_question_conditioning()
         decider.cfg.question_conditioning = True
@@ -530,11 +547,14 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         {"params": [p for n, p in model.decision.named_parameters()
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
         {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},
-    ] + ([{"params": unfrozen, "lr": c.lr_encoder}] if unfrozen else [])
+    ] + ([{"params": unfrozen, "lr": c.lr_encoder}] if unfrozen else []) \
+      + ([{"params": vision_params, "lr": c.lr_vision}] if vision_params else [])
     extra = [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
              for p in getattr(model, name).parameters()]
     if extra:
         groups.append({"params": extra, "lr": c.lr_cond})
+    group_names = ["projector", "head", "lora"] + (["encoder"] if unfrozen else []) \
+        + (["vision"] if vision_params else []) + (["cond"] if extra else [])
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
     grouped = any("group" in it for it in train_items)
     first_plan = plan_batches(train_items, c.micro_batch) if grouped else []
@@ -673,11 +693,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     grad_norm=grad_norm.item(), sigma=sigma,
                     **({"grounding_kl": ground.item()} if ground is not None else {}),
                     **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}))
-            means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
-                                                       "head": optimizer.param_groups[1]["lr"],
-                                                       "lora": optimizer.param_groups[2]["lr"],
-                                                       **({"encoder": optimizer.param_groups[3]["lr"]}
-                                                          if len(optimizer.param_groups) > 3 else {})})
+            means = log.flush(len(losses), epoch + 1, {name: g["lr"] for name, g in zip(group_names, optimizer.param_groups)})
             if means:
                 print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f%s" % (
                     epoch + 1, len(losses), steps, means["train/loss"], means["train/nll"],

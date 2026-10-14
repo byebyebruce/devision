@@ -1,0 +1,26 @@
+# exp19 (docs/experiments/2026-10-14-exp19-vision-plan.md; owner 2026-10-14: "可以，开始吧"): exp16-r14b-s1 exactly
+# (r14b mix with the mirror pairs and VSR, seed 1, r14's schedule over 10,235 steps, stopped by scripts/exp19/chain.sh
+# once the step-2000 monitor records are written) plus one change: the SigLIP tower's top 4 of 12 encoder layers and
+# its final layer norm train at lr 5e-6 (frozen in every run so far). Baseline B = runs/exp16-r14b-s1 (reused): before
+# the first update the step-0 records must match B's (start_check). Readout scripts/exp19/report.py.
+name: exp19-vision
+device: mps
+common:
+  log_every: 100
+
+stages:
+  - name: stage2
+    kind: train
+    init: runs/v12-ext/stage2
+    data: data/r14b/train.jsonl
+    val: data/r13b/val.jsonl
+    eval: {exist: data/r13b/panel_exist.jsonl, science: data/r13b/panel_science.jsonl, ext: data/ext/dev_ext.jsonl,
+           bind_gqa: data/r13/gqa/dev_bind_gqa.jsonl, count_narrow: data/v11/dev_count_transfer.jsonl,
+           count_wide: data/r13b/count_wide.jsonl, px_wide: data/exp14/pixmo_count_wide.jsonl,
+           px_narrow: data/exp14/pixmo_count_narrow.jsonl, px_exist: data/exp14/pixmo_exist.jsonl,
+           flip: data/v6/dev_lr_pairs.jsonl, vsr: data/v5/dev_vsr.jsonl}
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 2000,
+             save_every: 500, amp: "off", seed: 1, monitor_details: true,
+             vision_unfreeze_top: 4, lr_vision: 5.0e-6,
+             start_check: runs/exp16-r14b-s1/stage2/monitor/step0, start_tolerance: 1.0e-5}
+
