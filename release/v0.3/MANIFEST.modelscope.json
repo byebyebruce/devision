@@ -1,0 +1,74 @@
+{
+ ".gitattributes": {
+  "size": 92,
+  "sha256": "127386e47ae53f224aaf02383189e1b11e6d52289775b426655aa5d87d7e953c"
+ },
+ "LICENSE": {
+  "size": 11358,
+  "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+ },
+ "README.md": {
+  "size": 12608,
+  "sha256": "5b3f68ed8cfe52a9d42568e9bfe052c272ac80af31d432ac71ceb2e1b9cd3990"
+ },
+ "assets/logo.png": {
+  "size": 450887,
+  "sha256": "4c1123544e9b08d79eb84ef399b244907249e5353bcbd5167667400e3a62a0f7"
+ },
+ "config.json": {
+  "size": 420,
+  "sha256": "f51a34393cc41ea56012bfd29eb35fbe9197934d897f24085eefb5e9a626452a"
+ },
+ "encoder/config.json": {
+  "size": 2084,
+  "sha256": "5268d24ad3b77c8151de5dcb0762ba4391619aad9ab0bda33e36fb083cfeae6d"
+ },
+ "evaluation/accept_vs_v0.2.json": {
+  "size": 13821,
+  "sha256": "8e63d73d13f985160e787b741c41895c029ef00eefff8895ad94b2a9d026184c"
+ },
+ "evaluation/adoption.md": {
+  "size": 2269,
+  "sha256": "0b044443cf371dbe8e017cb2fc705b1b841f58e46059c1cb272c161bfecfe988"
+ },
+ "evaluation/cpu_latency.json": {
+  "size": 8940,
+  "sha256": "1740cad45a9547c74c21e678f5ac51c906bb46890348472a1be9bebfa83328d8"
+ },
+ "evaluation/results.json": {
+  "size": 3567,
+  "sha256": "b9733f4f573a2652b079f7b899c71ca0290c0b199a85f34c0607bb0e577d6b22"
+ },
+ "evaluation/results.md": {
+  "size": 2077,
+  "sha256": "a133c35428d625adde778a9e0ff2898aa227ea854156a980eef7b5561aa6edad"
+ },
+ "evaluation/seeded_from.json": {
+  "size": 143,
+  "sha256": "c167f7139c72fb0c70c200e60448af1a5302ed4cc218e609c53e10a0c3d993e4"
+ },
+ "evaluation/training.yaml": {
+  "size": 3979,
+  "sha256": "a7733d9bc41db37b133868839c3080683167374eaf919c3cdd29d0575a894401"
+ },
+ "model.safetensors": {
+  "size": 2073754784,
+  "sha256": "110fea95889947c373258c88a396ad3eec574971815ee437b9c7cc3df8a5d2d5"
+ },
+ "provenance.json": {
+  "size": 4546,
+  "sha256": "d135fc16bd5e92fb5556972cd47ae0d783ed07d4715a8dde5b255c7f5e1d2f55"
+ },
+ "tokenizer/tokenizer.json": {
+  "size": 3583228,
+  "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+ },
+ "tokenizer/tokenizer_config.json": {
+  "size": 379,
+  "sha256": "5926e6ec4294f80294bd98d9176defa9fbae7f140525d06a1da987488e74a973"
+ },
+ "vision/config.json": {
+  "size": 361,
+  "sha256": "118c80de2a3e1c4cd8142cfcc61dc1d55bb02013b2f9f0d6ca4a94cd857f77e4"
+ }
+}
