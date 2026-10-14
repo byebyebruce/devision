@@ -54,6 +54,8 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--cand", default="runs/r14-count/eval")
     p.add_argument("--base", default="runs/v12-ext/eval")
+    p.add_argument("--out", help="verdict JSON (default <cand>/compare/accept_vs_v12.json); give another path when --base"
+                                 " is not v12, so the comparison does not overwrite the acceptance")
     a = p.parse_args(argv)
     gone = missing(a.cand, a.base)
     if gone:
@@ -79,10 +81,11 @@ def main(argv=None):
         v["protection"], v["not_held"], v["proven_worse"]))
     print("probability warnings: %s" % v["warnings"])
     print("verdict: %s" % ("candidate for v0.3" if v["candidate"] else "v12 stays by the rules; owner decides"))
-    os.makedirs(os.path.join(a.cand, "compare"), exist_ok=True)
+    path = a.out or os.path.join(a.cand, "compare", "accept_vs_v12.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     json.dump({"sets": out, **{k: v[k] for k in ("primary", "protection", "not_held", "proven_worse", "warnings",
                                                    "candidate")}},
-              open(os.path.join(a.cand, "compare", "accept_vs_v12.json"), "w"), indent=1)
+              open(path, "w"), indent=1)
 
 
 if __name__ == "__main__":
