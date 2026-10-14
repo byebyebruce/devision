@@ -10,3 +10,5 @@
 - The original acceptance verdict remains `candidate=false`; `adoption.md` records the owner's explicit override. No training or temperature refit was performed for release.
 
 Upload receipts and remote verification are recorded under the ignored `runs/release/` directory after publishing.
+
+Hugging Face appended `assets/logo.png filter=lfs diff=lfs merge=lfs -text` to `.gitattributes` during upload. The immutable v0.3 tag retains the pre-upload manifest; this is the sole platform-added difference. The current verifier accepts exactly this appended rule after validating the original content's SHA256. All other files, including weights, must match exactly. ModelScope did not change this file. Existing model and Git tags are preserved.

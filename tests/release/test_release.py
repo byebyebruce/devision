@@ -1,6 +1,7 @@
 """Release tooling (scripts/release/hf.py) on a tiny checkpoint: the built folder has the Hub layout and a filled
 card, verify accepts it, and verify catches a changed file, a missing file and changed answers. No network."""
 import importlib.util
+import hashlib
 import json
 import os
 from types import SimpleNamespace
@@ -67,6 +68,19 @@ def test_verify_catches_different_answers(release):
     smoke["answers"][pic]["person"]["noul"] += 0.01
     (rel / "smoke.json").write_text(json.dumps(smoke))
     assert any(p.startswith("smoke:") for p in hf.verify(str(rel), str(out), latency=False))
+
+
+def test_verify_accepts_only_the_hub_added_logo_lfs_rule(release):
+    rel, out = release
+    # v0.3's source manifest preceded HF's automatic logo rule addition.
+    attrs = (out / ".gitattributes").read_bytes()
+    source = attrs.removesuffix(hf.LOGO_LFS.encode())
+    manifest = json.loads((rel / "MANIFEST.json").read_text())
+    manifest[".gitattributes"] = {"size": len(source), "sha256": hashlib.sha256(source).hexdigest()}
+    (rel / "MANIFEST.json").write_text(json.dumps(manifest))
+    assert hf.verify(str(rel), str(out), latency=False) == []
+    (out / ".gitattributes").write_bytes(b"*.json -filter\n" + attrs)
+    assert any(".gitattributes" in p for p in hf.verify(str(rel), str(out), latency=False))
 
 
 def test_build_refuses_to_replace_a_folder_holding_the_source_checkpoint(release):

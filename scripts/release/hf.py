@@ -28,7 +28,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CHECKPOINT = ["model.safetensors", "encoder", "vision", "tokenizer"]   # + the model config, released as config.json
 REQUIRED = CHECKPOINT + ["config.json", "README.md", "LICENSE", "provenance.json", ".gitattributes",
                          "evaluation/results.json", "evaluation/results.md"]
-GITATTRIBUTES = "*.safetensors filter=lfs diff=lfs merge=lfs -text\n*.bin filter=lfs diff=lfs merge=lfs -text\n"
+LOGO_LFS = "assets/logo.png filter=lfs diff=lfs merge=lfs -text\n"
+GITATTRIBUTES = "*.safetensors filter=lfs diff=lfs merge=lfs -text\n*.bin filter=lfs diff=lfs merge=lfs -text\n" + LOGO_LFS
 TEST_SETS = [("test_exist", "COCO object presence"), ("test_vqa_choice", "VQAv2 multiple choice"),
              ("test_size", "COCO size"), ("bench_pope", "POPE, project filtered set"), ("test_gqa", "GQA val subset"),
              ("test_position", "COCO position"), ("test_vqa_yesno", "VQAv2 yes/no subset"),
@@ -89,6 +90,21 @@ def files_of(folder: str) -> List[str]:
 def manifest(folder: str) -> Dict[str, Dict[str, Any]]:
     return {rel: {"size": os.path.getsize(os.path.join(folder, rel)), "sha256": sha256(os.path.join(folder, rel))}
             for rel in files_of(folder) if rel != "MANIFEST.json"}
+
+
+def matches_hash(folder: str, rel: str, expected: str, actual: str) -> bool:
+    if actual == expected:
+        return True
+    # HF automatically appended this LFS rule when v0.3's logo was first uploaded.
+    # Its immutable tag keeps the pre-upload manifest. Accept only that exact addition;
+    # weights and all other files still require byte-for-byte hashes.
+    if rel == ".gitattributes":
+        with open(os.path.join(folder, rel), "rb") as f:
+            content = f.read()
+        rule = LOGO_LFS.encode()
+        if content.endswith(rule):
+            return hashlib.sha256(content[:-len(rule)]).hexdigest() == expected
+    return False
 
 
 def git_commit(root: str = ROOT) -> Optional[str]:
@@ -358,7 +374,8 @@ def verify(release_dir: str, folder: Optional[str] = None, latency: bool = True,
     want = load_json(os.path.join(release_dir, manifest_name))
     got = manifest(folder)
     problems += ["%s: %s" % (rel, "missing" if rel not in got else "sha256 differs")
-                 for rel, v in want.items() if rel not in got or got[rel]["sha256"] != v["sha256"]]
+                 for rel, v in want.items() if rel not in got or
+                 not matches_hash(folder, rel, v["sha256"], got[rel]["sha256"])]
     problems += ["%s: not in the manifest" % rel for rel in got if rel not in want]
     text = open(os.path.join(folder, "README.md")).read() if os.path.exists(os.path.join(folder, "README.md")) else ""
     meta = yaml.safe_load(text.split("---")[1]) if text.startswith("---") else {}

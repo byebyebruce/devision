@@ -19,6 +19,8 @@ by the next release and `verify` reports it as a changed file.
 Versions are model versions (`v0.3` = `r15-vision`; `v0.2` = `v12-ext`), separate from training rounds and Python package versions. Hub tag `v0.3` ↔ GitHub tag `model-v0.3`. Normal usage loads the latest model without a revision argument. Model tags do not trigger PyPI publishing.
 The card says only the version; `provenance.json` records the training round and commit.
 
+Hugging Face can add LFS rules to `.gitattributes` during upload. For v0.3 it appended the logo rule after the source manifest was built; the immutable tag is preserved. `verify` accepts only that exact appended rule with the original file content otherwise unchanged. New builds include the rule explicitly. No hash exceptions apply to weights or other files.
+
 ## Steps (manual)
 
 ```bash
