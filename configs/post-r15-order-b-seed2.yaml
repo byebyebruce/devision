@@ -1,0 +1,38 @@
+# Frozen by scripts/post_r15_order/preflight.py before the first update.
+name: post-r15-order-b-seed2
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/r15-vision/stage2
+  data: data/post-r15-order/b.jsonl
+  val: data/r13b/val.jsonl
+  eval:
+    ext: data/ext/dev_ext.jsonl
+    science: data/r13b/panel_science.jsonl
+    exist: data/r13b/panel_exist.jsonl
+    flip: data/v6/dev_lr_pairs.jsonl
+    count_wide: data/r13b/count_wide.jsonl
+    count_narrow: data/v11/dev_count_transfer.jsonl
+    count_wide_reverse: data/post-r15-order/count_wide_reverse.jsonl
+    count_narrow_reverse: data/post-r15-order/count_narrow_reverse.jsonl
+  params:
+    epochs: 1
+    micro_batch: 8
+    lr_new: 1.0e-05
+    lr_head: 5.0e-06
+    lr_lora: 2.0e-05
+    warmup: 100
+    eval_every: 1000
+    save_every: 500
+    amp: 'off'
+    seed: 2
+    monitor_details: true
+    vision_unfreeze_top: 0
+    distill_weight: 0.0
+    question_conditioning: false
+    grounding_weight: 0.0
+    start_check: runs/post-r15-order-a/stage2/monitor/step0
+    start_tolerance: 1.0e-05

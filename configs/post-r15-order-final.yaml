@@ -1,0 +1,81 @@
+name: post-r15-order-final
+device: mps
+evaluate:
+  calibration_fit: data/r13b/val.jsonl
+  history:
+  - data/ext/dev_ext.jsonl
+  - data/r13/gqa/dev_bind_gqa.jsonl
+  - data/r13b/panel_exist.jsonl
+  - data/r13b/panel_science.jsonl
+  - data/r13b/count_wide.jsonl
+  - data/v11/dev_count_transfer.jsonl
+  - data/exp14/pixmo_count_wide.jsonl
+  - data/exp14/pixmo_count_narrow.jsonl
+  - data/exp14/pixmo_exist.jsonl
+  - data/v6/dev_lr_pairs.jsonl
+  - data/v5/dev_vsr.jsonl
+  - data/ext/dev_ext.jsonl
+  - data/r13b/panel_science.jsonl
+  - data/r13b/panel_exist.jsonl
+  - data/v6/dev_lr_pairs.jsonl
+  - data/r13b/count_wide.jsonl
+  - data/v11/dev_count_transfer.jsonl
+  - data/post-r15-order/count_wide_reverse.jsonl
+  - data/post-r15-order/count_narrow_reverse.jsonl
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    exist:
+      path: data/r13b/panel_exist.jsonl
+      role: monitoring
+    science:
+      path: data/r13b/panel_science.jsonl
+      role: monitoring
+    ext:
+      path: data/ext/dev_ext.jsonl
+      role: monitoring
+    bind_gqa:
+      path: data/r13/gqa/dev_bind_gqa.jsonl
+      role: monitoring
+    count_narrow:
+      path: data/v11/dev_count_transfer.jsonl
+      role: monitoring
+    count_wide:
+      path: data/r13b/count_wide.jsonl
+      role: monitoring
+    flip:
+      path: data/v6/dev_lr_pairs.jsonl
+      role: monitoring
+    vsr:
+      path: data/v5/dev_vsr.jsonl
+      role: monitoring
+    dev_mix: data/v5/dev_mix.jsonl
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
+    test_count_fresh:
+      path: data/v11/test_count_fresh.jsonl
+      role: heldout
+    test_bind_gqa:
+      path: data/r13/gqa/test_bind_gqa.jsonl
+      role: heldout
+    bench_countbench:
+      path: data/r13/bench/countbench.jsonl
+      role: heldout
+    bench_whatsup:
+      path: data/r13/bench/whatsup.jsonl
+      role: heldout
+  checkpoint: runs/post-r15-order-b/stage2
