@@ -21,12 +21,15 @@ LATENCY = "runs/exp20-tokens256/latency"
 TARGET = ("science", "count_wide", "count_narrow", "flip")       # P1: details a 4x finer token grid should help
 GUARD = ("exist", "ext", "count_wide_reverse", "count_narrow_reverse")   # P2: no clear loss
 REPORT = ()
+GUARD_METRIC = {"ext": "macro_accuracy"}   # 13 sources weighted equally (critic EXP20-N02, fixed before running)
 EXT_SOURCES = json.load(open(os.path.join(os.path.dirname(__file__), "..", "r14b", "rules.json")))["ext_sources"]
 
 
-def recs(root, step, panel, by_original=False):
+def recs(root, step, panel):
+    """A panel's records with the resampling unit as image_id: a mirror image counts as its original (critic
+    EXP20-I01), for every statistic of this report."""
     rs = load_records(os.path.join(root, "step%d" % step, panel + ".details.jsonl"))
-    return [dict(r, image_id=picture(r)) for r in rs] if by_original else rs
+    return [dict(r, image_id=picture(r)) for r in rs]
 
 
 def picture(r):
@@ -56,8 +59,8 @@ def macro(a_dir, b_dir, panels, field, resamples=2000, seed=0):
             "pictures": len(m), "panels": list(panels)}
 
 
-def pm(a_dir, b_dir, panel, metric, by_original=False):
-    return paired_metric(recs(*a_dir, panel, by_original), recs(*b_dir, panel, by_original), metric,
+def pm(a_dir, b_dir, panel, metric):
+    return paired_metric(recs(*a_dir, panel), recs(*b_dir, panel), metric,
                          sources=EXT_SOURCES if metric == "macro_accuracy" else None)
 
 
@@ -80,12 +83,12 @@ def main():
     d, b, r15 = (D, 2000), (B, 2000), (B, 0)
 
     p1 = macro(b, d, TARGET, "correct")
-    guard = {panel: pm(b, d, panel, "accuracy") for panel in GUARD}
+    guard = {panel: pm(b, d, panel, GUARD_METRIC.get(panel, "accuracy")) for panel in GUARD}
     hurt = [panel for panel, r in guard.items() if r["difference"] <= -0.03 and r["ci95"][1] < 0]
     out.update(P1_target_accuracy_D_minus_B=p1, P2_guard_D_minus_B=guard, P2_clear_losses=hurt)
     print("P1 target accuracy, D - B (equal-weight mean of %s): %+.2f [%+.2f, %+.2f] points" % (", ".join(TARGET), *pts(p1)))
     for panel, r in guard.items():
-        print("P2 %-13s accuracy D - B: %+.2f [%+.2f, %+.2f]" % (panel, *pts(r)))
+        print("P2 %-20s %s D - B: %+.2f [%+.2f, %+.2f]" % (panel, GUARD_METRIC.get(panel, "accuracy"), *pts(r)))
     print("P2 clear early losses (<= -3 points with upper bound < 0):", hurt or "none")
 
     if p1["ci95"][0] > 0 and not hurt:
@@ -105,12 +108,12 @@ def main():
     print("per panel (accuracy in points, NLL raw; temperature 1):")
     for panel in TARGET + GUARD + REPORT:
         row = {name: {m: pm(base, d, panel, m) for m in ("accuracy", "nll")} for name, base in (("D-B", b), ("D-r15", r15))}
-        if panel == "flip":
-            for name, base in (("D-B", b), ("D-r15", r15)):
-                row[name]["accuracy_by_original"] = pm(base, d, panel, "accuracy", by_original=True)
+        if panel == "ext":
+            row["D-B"]["macro_accuracy"] = pm(b, d, panel, "macro_accuracy")
         out["report_only"][panel] = row
-        print("  %-13s " % panel + "  ".join("%s acc %+.2f [%+.2f, %+.2f] nll %+.4f [%+.4f, %+.4f]" % (
-            name, *pts(x["accuracy"]), x["nll"]["difference"], *x["nll"]["ci95"]) for name, x in row.items()))
+        print("  %-20s (%d pictures) " % (panel, row["D-B"]["accuracy"]["pictures"]) + "  ".join(
+            "%s acc %+.2f [%+.2f, %+.2f] nll %+.4f [%+.4f, %+.4f]" % (
+                name, *pts(x["accuracy"]), x["nll"]["difference"], *x["nll"]["ci95"]) for name, x in row.items()))
     os.makedirs("runs/exp20-tokens256", exist_ok=True)
     json.dump(out, open("runs/exp20-tokens256/report.json", "w"), indent=1)
 
