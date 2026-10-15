@@ -15,7 +15,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from readout import PASS, accuracy, classify, syn_index, syn_stat  # noqa: E402
+from readout import PASS, accuracy, classify, fmt_stat, syn_index, syn_stat  # noqa: E402
 
 from devision.train.compare import load_records  # noqa: E402
 
@@ -40,11 +40,11 @@ def decide(d: str) -> dict:
     return out
 
 
-def main():
-    d = sys.argv[1]
+def main(argv=None):
+    d = (argv if argv is not None else sys.argv[1:])[0]
     out = decide(d)
     json.dump(out, open(os.path.join(d, "precheck.json"), "w"), indent=1)
-    f = lambda s: "%.3f [%.3f, %.3f] n=%d" % (s["value"], s["ci95"][0], s["ci95"][1], s["n"])  # noqa: E731
+    f = fmt_stat
     for h in ("6", "8", "11", "16"):
         print("syn h%-2s read %s | cmp %s | both read %s" % (h, f(out["syn"][h]["read"]), f(out["syn"][h]["cmp"]),
                                                            f(out["syn"][h]["both_read"])))

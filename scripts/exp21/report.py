@@ -1,7 +1,7 @@
 """exp21 readout (docs/experiments/2026-10-15-exp21-reading-plan.md section 4, rules written before running),
 from the temperature-1 monitor records of runs/exp21-reading/stage2/monitor/step{0,2000} (step 0 = r15).
 
-    uv run python scripts/exp21/report.py      # -> runs/exp21-reading/report.json, text on stdout
+    uv run python scripts/exp21/report.py [run dir]   # -> <run>/report.json, text on stdout
 
 Reading (section 4.2): per height, read / compare / both readings / compare given both / follows the value change,
 classified pass / fail / near threshold (readout.classify). Transfer (4.3): 68:114 temp / force accuracy change
@@ -13,7 +13,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from readout import FAIL, HEIGHTS, PASS, accuracy, classify, height_gap, syn_index, syn_stat, transfer  # noqa: E402
+from readout import (FAIL, HEIGHTS, PASS, accuracy, classify, fmt_stat, height_gap, paired_by_occurrence,  # noqa: E402
+                     syn_index, syn_stat, transfer)
 
 from devision.train.compare import load_records, paired_metric  # noqa: E402
 
@@ -69,18 +70,24 @@ def build(mon: str, step: int = 2000) -> dict:
     out["height_gap"] = {"16-8": height_gap(syn, 16, 8), "16-6": height_gap(syn, 16, 6)}
     out["valid"] = out["erased"]["read"]["value"] < 0.50 and out["erased"]["cmp"]["value"] < 0.55
     out["reading"] = reading_label(out["syn"], out["height_gap"]) if out["valid"] else "invalid: erased control"
-    out["compare"] = compare_label(out["syn"], out["text"]["cmp"])
+    # an invalid erased control voids every synthetic mechanism label, compare included (critic EXP21-I03); the
+    # numbers themselves stay in the JSON
+    out["compare"] = (compare_label(out["syn"], out["text"]["cmp"]) if out["valid"]
+                      else {str(h): "invalid: erased control" for h in HEIGHTS})
     real = lambda s: {k: recs(mon, s, "sqa_" + k) for k in ("temp", "force", "temp_mism", "force_mism")}  # noqa: E731
     out["transfer"] = transfer(real(0), real(step))
     t = out["transfer"]
     out["transfer_observed"] = t["accuracy_change"]["ci95"][0] > 0 and t["gain_change"]["ci95"][0] > 0
     out["guard"] = {}
-    for p in GUARD + ("val",):
+    for p in GUARD:
         a, b = recs(mon, 0, p), recs(mon, step, p)
         g = {"accuracy": paired_metric(a, b, "accuracy"), "nll": paired_metric(a, b, "nll")}
         if p == "ext":
             g["macro_accuracy"] = paired_metric(a, b, "macro_accuracy", sources=EXT_SOURCES)
         out["guard"][p] = g
+    # val (report only) holds 242 ids twice: copies matched by occurrence, all 3,892 kept (critic EXP21-I01)
+    a, b = recs(mon, 0, "val"), recs(mon, step, "val")
+    out["guard"]["val"] = {"accuracy": paired_by_occurrence(a, b, "correct"), "nll": paired_by_occurrence(a, b, "nll")}
     def cost(p):
         m = out["guard"][p]["macro_accuracy" if p == "ext" else "accuracy"]
         return m["difference"] * 100 <= -3 and m["ci95"][1] < 0
@@ -92,32 +99,41 @@ def build(mon: str, step: int = 2000) -> dict:
     return out
 
 
-def main():
-    mon = os.path.join(RUN, "stage2", "monitor")
-    out = build(mon)
-    json.dump(out, open(os.path.join(RUN, "report.json"), "w"), indent=1)
-    f = lambda s: "%.3f [%.3f, %.3f]" % (s["value"], s["ci95"][0], s["ci95"][1])  # noqa: E731
+def render(out: dict) -> str:
+    """The text report; a conditional statistic without cases prints as not estimable (critic EXP21-I02)."""
+    f = lambda s: fmt_stat(s)  # noqa: E731
+    g = lambda s: fmt_stat({k: v for k, v in s.items() if k != "n"})  # noqa: E731
+    lines = []
     for h in HEIGHTS:
         s = out["syn"][str(h)]
-        print("h%-2d read %s (step 0 %s) | cmp %s | both read %s | cmp|both %s n=%d | cf read %s | cf cmp %s" % (
-            h, f(s["read"]), f(out["syn_step0"][str(h)]["read"]), f(s["cmp"]), f(s["both_read"]),
-            f(s["cmp_given_both"]), s["cmp_given_both"]["n"], f(s["cf_read"]), f(s["cf_cmp"])))
-    print("read 16-8 px %s, 16-6 px %s" % (f(out["height_gap"]["16-8"]), f(out["height_gap"]["16-6"])))
-    print("erased read %s cmp %s | text read %s cmp %s" % (f(out["erased"]["read"]), f(out["erased"]["cmp"]),
-                                                          f(out["text"]["read"]), f(out["text"]["cmp"])))
-    print("reading:", out["reading"])
-    print("compare:", out["compare"])
+        lines.append("h%-2d read %s (step 0 %s) | cmp %s | both read %s | cmp|both %s | cf read %s | cf cmp %s" % (
+            h, f(s["read"]), g(out["syn_step0"][str(h)]["read"]), f(s["cmp"]), f(s["both_read"]),
+            f(s["cmp_given_both"]), f(s["cf_read"]), f(s["cf_cmp"])))
+    lines.append("read 16-8 px %s, 16-6 px %s" % (g(out["height_gap"]["16-8"]), g(out["height_gap"]["16-6"])))
+    lines.append("erased read %s cmp %s | text read %s cmp %s" % (f(out["erased"]["read"]), f(out["erased"]["cmp"]),
+                                                                 f(out["text"]["read"]), f(out["text"]["cmp"])))
+    lines.append("reading: " + out["reading"])
+    lines.append("compare: " + json.dumps(out["compare"]))
     t = out["transfer"]
-    print("transfer (68:114 temp/force): accuracy %s, picture gain %s; temp %s (%d q), force %s (%d q)" % (
-        f(t["accuracy_change"]), f(t["gain_change"]), f(t["temp"]["accuracy_change"]), t["temp"]["questions"],
-        f(t["force"]["accuracy_change"]), t["force"]["questions"]))
-    print("ScienceQA 24 transcribed: with values %s, blank %s" % (f(out["sqa_text"]), f(out["sqa_blank"])))
-    for p, g in out["guard"].items():
-        m = g.get("macro_accuracy", g["accuracy"])
-        print("guard %-12s %+.2f [%+.2f, %+.2f]  nll %+.3f" % (p, 100 * m["difference"], 100 * m["ci95"][0],
-                                                             100 * m["ci95"][1], g["nll"]["difference"]))
-    print("costs:", out["costs"] or "none")
-    print("next:", out["next"])
+    lines.append("transfer (68:114 temp/force): accuracy %s, picture gain %s; temp %s (%d q), force %s (%d q)" % (
+        g(t["accuracy_change"]), g(t["gain_change"]), g(t["temp"]["accuracy_change"]), t["temp"]["questions"],
+        g(t["force"]["accuracy_change"]), t["force"]["questions"]))
+    lines.append("ScienceQA 24 transcribed: with values %s, blank %s" % (f(out["sqa_text"]), f(out["sqa_blank"])))
+    for p, gd in out["guard"].items():
+        m = gd.get("macro_accuracy", gd["accuracy"])
+        lines.append("guard %-12s %+.2f [%+.2f, %+.2f]  nll %+.3f%s" % (
+            p, 100 * m["difference"], 100 * m["ci95"][0], 100 * m["ci95"][1], gd["nll"]["difference"],
+            "  (report only, %d questions)" % m["questions"] if p == "val" else ""))
+    lines.append("costs: %s" % (out["costs"] or "none"))
+    lines.append("next: " + out["next"])
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    run = (argv if argv is not None else sys.argv[1:] or [RUN])[0]
+    out = build(os.path.join(run, "stage2", "monitor"))
+    json.dump(out, open(os.path.join(run, "report.json"), "w"), indent=1)
+    print(render(out))
 
 
 if __name__ == "__main__":

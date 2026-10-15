@@ -30,7 +30,7 @@ for name, ids in [("ALL", set(ours)), ("NEED_NAT", need)]:
 
 # by question form (critic EXP21-R1-01): category is not a skill label
 sys.path.insert(0, "scripts/data")
-from v10_build import diagram_type  # noqa: E402
+from v10_build import diagram_type  # type: ignore  # noqa: E402
 bench_q = {json.loads(l)["id"]: json.loads(l)["questions"]["q"]["instructions"] for l in open("data/lv_bench/scienceqa.jsonl")}
 forms = collections.defaultdict(lambda: [0, 0, 0, 0])
 for s, q in bench_q.items():

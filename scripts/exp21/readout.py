@@ -184,3 +184,33 @@ def transfer(step0: Mapping[str, Sequence[Dict]], step1: Mapping[str, Sequence[D
                      "accuracy_change": {"value": parts[kind][0], "ci95": ci(lambda b, k=kind: b[1][k][0])},
                      "gain_change": {"value": parts[kind][1], "ci95": ci(lambda b, k=kind: b[1][k][1])}}
     return res
+
+
+def paired_by_occurrence(a: Sequence[Dict], b: Sequence[Dict], field: str = "correct", resamples: int = 2000,
+                         seed: int = 0) -> Dict:
+    """B - A of `field` on a set whose file may hold a question id twice (data/r13b/val.jsonl: 242 ids, original
+    and rewritten options; critic EXP21-I01): each copy is matched with the same copy (n-th occurrence) of the other
+    run, and the pair must agree on picture, options and gold; nothing is dropped. Pictures resampled."""
+    from devision.train.compare import _occurrences
+    oa, ob = _occurrences(list(a)), _occurrences(list(b))
+    if oa.keys() != ob.keys():
+        raise ValueError("the two runs hold different questions (%d vs %d)" % (len(oa), len(ob)))
+    units: Dict[str, List[Tuple[float, float]]] = defaultdict(lambda: [(0.0, 0.0)])
+    for k, x in oa.items():
+        y = ob[k]
+        for f in ("image_id", "options", "gold"):
+            if x.get(f) != y.get(f):
+                raise ValueError("%s: copy %d differs in %s" % (k[0], k[2], f))
+        s, n = units[x["image_id"]][0]
+        units[x["image_id"]] = [(s + float(y[field]) - float(x[field]), n + 1.0)]
+    res = bootstrap(dict(units), ratio, resamples, seed)
+    return {"difference": res["value"], "ci95": res["ci95"], "pictures": res["units"], "questions": len(oa)}
+
+
+def fmt_stat(s: Dict, digits: int = 3) -> str:
+    """Point [interval] n=..., or "not estimable (n=0)" when a conditional statistic has no cases (critic
+    EXP21-I02); the JSON keeps null."""
+    if s.get("value") is None:
+        return "not estimable (n=0)"
+    text = "%.*f [%.*f, %.*f]" % (digits, s["value"], digits, s["ci95"][0], digits, s["ci95"][1])
+    return text + (" n=%d" % s["n"] if "n" in s else "")

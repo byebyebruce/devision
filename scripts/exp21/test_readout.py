@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 import precheck  # noqa: E402
 import report  # noqa: E402
-from readout import FAIL, NEAR, PASS, classify, syn_index, syn_stat, transfer  # noqa: E402
+from readout import FAIL, NEAR, PASS, classify, paired_by_occurrence, syn_index, syn_stat, transfer  # noqa: E402
 
 
 def syn_records(right, families=40, heights=(6, 8, 11, 16), suffix=""):
@@ -77,8 +77,10 @@ def write(d, name, rows):
 
 
 def control(right, kind):
-    rows = syn_records(lambda f, v, h, q: right(q), families=40, heights=(0,), suffix=":" + kind)
-    return rows
+    """right(q) or right(f, v, q)."""
+    two = right.__code__.co_argcount == 3
+    return syn_records(lambda f, v, h, q: right(f, v, q) if two else right(q), families=40, heights=(0,),
+                       suffix=":" + kind)
 
 
 def precheck_dir(tmp_path, syn_right, erased_right, text_right):
@@ -107,20 +109,35 @@ def panel(n, right, source="x"):
              "correct": bool(right(i)), "nll": 0.3, "type": "choice", "gold": {"a": 1.0, "b": 0.0}} for i in range(n)]
 
 
-def test_report_end_to_end(tmp_path):
-    mon = str(tmp_path / "mon")
+def val_rows():
+    """data/r13b/val.jsonl's identity structure: some ids twice, the copies with different options and gold."""
+    rows = []
+    for i in range(30):
+        rows.append({"sample_id": "v%d" % i, "qid": "q", "image_id": "vp%d" % (i // 2), "source": "v",
+                     "options": ["a", "b"], "gold": {"a": 1.0, "b": 0.0}, "correct": i % 2 == 0, "nll": 0.4})
+        if i % 3 == 0:   # the rewritten copy: same id, other option order
+            rows.append({"sample_id": "v%d" % i, "qid": "q", "image_id": "vp%d" % (i // 2), "source": "v",
+                         "options": ["b", "a"], "gold": {"b": 0.0, "a": 1.0}, "correct": True, "nll": 0.2})
+    return rows
+
+
+def monitor(tmp_path, syn_right=None, erased_right=lambda q: False):
+    """A fabricated run directory: step 2000 reads 11/16 px and not 6/8 px by default (so compare-given-both has
+    no cases at 6/8 px); step 0 reads nothing."""
+    run = str(tmp_path / "run")
+    mon = os.path.join(run, "stage2", "monitor")
+    syn_right = syn_right or (lambda f, v, h, q: h >= 11)
     for step, good in ((0, False), (2000, True)):
         d = os.path.join(mon, "step%d" % step)
-        # step 2000: reads everything at 11/16 px, nothing at 6/8 px
-        write(d, "syn", syn_records(lambda f, v, h, q: good and h >= 11 if q != "cmp" else good and h >= 11))
-        write(d, "syn_erased", control(lambda q: False, "erased"))
+        write(d, "syn", syn_records(lambda f, v, h, q: good and syn_right(f, v, h, q)))
+        write(d, "syn_erased", control(erased_right, "erased"))
         write(d, "syn_text", control(lambda q: True, "text"))
         for k in ("temp", "force"):
             write(d, "sqa_" + k, real(20, lambda i: good or i % 3 == 0))
             write(d, "sqa_%s_mism" % k, real(20, lambda i: i % 3 == 0))
         write(d, "sqa_text", real(24, lambda i: True))
         write(d, "sqa_blank", real(24, lambda i: False))
-        for p in report.GUARD + ("val",):
+        for p in report.GUARD:
             if p == "ext":
                 rows = [r for s in report.EXT_SOURCES for r in panel(10, lambda i: i % 2 == 0, s)]
             else:
@@ -128,8 +145,67 @@ def test_report_end_to_end(tmp_path):
             if p == "flip":
                 rows = [dict(r, image_id=r["image_id"] + (":flip" if int(r["sample_id"][1:]) % 2 else "")) for r in rows]
             write(d, p, rows)
-    out = report.build(mon)
+        write(d, "val", val_rows())
+    return run
+
+
+def test_report_end_to_end(tmp_path, capsys):
+    run = monitor(tmp_path)
+    report.main([run])
+    text = capsys.readouterr().out
+    out = json.load(open(os.path.join(run, "report.json")))
     assert out["valid"] and out["reading"].startswith("scale-sensitive")
     assert out["compare"]["16"] == "compares" and out["compare"]["6"] == "reading does not pass"
     assert out["transfer_observed"] and out["costs"] == []
     assert out["guard"]["flip"]["accuracy"]["difference"] == 0.0
+    # 6 / 8 px: nothing read, so compare-given-both has no cases: null in JSON, "not estimable" in the text
+    assert out["syn"]["6"]["cmp_given_both"]["value"] is None and out["syn"]["6"]["cmp_given_both"]["n"] == 0
+    assert "not estimable (n=0)" in text and "next:" in text
+    # val keeps every copy (30 + 10 repeated ids) and identical runs differ by 0
+    assert out["guard"]["val"]["accuracy"]["questions"] == 40 and out["guard"]["val"]["accuracy"]["difference"] == 0.0
+    assert "report only, 40 questions" in text
+
+
+@pytest.mark.parametrize("erased,valid", [
+    (lambda f, v, q: q == "readA", False),                      # read exactly 0.50
+    (lambda f, v, q: q == "cmp" and f * 2 + v < 44, False),     # compare exactly 0.55 (44 / 80)
+    (lambda f, v, q: q != "readB", False),                      # both above
+    (lambda f, v, q: q == "cmp" and f * 2 + v < 43, True),      # compare 0.5375, read 0: normal
+])
+def test_an_invalid_erased_control_voids_every_mechanism_label(tmp_path, capsys, erased, valid):
+    run = monitor(tmp_path, erased_right=erased)
+    report.main([run])
+    out = json.load(open(os.path.join(run, "report.json")))
+    assert out["valid"] is valid
+    if valid:
+        assert out["compare"]["16"] == "compares"
+    else:
+        assert out["reading"].startswith("invalid")
+        assert set(out["compare"].values()) == {"invalid: erased control"}
+        assert out["syn"]["16"]["cmp"]["value"] == 1.0          # the numbers are kept
+
+
+def test_val_copies_must_agree():
+    a = val_rows()
+    assert paired_by_occurrence(a, a, resamples=50)["questions"] == 40
+    for change in ({"options": ["a", "c"]}, {"gold": {"a": 0.0, "b": 1.0}}, {"image_id": "other"}):
+        b = [dict(r, **change) if r["sample_id"] == "v3" and r["options"] == ["b", "a"] else r for r in a]
+        with pytest.raises(ValueError):
+            paired_by_occurrence(a, b, resamples=10)
+    with pytest.raises(ValueError):
+        paired_by_occurrence(a, a[:-1], resamples=10)
+    # the duplicate check of the judged panels is untouched
+    from devision.train.compare import paired_metric
+    with pytest.raises(ValueError, match="duplicate"):
+        paired_metric(a, a)
+
+
+def test_precheck_command_exit_status(tmp_path, capsys):
+    d = precheck_dir(tmp_path, lambda f, v, h, q: f % 2 == 0, lambda q: False, lambda q: True)
+    with pytest.raises(SystemExit) as e:
+        precheck.main([d])
+    assert e.value.code == 0 and "decision: train" in capsys.readouterr().out
+    d2 = precheck_dir(tmp_path / "b", lambda f, v, h, q: True, lambda q: False, lambda q: True)
+    with pytest.raises(SystemExit) as e:
+        precheck.main([d2])
+    assert e.value.code == 10
