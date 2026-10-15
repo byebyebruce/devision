@@ -6,8 +6,8 @@
 # - Any other exit before step 2000 (e.g. the MPS hang) is retried from the resume state, at most 3 attempts.
 # - DONE_AT_2000 only means the step was reached; the chain's exit status is the readout's (non-zero on failure).
 #   nohup bash scripts/exp18/chain.sh > runs/exp18-distill.out 2>&1 &
-# EXP18_TRAIN / EXP18_REPORT / EXP18_STAGE / EXP18_NAME / EXP18_POLL override the commands, stage directory, run
-# name in the log and poll seconds (tests; scripts/exp19/chain.sh runs exp19 through this chain).
+# EXP18_TRAIN / EXP18_REPORT / EXP18_STAGE / EXP18_NAME / EXP18_POLL / EXP18_SETS override the commands, stage
+# directory, run name in the log, poll seconds and monitored sets (tests; exp19 and exp20 run through this chain).
 set -u
 set -m   # background jobs get their own process group, so stopping ends the whole pipeline tree
 cd "$(dirname "$0")/../.."
@@ -16,7 +16,7 @@ REPORT=${EXP18_REPORT:-"uv run python scripts/exp18/report.py"}
 stage=${EXP18_STAGE:-runs/exp18-distill/stage2}
 POLL=${EXP18_POLL:-60}
 NAME=${EXP18_NAME:-exp18-distill}
-SETS="val exist science ext bind_gqa count_narrow count_wide px_wide px_narrow px_exist flip vsr"
+SETS=${EXP18_SETS:-"val exist science ext bind_gqa count_narrow count_wide px_wide px_narrow px_exist flip vsr"}
 
 log() { echo "== $(date '+%F %T') $*"; }
 
