@@ -129,7 +129,7 @@ def dark_rows(im: Image.Image) -> int:
 def font_for(height: int) -> ImageFont.FreeTypeFont:
     """The smallest Arial size whose digits are `height` px of ink."""
     if height not in _SIZES:
-        _SIZES[height] = min(range(4, 60), key=lambda s: (abs(ink_height(s) - height), s))
+        _SIZES[height] = min(range(4, 90), key=lambda s: (abs(ink_height(s) - height), s))
     return ImageFont.truetype(FONT, _SIZES[height])
 
 
