@@ -33,7 +33,7 @@ def label(fit: str, dev16: str, valid: bool) -> str:
     if fit == PASS and dev16 == FAIL:
         return "fitted but does not generalize: the training slice passes, unseen families do not"
     if fit == FAIL:
-        return "not fitted: the training slice at 16 px does not pass (this recipe, one pass, 2,000 steps)"
+        return "not fitted: the training slice at 16 px does not pass (this recipe, at the step read)"
     return "uncertain"
 
 

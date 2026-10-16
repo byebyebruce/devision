@@ -27,18 +27,21 @@ STEPS = (0, 1000, 2000, 3000, 4000, 5000)
 
 
 def outcome(out: dict) -> str:
+    """Three-state classes (pass / fail / near threshold); a near-threshold class never becomes a negative finding,
+    and the labels are observations, not claims about internal steps (critic EXP25-I01)."""
     if not out["valid"]:
         return "invalid: erased control"
     read, pic, text = out["dev16_class"], classify(out["dev16"]["cmp"]), classify(out["text"]["cmp"])
     if read == PASS and pic == PASS:
         return "reading and comparison both pass on unseen 16 px families"
-    if text != PASS:
-        return "text comparison does not pass: comparing two given numbers is not learned in this setting"
-    if read == PASS:
-        return "reads and compares text, but picture comparison does not pass: the two steps are not combined"
-    if read == FAIL:
-        return "text comparison passes, reading does not"
-    return "partial: text comparison passes, reading near threshold"
+    if text == FAIL:
+        return "text comparison fails: comparing two given numbers is not learned in this setting"
+    if read == PASS and text == PASS and pic == FAIL:
+        return ("reading and text comparison pass, picture comparison fails: applying both on the picture is "
+                "still short")
+    if text == PASS and read == FAIL:
+        return "text comparison passes, reading fails"
+    return "partial / uncertain: at least one class is near threshold (see the readings)"
 
 
 def build(run: str) -> dict:
