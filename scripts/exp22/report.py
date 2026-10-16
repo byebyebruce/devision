@@ -29,11 +29,11 @@ def label(fit: str, dev16: str, valid: bool) -> str:
     if not valid:
         return "invalid: erased control"
     if fit == PASS and dev16 == PASS:
-        return "fitted and generalizes at 16 px: the visual tokens carry the digits under focused training"
+        return "fitted and generalizes at 16 px: this focused setting (no replay, 16 px only, both views) is learnable"
     if fit == PASS and dev16 == FAIL:
-        return "fitted but does not generalize: the training pictures were memorized"
+        return "fitted but does not generalize: the training slice passes, unseen families do not"
     if fit == FAIL:
-        return "not fitted: even the training pictures at 16 px are not learned in this setting"
+        return "not fitted: the training slice at 16 px does not pass (this recipe, one pass, 2,000 steps)"
     return "uncertain"
 
 
