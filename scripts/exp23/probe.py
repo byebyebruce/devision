@@ -14,17 +14,20 @@ Optionally `--base` adds the siglip level of another checkpoint (v12: the origin
 Probes, each trained on 3,000 pictures and tested on 1,000 others per height (fixed seeds), both digits:
   - pooled: a linear classifier on [mean; max] over tokens;
   - attention: four learned queries attend over the tokens, then a linear classifier (can pick out a location).
-The level's digit accuracy = the better probe's mean of tens and units accuracy (fixed before running).
+The level's digit accuracy = the better probe's mean of tens and units accuracy (fixed before running); picking
+the better one on the test set makes it, and its copied interval, exploratory (critic EXP23-N01). Labels describe
+readability by these probes, not where information is lost (critic EXP23-I01).
 
     uv run python scripts/exp23/probe.py --checkpoint runs/r15-vision/stage2 --base runs/v12-ext/stage2 \
         --out runs/exp23-probe
 """
 import argparse
+import hashlib
 import json
 import os
 import random
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -58,13 +61,22 @@ def picture(value: int, height: int, rng: random.Random) -> Tuple[Image.Image, T
     return img, (int(box[0]), int(box[1]), int(box[2]), base)
 
 
-def dataset(height: int, n: int, seed: int) -> Tuple[List[Image.Image], np.ndarray]:
-    """n pictures and labels [n, 2] = (tens, units)."""
+def digest(img: Image.Image) -> str:
+    return hashlib.sha256(img.tobytes()).hexdigest()
+
+
+def dataset(height: int, n: int, seed: int, exclude: Optional[Set[str]] = None) -> Tuple[List[Image.Image], np.ndarray]:
+    """n distinct pictures and labels [n, 2] = (tens, units); pictures whose pixels are in `exclude` (the
+    training pictures, when drawing the test set) or already drawn are skipped (critic EXP23-N02)."""
     rng = random.Random(seed * 100 + height)
-    imgs, labels = [], []
-    for _ in range(n):
+    imgs, labels, seen = [], [], set(exclude or ())
+    while len(imgs) < n:
         v = rng.randint(10, 99)
         img, _ = picture(v, height, rng)
+        h = digest(img)
+        if h in seen:
+            continue
+        seen.add(h)
         imgs.append(img)
         labels.append((v // 10, v % 10))
     return imgs, np.array(labels)
@@ -151,22 +163,32 @@ def interval(c: np.ndarray, resamples: int = 2000, seed: int = 0) -> Dict:
             "tens": float(c[:, 0].mean()), "units": float(c[:, 1].mean()), "n": int(len(per))}
 
 
+def level_class(v: float) -> str:
+    return "high" if v >= CARRIES else "low" if v <= ABSENT else "middle"
+
+
 def judge(acc: Dict[str, Dict[str, float]]) -> Dict:
-    """acc[level][height] = digit accuracy (the better probe). Rules written before running."""
+    """acc[level][height] = digit accuracy (the better probe, exploratory). Rules written before running; they
+    describe readability by these two small probes, not where information is lost (critic EXP23-I01)."""
     s, p, e = (acc[k]["16"] for k in LEVELS)
+    cls = {k: level_class(acc[k]["16"]) for k in LEVELS}
+    high = [cls[k] == "high" for k in LEVELS]
     if acc["siglip"]["48"] < CONTROL:
-        label = "probe invalid: siglip at 48 px below %.2f" % CONTROL
-    elif s <= ABSENT:
-        label = "encoder: siglip does not carry 16 px digits"
-    elif s >= CARRIES and p < CARRIES and p <= s - 0.20:
-        label = "projector: siglip carries 16 px digits, the 64 visual tokens lose them"
-    elif s >= CARRIES and p >= CARRIES and e < CARRIES and e <= p - 0.20:
-        label = "text encoder: the visual tokens carry them, ModernBERT's visual states lose them"
-    elif s >= CARRIES and p >= CARRIES and e >= CARRIES:
-        label = "readout: all three levels carry 16 px digits; the decision training does not use them"
+        label = "difficulty control not passed (siglip 48 px below %.2f): no between-level reading this round" % CONTROL
+    elif any(high[j] and not high[i] for i in range(3) for j in range(i + 1, 3)):
+        label = "non-monotonic readability (a later level reads what an earlier one does not): bottleneck not located"
+    elif all(c == "low" for c in cls.values()):
+        label = "low readability at all three levels at 16 px"
+    elif cls["siglip"] == "high" and p < CARRIES and p <= s - 0.20:
+        label = "readability drops after the projector (siglip high, the 64 visual tokens lower)"
+    elif cls["siglip"] == "high" and cls["projector"] == "high" and e < CARRIES and e <= p - 0.20:
+        label = "readability drops in ModernBERT's visual states (no question in the input)"
+    elif all(high):
+        label = ("all three levels readable on white two-digit pictures; why the decision training failed "
+                 "is still to be separated")
     else:
         label = "uncertain"
-    return {"label": label, "at_16": {"siglip": s, "projector": p, "encoder": e}}
+    return {"label": label, "classes": cls, "at_16": {"siglip": s, "projector": p, "encoder": e}}
 
 
 def run(checkpoint: str, out: str, base: str = "", device: str = "auto", heights=HEIGHTS, n_train=N_TRAIN,
@@ -179,7 +201,7 @@ def run(checkpoint: str, out: str, base: str = "", device: str = "auto", heights
                     "n_test": n_test, "levels": {}}
     for h in heights:
         tr_imgs, tr_y = dataset(h, n_train, seed=1)
-        te_imgs, te_y = dataset(h, n_test, seed=2)
+        te_imgs, te_y = dataset(h, n_test, seed=2, exclude={digest(im) for im in tr_imgs})
         jobs = [("", lv) for lv in LEVELS] + ([("base_", "siglip")] if base else [])
         for prefix, lv in jobs:
             name = prefix + lv
@@ -188,7 +210,7 @@ def run(checkpoint: str, out: str, base: str = "", device: str = "auto", heights
             for kind in ("pooled", "attention"):
                 res[kind] = interval(correct(train_probe(kind, xtr, tr_y, epochs), xte, te_y))
             best = max(res, key=lambda k: res[k]["value"])
-            res["best"] = dict(res[best], probe=best)
+            res["best"] = dict(res[best], probe=best, exploratory=True)   # chosen on the test set (critic EXP23-N01)
             report["levels"].setdefault(name, {})[str(h)] = res
             print("h%-2d %-14s pooled %.3f attention %.3f" % (h, name, res["pooled"]["value"], res["attention"]["value"]),
                   flush=True)

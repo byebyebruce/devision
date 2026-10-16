@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "tests"))
 sys.path.insert(0, os.path.join(HERE, "..", "data"))
 from conftest import tiny_decider  # type: ignore  # noqa: E402
 from exp21_reading import digit_ink  # type: ignore  # noqa: E402
-from probe import CONTROL, correct, dataset, judge, picture, run, train_probe  # noqa: E402
+from probe import CONTROL, correct, dataset, digest, judge, picture, run, train_probe  # noqa: E402
 
 
 @pytest.mark.parametrize("h", (6, 8, 16, 48))
@@ -27,10 +27,12 @@ def test_pictures_hold_the_number_at_the_stated_height(h):
     assert len(imgs) == 50 and y.shape == (50, 2) and y[:, 0].min() >= 1 and y.max() <= 9
 
 
-def test_train_and_test_pictures_differ():
-    a, _ = dataset(16, 20, seed=1)
-    b, _ = dataset(16, 20, seed=2)
-    assert all(x.tobytes() != y.tobytes() for x, y in zip(a, b))
+def test_no_test_picture_repeats_a_training_picture():
+    """At the real sizes, seeds 1 / 2 draw a few identical pictures (critic EXP23-N02): they are skipped."""
+    a, _ = dataset(16, 3000, seed=1)
+    train = {digest(x) for x in a}
+    b, _ = dataset(16, 1000, seed=2, exclude=train)
+    assert len(train) == 3000 and len({digest(x) for x in b}) == 1000 and not train & {digest(x) for x in b}
 
 
 def test_probes_learn_a_present_signal_and_not_an_absent_one():
@@ -57,17 +59,24 @@ def acc(s, p, e, s48=0.95):
 
 
 @pytest.mark.parametrize("a,start", [
-    (acc(0.9, 0.9, 0.9, s48=CONTROL - 0.01), "probe invalid"),
-    (acc(0.15, 0.1, 0.1), "encoder"),
-    (acc(0.9, 0.3, 0.3), "projector"),
-    (acc(0.9, 0.9, 0.3), "text encoder"),
-    (acc(0.9, 0.85, 0.8), "readout"),
+    (acc(0.9, 0.9, 0.9, s48=CONTROL - 0.01), "difficulty control not passed"),
+    (acc(0.15, 0.1, 0.1), "low readability at all three levels"),
+    (acc(0.9, 0.3, 0.3), "readability drops after the projector"),
+    (acc(0.9, 0.9, 0.3), "readability drops in ModernBERT"),
+    (acc(0.9, 0.85, 0.8), "all three levels readable"),
     (acc(0.5, 0.4, 0.4), "uncertain"),
-    (acc(0.9, 0.75, 0.6), "readout"),
+    (acc(0.9, 0.75, 0.6), "all three levels readable"),
     (acc(0.7, 0.55, 0.5), "uncertain"),     # projector below 0.60 but within 0.20 of siglip
+    # downstream recovery (critic EXP23-I01): never blamed on the upstream level
+    (acc(0.15, 0.9, 0.9), "non-monotonic"),
+    (acc(0.9, 0.3, 0.9), "non-monotonic"),
+    (acc(0.4, 0.4, 0.9), "non-monotonic"),
 ])
 def test_judgement(a, start):
-    assert judge(a)["label"].startswith(start)
+    label = judge(a)["label"]
+    assert label.startswith(start)
+    for causal in ("lose", "does not carry", "does not use", "lost"):
+        assert causal not in label
 
 
 def test_end_to_end_on_the_tiny_model(tmp_path):
