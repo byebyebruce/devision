@@ -6,7 +6,7 @@
 # - Any other exit before step 2000 (e.g. the MPS hang) is retried from the resume state, at most 3 attempts.
 # - DONE_AT_2000 only means the step was reached; the chain's exit status is the readout's (non-zero on failure).
 #   nohup bash scripts/exp18/chain.sh > runs/exp18-distill.out 2>&1 &
-# EXP18_TRAIN / EXP18_REPORT / EXP18_STAGE / EXP18_NAME / EXP18_POLL / EXP18_SETS override the commands, stage
+# EXP18_TRAIN / EXP18_REPORT / EXP18_STAGE / EXP18_NAME / EXP18_POLL / EXP18_SETS / EXP18_STEP override the commands, stage
 # directory, run name in the log, poll seconds and monitored sets (tests; exp19 and exp20 run through this chain).
 set -u
 set -m   # background jobs get their own process group, so stopping ends the whole pipeline tree
@@ -17,6 +17,7 @@ stage=${EXP18_STAGE:-runs/exp18-distill/stage2}
 POLL=${EXP18_POLL:-60}
 NAME=${EXP18_NAME:-exp18-distill}
 SETS=${EXP18_SETS:-"val exist science ext bind_gqa count_narrow count_wide px_wide px_narrow px_exist flip vsr"}
+STEP=${EXP18_STEP:-2000}   # the monitor step that ends the run (exp25: 5000)
 
 log() { echo "== $(date '+%F %T') $*"; }
 
@@ -25,16 +26,16 @@ complete() {   # $1 monitor step dir
 }
 
 for attempt in 1 2 3; do
-  [ -f "$stage/DONE_AT_2000" ] && break
+  [ -f "$stage/DONE_AT_$STEP" ] && break
   log "$NAME attempt $attempt"
   $TRAIN &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     sleep "$POLL"
-    if complete "$stage/monitor/step2000"; then
+    if complete "$stage/monitor/step$STEP"; then
       sleep "$POLL"   # let the last file finish writing
-      touch "$stage/DONE_AT_2000"
-      log "$NAME reached step 2000: stopping"
+      touch "$stage/DONE_AT_$STEP"
+      log "$NAME reached step $STEP: stopping"
       kill -TERM -- "-$pid"
       break
     fi
@@ -45,11 +46,11 @@ for attempt in 1 2 3; do
     log "not retried; investigate before training again"
     exit 3
   fi
-  [ -f "$stage/DONE_AT_2000" ] && break
-  log "$NAME exited before step 2000; retrying from the resume state"
+  [ -f "$stage/DONE_AT_$STEP" ] && break
+  log "$NAME exited before step $STEP; retrying from the resume state"
   sleep "$POLL"
 done
-[ -f "$stage/DONE_AT_2000" ] || { log "$NAME failed 3 times"; exit 1; }
+[ -f "$stage/DONE_AT_$STEP" ] || { log "$NAME failed 3 times"; exit 1; }
 mkdir -p "$(dirname "$stage")"
 $REPORT > "$(dirname "$stage")/report.txt" 2>&1
 rc=$?

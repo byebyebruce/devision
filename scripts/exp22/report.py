@@ -37,13 +37,13 @@ def label(fit: str, dev16: str, valid: bool) -> str:
     return "uncertain"
 
 
-def build(mon: str) -> dict:
-    out: dict = {"trajectory": {}}
-    for step in STEPS:
+def build(mon: str, last: int = 2000, steps=STEPS) -> dict:
+    """`last` / `steps`: the step judged and the steps of the trajectory (exp25 reads step 5000)."""
+    out: dict = {"trajectory": {}, "step": last}
+    for step in steps:
         if os.path.isdir(os.path.join(mon, "step%d" % step)):
             out["trajectory"][str(step)] = {n: syn_stat(idx(mon, step, n), 16, "read")
                                             for n in ("val", "dev16")}
-    last = 2000
     fit, dev16, dev = idx(mon, last, "val"), idx(mon, last, "dev16"), idx(mon, last, "dev")
     out["fit"] = {w: syn_stat(fit, 16, w) for w in WHAT}
     out["dev16"] = {w: syn_stat(dev16, 16, w) for w in WHAT}
