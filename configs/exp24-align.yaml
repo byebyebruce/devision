@@ -1,0 +1,27 @@
+# exp24 phase A (docs/experiments/2026-10-16-exp24-read-align-plan.md; owner 2026-10-16 "可以"): reading alignment.
+# From r15, the alignment stage (masked captions, ModernBERT-large's MLM head) on pictures of printed text whose
+# caption is that text (scripts/data/exp24_text.py): ModernBERT has to fill masked numbers and labels in from the
+# visual tokens. The projector trains at a low rate (r15's lr_new) so r15's visual tokens are not thrown away, plus a
+# rank-16 LoRA on ModernBERT (merged into the checkpoint). Gate scripts/exp24/gate.py; phase B configs/exp24-fit.yaml.
+name: exp24-align
+device: mps
+common:
+  log_every: 50
+stages:
+- name: stage1
+  kind: align
+  init: runs/r15-vision/stage2
+  data: data/exp24/align_train.jsonl
+  val: data/exp24/align_val.jsonl
+  params:
+    epochs: 2
+    batch: 16
+    lr: 2.0e-05
+    lora_r: 16
+    lora_alpha: 32
+    lr_lora: 1.0e-04
+    warmup: 100
+    mask_prob: 0.5
+    max_caption_tokens: 40
+    eval_every: 500
+    seed: 0
