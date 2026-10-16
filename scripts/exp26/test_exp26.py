@@ -64,5 +64,44 @@ def test_report_end_to_end(tmp_path, capsys):
     out = json.load(open(os.path.join(exp26, "report.json")))
     assert out["outcome"].startswith("reading and comparison both pass")
     assert out["vs_exp25"]["dev16"]["value"] == 1.0
-    assert "binding improved" in text and "vs exp25, 16 px read dev16" in text
-    assert out["binding_improved"] and out["binding"]["dev16"]["exp26"]["same_answer"] == 0.0
+    assert "same answer to A?/B?" in text and "vs exp25, 16 px read dev16" in text
+    assert out["same_answer_threshold_met"] and out["binding"]["dev16"]["exp26"]["same_answer"] == 0.0
+
+
+def test_swapped_answers_separate_but_are_not_called_bound(tmp_path):
+    """Every reading swapped (A? gets B's value and the other way round): accuracy 0, same answer 0, all wrong
+    readings on the other panel -- the threshold is met but nothing claims right binding (critic EXP26-I01)."""
+    rows = []
+    for i in range(20):
+        sid = "exp21:d%04d:v0:h16" % i
+        for qid, gold, pred in (("readA", "10 cm", "20 cm"), ("readB", "20 cm", "10 cm")):
+            rows.append({"sample_id": sid, "qid": qid, "image_id": sid, "gold_answer": gold, "prediction": pred,
+                         "correct": False})
+    write(str(tmp_path), "x", rows)
+    b = report.binding(str(tmp_path / "x.details.jsonl"))
+    assert b["same_answer"] == 0.0 and b["other_panel"] == 1.0 and b["wrong_readings"] == 40
+
+
+def _stub_build(monkeypatch, valid, same):
+    base = {"valid": valid, "outcome": "invalid: erased control" if not valid else "partial / uncertain: x"}
+    monkeypatch.setattr(report.exp25, "build", lambda run: dict(base))
+    monkeypatch.setattr(report.exp24, "paired_read", lambda a, b: {"value": 0.0, "ci95": [0.0, 0.0], "n": 1})
+    monkeypatch.setattr(report, "binding", lambda path: {"pictures": 100, "same_answer": same, "wrong_readings": 10,
+                                                         "other_panel": 0.5})
+    return report.build("run", "control")
+
+
+def test_invalid_control_voids_the_secondary_label(monkeypatch):
+    out = _stub_build(monkeypatch, False, 0.1)
+    assert out["same_answer_threshold_met"] is None and out["same_answer_label"].startswith("invalid")
+    assert out["outcome"].startswith("invalid") and out["binding"]["dev16"]["exp26"]["same_answer"] == 0.1
+
+
+def test_the_threshold_boundary(monkeypatch):
+    at = _stub_build(monkeypatch, True, 0.50)
+    above = _stub_build(monkeypatch, True, 0.5000001)
+    assert at["same_answer_threshold_met"] is True and above["same_answer_threshold_met"] is False
+    assert "not by itself evidence of right binding" in at["same_answer_label"]
+    assert "not met" in above["same_answer_label"] and at["outcome"] == above["outcome"]
+    for out in (at, above):
+        assert "bound" not in out["same_answer_label"].replace("not by itself evidence of right binding", "")

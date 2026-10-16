@@ -3,9 +3,10 @@ exp25's readout at step 5000 (outcome rules and thresholds unchanged) on runs/ex
 exp25 (same data, order, seed and settings; only the init differs):
 
   - the paired 16 px reading change on the same fit and dev16 questions (families resampled);
-  - binding, on pictures whose A and B values differ (report only): the share answering "A?" and "B?" with the
-    same option, and among wrong readings the share that picked the other panel's value (exp25: 392 / 400 and
-    320 / 373 on dev16, all pictures).
+  - on pictures whose A and B values differ: the share answering "A?" and "B?" with the same option (secondary
+    threshold 0.50, a measure of whether the answers separate, not of right binding; invalid when the erased
+    control is), and among wrong readings the share that picked the other panel's value (exp25 on dev16: 0.976
+    and 0.907).
 
     uv run python scripts/exp26/report.py [exp26 run] [exp25 run]   # -> <exp26 run>/report.json, text on stdout
 """
@@ -58,10 +59,18 @@ def build(run: str, control: str) -> dict:
     step = lambda r, n: os.path.join(r, "stage2", "monitor", "step%d" % LAST, n + ".details.jsonl")  # noqa: E731
     out["vs_exp25"] = {n: exp24.paired_read(step(control, n), step(run, n)) for n in ("val", "dev16")}
     out["binding"] = {n: {"exp26": binding(step(run, n)), "exp25": binding(step(control, n))} for n in ("val", "dev16")}
-    # secondary readout, written before running: on dev16 pictures with A != B, at most half answer "A?" and "B?"
-    # with the same option (exp25: 0.976)
+    # secondary readout, threshold written before running: on dev16 pictures with A != B, at most half answer "A?"
+    # and "B?" with the same option (exp25: 0.976). It measures whether the two answers separate, not whether they
+    # are bound right (swapped answers also separate), and it inherits an invalid erased control (critic EXP26-I01).
     same = out["binding"]["dev16"]["exp26"]["same_answer"]
-    out["binding_improved"] = same is not None and same <= BOUND_SAME
+    if not out["valid"] or same is None:
+        out["same_answer_threshold_met"], out["same_answer_label"] = None, "invalid: erased control" if not out["valid"] else "n/a"
+    else:
+        met = same <= BOUND_SAME
+        out["same_answer_threshold_met"] = met
+        out["same_answer_label"] = ("same-answer share at or below %.2f: the answers to A? and B? separate more often "
+                                    "(not by itself evidence of right binding)" % BOUND_SAME if met else
+                                    "same-answer share above %.2f: the pre-written threshold is not met" % BOUND_SAME)
     return out
 
 
@@ -75,7 +84,7 @@ def main(argv=None):
     print("text compare %s: %s | picture compare (dev16) %s: %s" % (
         fmt_stat(out["text"]["cmp"]), out["text_cmp_class"], fmt_stat(out["dev16"]["cmp"]), out["picture_cmp_class"]))
     print("outcome:", out["outcome"])
-    print("binding improved (dev16 same answer <= %.2f): %s" % (BOUND_SAME, out["binding_improved"]))
+    print("same answer to A?/B? (secondary): " + out["same_answer_label"])
     for n, label in (("val", "fit"), ("dev16", "dev16")):
         b = out["binding"][n]
         f = lambda x: "n/a" if x is None else "%.3f" % x  # noqa: E731
