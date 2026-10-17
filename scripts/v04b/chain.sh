@@ -16,11 +16,8 @@ others=$(model_processes | grep -v "scripts/v04b/chain.sh")
 [ -z "$others" ] || { log "other model processes are running:"; echo "$others"; exit 1; }
 have=$(shasum -a 256 runs/exp39-h/stage1/model.safetensors 2>/dev/null | cut -d' ' -f1)
 [ "$have" = "$V04B_INIT_SHA256" ] || { log "exp39-H sha256 ${have:-missing} is not $V04B_INIT_SHA256"; exit 1; }
-uv run python - <<'PY' || { log "exp39's report does not allow B (four conditions)"; exit 1; }
-import json, sys
-r = json.load(open("runs/exp39-report.json"))
-sys.exit(0 if r.get("invest_in_512") is True else 1)
-PY
+uv run python scripts/v04b/freeze.py start runs/exp39-report.json runs/exp39-h/stage1/model.safetensors "$V04B_INIT_SHA256" \
+  || { log "the exp39 report does not allow B for these weights"; exit 1; }
 data=$(shasum -a 256 data/v04b/train_mix.jsonl | cut -d' ' -f1)
 [ "$data" = fd53d39427ab82dc142756a97bc2c5c5c6d6156acd7a0e1678b899a4bab98b69 ] || { log "train mix sha256 $data"; exit 1; }
 [ ! -e runs/v04b-fit ] || { log "runs/v04b-fit already exists"; exit 1; }
@@ -36,7 +33,7 @@ RESERVE=120
 . scripts/exp38/steps.sh
 log "B: start exp39-H $have; data $data; deadline $(date -r "$DEADLINE" '+%F %T')"
 finish() {
-  final_report uv run python scripts/v04b/report.py runs/v04b-fit "$V04B_INIT_SHA256" > runs/v04b-report.txt 2>&1
+  final_report uv run python scripts/v04b/report.py runs/v04b-fit "$V04B_INIT_SHA256" > runs/v04b-report.txt 2>&1   # writes runs/v04b-screen.json
   local rc=$?
   cat runs/v04b-report.txt
   log "final report (exit $rc)"
@@ -44,10 +41,15 @@ finish() {
   exit "$rc"
 }
 step train uv run python scripts/v04b/watch.py runs/v04b-fit/stage2 runs/v04b-watch.txt -- uv run devision-pipeline configs/v04b-fit.yaml || finish 1
+# freeze the final weights / config (temperatures) before any screening evaluation (critic V04-B-R2-01)
+uv run python scripts/v04b/freeze.py freeze runs/v04b-fit || { status freeze failed; finish 1; }
 mkdir -p runs/v04b-fit/eval
-evalset() {   # name data
+evalset() {   # name data: evaluate, then tie the files to the frozen identity (checked unchanged first)
   step "eval:$1" uv run devision-eval --checkpoint runs/v04b-fit/stage2 --data "$2" --data-root data \
     --out runs/v04b-fit/eval/$1.json --role monitoring
+  local rc=$?
+  [ "$rc" = 0 ] || return $rc
+  uv run python scripts/v04b/freeze.py record runs/v04b-fit "$1" || { status "eval:$1" failed; log "identity changed: $1"; return 1; }
 }
 for s in sqa_temp=data/exp21/dev_sqa_temp.jsonl sqa_force=data/exp21/dev_sqa_force.jsonl \
          sqa_temp_mism=data/exp21/dev_sqa_temp_mism.jsonl sqa_force_mism=data/exp21/dev_sqa_force_mism.jsonl \

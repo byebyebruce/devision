@@ -28,6 +28,15 @@ from readout import classify, syn_index, syn_stat, transfer  # type: ignore  # n
 
 from devision.train.compare import load_records, paired_metric  # noqa: E402
 
+def _load(name, rel):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, rel))
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+frozen = _load("v04b_freeze", "freeze.py")
 _spec = importlib.util.spec_from_file_location("exp32_report", os.path.join(HERE, "..", "exp32", "report.py"))
 assert _spec is not None and _spec.loader is not None
 r32 = importlib.util.module_from_spec(_spec)
@@ -89,13 +98,15 @@ def build(run: str, start_sha: str, status_path: str = "") -> dict:
     ev = os.path.join(run, "eval")
     st = states(status_path or os.path.join(run, "..", "v04b-status.txt"))
     ckpt = os.path.join(run, "stage2")
-    out: dict = {"identity": {"model.safetensors": sha(os.path.join(ckpt, "model.safetensors")),
-                              "config.json": sha(os.path.join(ckpt, "config.json")), "start_model_sha256": start_sha},
+    fr = json.load(open(frozen.path(run))) if os.path.exists(frozen.path(run)) else {}
+    out: dict = {"identity": {**(fr.get("weights") or {"model.safetensors": None, "config.json": None}),
+                              "frozen": bool(fr), "start_model_sha256": start_sha},
                  "status": st}
     missing = [n for n in REQUIRED if st.get("eval:" + n) != "completed"]
-    if st.get("train") != "completed" or missing or out["identity"]["model.safetensors"] is None:
+    if st.get("train") != "completed" or missing or not fr:
         out["outcome"] = "incomplete: %s" % ", ".join((["train"] if st.get("train") != "completed" else []) + missing)
         return out
+    frozen.check(run, list(REQUIRED))        # weights, config (temperatures) and every required file as frozen / recorded
     for n in REQUIRED:
         run_info = json.load(open(os.path.join(ev, n + ".json")))["run"]
         if run_info.get("checkpoint") != ckpt or run_info.get("temperature") != "fitted":
@@ -129,8 +140,11 @@ def build(run: str, start_sha: str, status_path: str = "") -> dict:
     ro = {}
     for name in ("exp31", "semantics_tune"):
         if st.get("eval:" + name) == "completed":
+            frozen.check(run, [name])
             rs = recs(ev, name)
             ro[name] = {"accuracy": sum(r["correct"] for r in rs) / len(rs), "n": len(rs)}
+    if "exp31" in ro:   # levels, equal / unequal, predicted equal / Pair 1 / Pair 2 shares (critic V04-B-R2-NOTE-01)
+        ro["exp31"]["by_level"] = _load("exp31_report", "../exp31/report.py").model_report(recs(ev, "exp31"))
     out["report_only"] = ro
     return out
 
@@ -138,7 +152,8 @@ def build(run: str, start_sha: str, status_path: str = "") -> dict:
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     out = build(argv[0], argv[1])
-    json.dump(out, open(os.path.join(argv[0], "screen.json"), "w"), indent=1, default=str)
+    dest = os.path.join(os.path.dirname(os.path.normpath(argv[0])) or ".", "v04b-screen.json")   # exists even without the run
+    json.dump(out, open(dest, "w"), indent=1, default=str)
     print("outcome: " + out["outcome"])
     print("identity: %s" % out["identity"])
     if "checks" in out:
