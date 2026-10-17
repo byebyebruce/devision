@@ -29,25 +29,27 @@ LIMITS = {"first": 2700.0, "val": 2700.0, "other": 900.0}
 VAL_WINDOWS = (1600, 3200)      # windows after which a validation (or, after 3,200, the end) runs
 
 
-def decide(windows: dict, mps: dict, ram: dict, since_last: float, limits=LIMITS) -> str:
+def decide(windows: dict, mps: dict, ram: dict, since_last: float, limits=LIMITS, slow: float = 6.0,
+           val_windows=VAL_WINDOWS) -> str:
+    """'' to go on, else the reason to stop (`slow`: the s / update limit; exp40 reuses this at 256 with its own)."""
     steps = sorted(windows)
     for s in steps:
         if mps.get(s, 0) > 16 and ram.get(s, 99) < 2:
             return "window %d: MPS %.1f GB with %.1f GB available" % (s, mps[s], ram[s])
-    if 100 in windows and windows[100] > 6:
-        return "first window %.2f s/update > 6" % windows[100]
-    train = [s for s in steps if not any(v < s <= v + 100 for v in VAL_WINDOWS)]
+    if 100 in windows and windows[100] > slow:
+        return "first window %.2f s/update > %g" % (windows[100], slow)
+    train = [s for s in steps if not any(v < s <= v + 100 for v in val_windows)]
     for a, b in zip(train, train[1:]):
-        if b - a == 100 and windows[a] > 6 and windows[b] > 6:
-            return "two windows > 6 s/update at %d / %d" % (a, b)
+        if b - a == 100 and windows[a] > slow and windows[b] > slow:
+            return "two windows > %g s/update at %d / %d" % (slow, a, b)
     last = steps[-1] if steps else 0
-    limit = limits["first"] if not steps else limits["val"] if last in VAL_WINDOWS else limits["other"]
+    limit = limits["first"] if not steps else limits["val"] if last in val_windows else limits["other"]
     if since_last > limit:
         return "no new window for %.0f s after step %d" % (since_last, last)
     return ""
 
 
-def main(argv=None, limits=LIMITS, poll: float = 30.0) -> int:
+def main(argv=None, limits=LIMITS, poll: float = 30.0, slow: float = 6.0) -> int:
     argv = sys.argv[1:] if argv is None else argv
     stage_dir, log = argv[0], argv[1]
     cmd = argv[argv.index("--") + 1:]
@@ -80,7 +82,7 @@ def main(argv=None, limits=LIMITS, poll: float = 30.0) -> int:
                     out.write("%s windows %s\n" % (time.strftime("%T"), {k: round(v, 2) for k, v in sorted(win.items())[-3:]}))
                     out.flush()
             if not why:
-                why = decide(win, mps, ram, time.time() - last_change, limits=limits)
+                why = decide(win, mps, ram, time.time() - last_change, limits=limits, slow=slow)
             if why:
                 out.write("%s stop: %s (unreadable cache reads %d)\n" % (time.strftime("%T"), why, unreadable))
                 out.flush()
