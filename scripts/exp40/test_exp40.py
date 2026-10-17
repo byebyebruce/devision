@@ -178,6 +178,7 @@ def test_comparison_needs_only_rl_tune_and_every_question(tmp_path):
     assert all(a["outcome"].startswith("incomplete") for a in out["arms"].values()) and out["candidate"] == "none"
     c = out["comparison"]
     assert c["n_clusters"] == 165 and c["n_families"] == 300 and c["bridge"]
+    assert out["strata"]["M"]["different"]["pairs"] == 414 and out["strata"]["M"]["same"]["questions"] == 972
     assert c["M"]["denominators"]["both:mass"] == 138 and c["M"]["denominators"]["both:speed"] == 191 and c["M"]["denominators"]["both:distance"] == 85
     drop = lambda rs: [r for r in rs if not (r["sample_id"].endswith(":v1") and r["qid"] == "q2" and r["sample_id"] == rs[-1]["sample_id"])]  # noqa: E731
     dup = lambda rs: rs + [rs[5]]  # noqa: E731

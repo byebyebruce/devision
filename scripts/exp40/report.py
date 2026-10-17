@@ -54,6 +54,8 @@ def _load(name, rel):
 v04b = _load("v04b_report", "../v04b/report.py")
 r36 = _load("exp36_report", "../exp36/report.py")
 build_mod = _load("exp40_build", "build.py")
+strata_mod = _load("exp40_strata", "strata.py")
+V03_TUNE = "runs/exp32-fit/eval_v03/rl_tune.details.jsonl"
 
 
 def sha(path: str):
@@ -198,6 +200,17 @@ def build(runs: Dict[str, str] = RUNS, manifest_path: str = "data/exp40/MANIFEST
         out["comparison"] = compare(recs["M"], recs["O"])
     except ValueError as e:
         out["comparison"] = "incomplete: %s" % e
+    # same-value / different-value reading questions (critic EXP40-M-RESULT-02; report only, no gate): v0.3 and
+    # each arm whose rl_tune passes the same checks as the comparison; rl_tune_L where recorded
+    out["strata"] = {"v03": strata_mod.strata(V03_TUNE, TUNE)}
+    for arm, run in runs.items():
+        try:
+            tune_records(arm, run, manifest, out["arms"][arm].get("status", {}))
+        except ValueError:
+            continue
+        out["strata"][arm] = strata_mod.strata(os.path.join(run, "eval", "rl_tune.details.jsonl"), TUNE)
+        if out["arms"][arm]["status"].get("eval:rl_tune_L") == "completed":
+            out["strata"][arm + "_L"] = strata_mod.strata(os.path.join(run, "eval", "rl_tune_L.details.jsonl"), TUNE_L)
     out["candidate"] = "M" if passed["M"] else "O (not a large-digit bridge)" if passed["O"] else "none"
     return out
 
@@ -229,6 +242,12 @@ def main(argv=None):
         print("bridge (M - O both-objects lower bound > 0): %s" % c["bridge"])
     else:
         print("comparison: %s" % c)
+    for k, v in out["strata"].items():
+        d = v["different"]
+        print("strata %s: same-value right %d/%d; different-value right %d/%d, both objects %d/%d, same prediction %d, "
+              "wrong %d of which the other object's gold %d" % (k, v["same"]["right"], v["same"]["questions"], d["right"],
+                                                                  d["questions"], d["both_right"], d["pairs"], d["same_prediction"],
+                                                                  d["wrong"], d["wrong_is_other_gold"]))
     print("candidate: %s" % out["candidate"])
     return 0
 
