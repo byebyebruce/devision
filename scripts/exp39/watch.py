@@ -3,7 +3,8 @@ stops the run (TERM to the given pattern's processes, KILL 15 s later) on the pr
   - first window (step 50): step_s > 9, or MPS driver memory > 16 GB with system memory available < 2 GB;
   - two consecutive training windows > 12 s / step (windows that contain a validation -- the one after step 500 --
     are not counted);
-  - a stall: no new window for 10 minutes (20 minutes after a validation step).
+  - a stall: no new window for 10 minutes (20 minutes after a validation step; 30 minutes before the first window,
+    which follows the step-0 validation at 512).
 Writes what it saw and why it stopped to the given log.
 
     uv run python scripts/exp39/watch.py runs/exp39-h/stage1 "align_main.*exp39-h|configs/exp39-h.yaml" runs/exp39-watch.txt
@@ -57,7 +58,7 @@ def decide(windows: dict, mps: dict, ram: dict, since_last: float, val_steps=(50
         if b - a == 50 and windows[a] > 12 and windows[b] > 12:
             return "two windows > 12 s/step at %d / %d" % (a, b)
     last = steps[-1] if steps else 0
-    limit = 1200 if any(v <= last < v + 50 for v in val_steps) else 600
+    limit = 1800 if not steps else 1200 if any(v <= last < v + 50 for v in val_steps) else 600
     if since_last > limit:
         return "no new window for %.0f s after step %d" % (since_last, last)
     return ""

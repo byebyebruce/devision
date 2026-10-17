@@ -16,3 +16,8 @@ def test_rules():
     assert w.decide({50: 7, 100: 7}, {}, {}, 700).startswith("no new window")
     assert w.decide({50: 7, 500: 7}, {}, {}, 700) == ""                            # val after step 500: longer allowance
     assert w.decide({50: 7, 100: 7.5}, {50: 15}, {50: 3}, 100) == ""
+
+
+def test_first_window_allowance():
+    assert w.decide({}, {}, {}, 1500) == ""                                         # step-0 validation + 50 steps
+    assert w.decide({}, {}, {}, 1900).startswith("no new window")

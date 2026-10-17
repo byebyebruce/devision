@@ -39,8 +39,16 @@ report() {   # H - C with the C rescue; its status merged with this run's
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("r38", "scripts/exp38/report.py"); r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
 out = r.build({"H": "runs/exp39-h", "C": "runs/exp38-c"}, "runs/exp39-status-merged.txt")
+c_sha = json.load(open("runs/exp38-c/numbers_tune/START.json"))["sha256"]["model.safetensors"]
+if c_sha != "fee58d58abf7a5930b7df7f2a2818dbe13f93e0a4855b621dfe7ba73e4faa0a0":
+    sys.exit("C is not the reviewed C rescue: %s" % c_sha)
+run = json.load(open("runs/exp39-h/run.json"))
+out["sources"] = {"C": "reused from the C rescue (scripts/exp38/rescue_c.sh, runs/exp38-c, model fee58d58...), not rerun",
+                  "H": {"micro_batch": run["config"]["stages"][0]["params"].get("micro_batch"),
+                        "readout_forward_rows": json.load(open("runs/exp39-h/numbers_tune/START.json")).get("forward_rows"),
+                        "init": run["config"]["stages"][0]["init"], "data": run["config"]["stages"][0]["data"]}}
 json.dump(out, open("runs/exp39-report.json", "w"), indent=1)
-print(json.dumps({k: out.get(k) for k in ("outcome", "conditions", "H_minus_C", "identity")}, indent=1, default=str))
+print(json.dumps({k: out.get(k) for k in ("outcome", "conditions", "H_minus_C", "identity", "sources")}, indent=1, default=str))
 PY
 }
 finish() {
