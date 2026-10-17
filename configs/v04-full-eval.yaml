@@ -1,9 +1,12 @@
 # v0.4 full evaluation (docs/experiments/2026-10-17-v04-delivery-plan.md; draft prepared before the candidate is
 # locked): the same 29 sets, controls and calibration source as v0.3 (configs/r15-vision.yaml), on the candidate
 # checkpoint, so every set pairs question by question with runs/r15-vision/eval/. Results go to the candidate
-# round's eval/; results already there are reused only after scripts/release/check_eval.py passes on this file.
+# round's eval/, under a frozen checkpoint identity (critic V04-REL-R1-01 / 02):
+#   uv run python scripts/release/check_eval.py freeze configs/v04-full-eval.yaml
+#   uv run python scripts/release/check_eval.py preflight --quarantine configs/v04-full-eval.yaml
 #   uv run devision-pipeline configs/v04-full-eval.yaml
-#   uv run python scripts/release/check_eval.py configs/v04-full-eval.yaml
+#   uv run python scripts/release/check_eval.py seal configs/v04-full-eval.yaml
+#   uv run python scripts/release/check_eval.py check configs/v04-full-eval.yaml
 name: full
 stages: []
 
@@ -43,7 +46,7 @@ evaluate:
     test_relation_flip: data/v6/test_relation_flip.jsonl
     bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
     bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
-    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_scienceqa: {path: data/lv_bench/scienceqa.jsonl, role: monitoring}   # its slices chose the research direction (exp21 plan): not a blind test for this candidate (critic V04-REL-R1-05)
     bench_lv_pope: data/lv_bench/pope.jsonl
     test_count_fresh: {path: data/v11/test_count_fresh.jsonl, role: heldout}
     test_bind_gqa: {path: data/r13/gqa/test_bind_gqa.jsonl, role: heldout}

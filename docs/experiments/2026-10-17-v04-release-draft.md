@@ -13,41 +13,83 @@
 | 交付判定 | TBD：exp32 report 的结局，以及 transfer 的准确率 / 看图收益区间 |
 | 代价 | TBD：7 个保护面板 |
 
-如果候选换成别的 checkpoint，只改 `configs/v04-full-eval.yaml` 的 `checkpoint` 和 `release/v0.4/release.yaml` 的 `round` / `stage` 两处。
+如果候选换了 checkpoint 或配方，要同步更新这几处（V04-REL-R1-01）：
+- `configs/v04-full-eval.yaml` 的 `checkpoint` 和 `history`（新配方监测过的集合）；
+- `release/v0.4/release.yaml` 的 `round` / `stage`，以及 `evidence` 里的训练配置；
+- `notes.md` 的训练描述；
+- 本节的来源链和数据版本。
+
+之后重新 freeze。
 
 ## 2. 完整评测（29 个集合，与 v0.3 相同）
 
 - 配置 `configs/v04-full-eval.yaml`：29 个集合、对照（配错图 / 选项倒序）、温度拟合集（`data/r13b/val.jsonl`）和用途判定都与 `configs/r15-vision.yaml` 相同。
 - `history` 另外加入候选训练时监测过的集合：real_layout 调参集、exp21 的 4 个 ScienceQA 开发集和 dev16。
-- 两份配置给 29 个集合判出的用途逐一相同（`build_plan` 已比对）。
+- 用途：除 `bench_lv_scienceqa` 对本候选明确标为 monitoring（V04-REL-R1-05）外，其余 28 个集合判出的用途与 r15 逐一相同（`build_plan` 已比对）。
 - 每题都能与 `runs/r15-vision/eval/` 配对。
 - 结果写到候选轮次的 `eval/`。注意：dry-run 时 `runs/exp32-fit/run.json` 还不存在，输出路径显示为 `stage2/`；exp32 训练后就会是 `runs/exp32-fit/eval/`。
-- **复用已有结果前**，先跑 `uv run python scripts/release/check_eval.py configs/v04-full-eval.yaml`，对每个集合及其每个对照逐一核对：
-  - checkpoint 是否为配置里的候选；
-  - 是否用拟合后的温度、对照类型是否正确、用途是否一致；
-  - 数据文件当前的 sha256；
-  - 逐题明细是否完整、无重复（倒序对照只覆盖选择题）。
-  - 只有文件存在不算。exp32 chain 已经评过的 7 个保护面板，只要核对通过就可以复用，对照会补跑。
-- 用 v0.3 自己的结果试过这个检查：29 个集合加全部对照，0 个问题。
+- **执行顺序**（V04-REL-R1-01 / 02，`scripts/release/check_eval.py`）：
+  1. `freeze`：候选第一次做最终评测之前，把 checkpoint 目录里每个文件（权重、带温度的 config、tokenizer 等）的 sha256 和温度表写入 `<eval>/IDENTITY.json`。已有一份不同的身份时拒绝覆盖。
+  2. `preflight --quarantine`：把每个计划输出（集合及其每个对照）分为三类：
+     - ok：已在当前身份下 seal，文件哈希不变，内容检查通过；
+     - missing：不存在，交给 pipeline 新跑；
+     - invalid：存在但证明不了身份（freeze 之前写的、权重或温度不同），或内容不对。
+     invalid 的文件移到 `<eval>/_invalid/<时间>/`，pipeline 会重新评。因为 pipeline 只要看到摘要存在就跳过，所以必须先清掉 invalid。
+  3. `devision-pipeline configs/v04-full-eval.yaml`：补跑 missing。
+  4. `seal`：确认 checkpoint 仍与 IDENTITY 一致；对 freeze 之后写出、内容检查通过的输出，记下文件哈希，写入 `RESULTS.json`。
+  5. `check`：全量核查——每个计划输出都在、已 seal、未改动、内容通过。
+- 内容检查（每个输出）：
+  - 摘要的 run 字段：checkpoint、数据 sha256、fitted、对照类型、用途；摘要的温度表与冻结的相同。
+  - 明细：每题恰好一次（倒序对照只覆盖选择题）；题型和 gold 与数据文件相同；选项与数据文件相同（倒序对照则顺序相反）；图片与数据文件相同（配错图对照则必须不同）；概率只覆盖这些选项、都是有限值、和为 1；prediction 是 argmax；correct 与 gold 一致。
+  - 摘要的题数、准确率与明细一致。
+- exp32 chain 在 freeze 之前评过的 7 个保护面板证明不了身份，按规则在 preflight 时移走、重评，约 5 分钟。
+- 夹具（`tests/release/test_check_eval.py`，7 项）：
+  - 同一路径换权重或改温度后拒绝复用；
+  - freeze 之前写的结果被隔离；
+  - 同编号错 gold、缺概率、缺选项、缺题都会被拒绝；
+  - 完整的新结果能通过。
+- v0.3 的历史结果没有冻结身份：`check --legacy configs/r15-vision.yaml` 只做内容检查，29 个集合加全部对照 0 个问题，输出里明确写"identity not proven"。身份改用已发布权重的 MANIFEST（`release/v0.3/MANIFEST.json`，model.safetensors `110fea95…`）佐证，并披露历史元数据的这一限制，不默认重跑基线。
 - 评完后：
   - `scripts/lv_report.py <eval> --prev runs/r15-vision/eval`，生成 laya-vision 详细比较，包括 ScienceQA 按学科 / 选项数 / 必须看图的切片；
   - 每个集合跑 `devision-compare` 对 v0.3 逐题配对；
   - 写入训练日志和 `docs/research/laya-vision-gap.md`。
 - 用时：v0.3 的同一套评测实测约 2 小时 16 分钟（14 日 18:06–20:22），按 2.5 小时安排。
 
-## 3. 交付证据（`release/v0.4/delivery_vs_v0.3.json`）
+## 3. 交付证据（`release/v0.4/delivery_vs_v0.3.json`，`scripts/release/delivery.py`）
 
-- 主目标：直接取 exp32 report 的 transfer 读出（真实 ScienceQA 温度 + 磁力开发题，68 : 114，准确率区间和看图收益区间），以及 7 个保护面板，不重算、不改口径。
-- 泛化证据：
-  - real_layout 确认集：冻结、按规范案例隔离，只评一次，按族配对；
-  - 全量 `bench_lv_scienceqa` 及其"必须看图"切片。
-- 交付计划里的"新冻结泛化集"是否就以确认集充当，请评论家确认。确认集和训练版式相似，这一点会如实披露。
+- **主目标**：直接取 exp32 report 的 transfer 读出（68 : 114，准确率区间和看图收益区间），以及 exp32 预写的结局标签。这个标签是 exp32 的候选筛查结论，不等于发布条件全部满足；不改 exp32 预先约定的主判定。
+- **新能力保留**（V04-REL-R1-04）：
+  - 同一候选的 dev16 读数和比较：点估计、按族重采样的区间，各自按原规则判定（通过 = 点估计 ≥ 0.80 且下界 ≥ 0.75；失败 = 点估计 < 0.60 且上界 < 0.65）。复用 exp32 chain 的 dev16 明细，但它要按第 2 节的规则重评、seal。
+  - 擦除控制：候选锁定后在 `data/exp21/dev_syn_erased.jsonl` 上短测一次（约 1 分钟）。有效条件是读数 < 0.50 且比较 < 0.55；无效时 dev16 的判定作废。
+- **保护**：7 个面板的区间和预写代价。
+- **身份**：IDENTITY.json 里 model.safetensors / config.json 的哈希。
+- 夹具（`tests/release/test_release_evidence.py`）：擦除控制有效时 dev16 正常判定，无效时判定作废。
 
-## 4. 概率质量
+## 3b. 新冻结确认集（V04-REL-R1-05；数据准备中，模型在候选锁定后才评）
 
-- 候选的温度是在 B 阶段结束时于 `data/r13b/val.jsonl` 上拟合的，与 v0.3 同一来源；没有在任何最终测试集上拟合。
-- 校准前后对比：`uv run devision-calibrate --checkpoint <候选> --data data/r13b/val.jsonl --data-root data`，只打印、不写盘，给出各桶校准前后的 NLL / ECE。
-- 报告完整评测里每个集合的 accuracy / NLL / ECE，以及按选项数分层。
+- 不用 rl_confirm 加历史 bench 来充当：
+  - rl_confirm 保留为"同一生成器、未见过的数值 / 大小组合"的证据；
+  - `bench_lv_scienceqa` 的分项曾用来选研发方向（exp21 方案），对本候选在配置里明确标为 monitoring，历史报告不回写。
+- 来源：本地 ScienceQA 官方 test parquet（snapshot `f18b0a70…`），按评论家指定的四个原始 skill 全收，只做隔离剔除，不按模型输出筛题，也不为凑数补入已用过的图：
+  - 图表读数：Use climate data to make predictions；
+  - 图解属性：Read graphic organizers；
+  - 物体属性：Compare properties of objects、Identify properties of an object。
+- 隔离、数量、哈希：见 `data/v04_confirm/MANIFEST.json` 和 `EXCLUSIONS.json`（生成器 `scripts/data/v04_confirm.py`），实际数字写在 critic 回复里。
+- 固定的配错图对照：在各分项内按图做固定置换（seed 0），两个模型共用（`confirm_mism.jsonl`）。
+- 评测（候选锁定后只评一次，两个模型加对照合计 ≤ 5 分钟）：
+  - 三个分项分别报告 v0.3 与候选的准确率、真图 − 固定错图的收益、候选 − v0.3 的差值，以及按图聚类的 95% 区间；
+  - 另报选项倒序的敏感度；
+  - 图解只有 2 张图，只作描述，不下结论。
+- 这项证据不替换 68 : 114 主指标，不增设事后的通过阈值，也不能单独证明通用 OCR。第一次的结果要保留；结果一旦用于下一轮开发，就失去盲测资格。
+
+## 4. 概率质量（V04-REL-R1-03，`scripts/release/calibration.py`）
+
+- 在同一份冻结权重上，比较 T = 1（`devision-eval --no-temperature`）与候选实际存储的温度（`devision-eval`），给出 accuracy / NLL / ECE，并按（题型, 选项数）分层。不重新拟合，不写 checkpoint。
+- 覆盖两个集合，分别注明用途：
+  - 校准集 `data/r13b/val.jsonl`（calibration_fit）：温度就在这里拟合，改善是样本内的；
+  - 完整 `bench_lv_scienceqa`（monitoring）：没有参与拟温，但参与过研发选择。
+- 训练报告只记录了校准后的最终指标，没有 T = 1 的原始记录（r15 的 train_report 已核实），所以原始概率用 `--no-temperature` 补跑：两个集合，约 3 分钟。
+- 不为这一项重跑 29 个集合的全部对照。
 
 ## 5. CPU 延迟（候选自己测，不复用 v0.3 的数字）
 
@@ -94,8 +136,10 @@ cp <候选轮次>/cpu/single.json release/v0.4/cpu_latency.json
 | 10-18 上午 | 证据评审；模型卡和 notes 定稿 |
 | 10-18 18:00 前 | 合入、打 tag、双平台发布与远端核验 |
 
-## 已准备（本提交）
+## 已准备
 
 - `configs/v04-full-eval.yaml`：29 个集合的只评测配置，dry-run 通过，用途与 v0.3 一致。
-- `scripts/release/check_eval.py` 和 `tests/release/test_check_eval.py`（2 项）：复用结果前核对身份、数据哈希和逐题完整性。
+- `scripts/release/check_eval.py`（freeze / preflight / seal / check）和 `tests/release/test_check_eval.py`（7 项）。
+- `scripts/release/calibration.py`、`scripts/release/delivery.py` 和 `tests/release/test_release_evidence.py`（3 项）。
+- `scripts/data/v04_confirm.py`：新冻结确认集。
 - `release/v0.4/release.yaml`、`notes.md`：草案，候选和数字都标为 TBD。
