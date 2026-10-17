@@ -62,7 +62,8 @@ def test_refused_combinations(tmp_path, data):
     with open(tmp_path / "x.jsonl", "w") as fh:
         for s in synthetic_samples(tmp_path / "d2", 2):
             fh.write(json.dumps(dict(s, image="../d2/" + s["image"])) + "\n")
-    for kw in ({"micro_batch": 3}, {"micro_batch": 2, "decision_data": str(tmp_path / "x.jsonl")}):
+    for micro, dec in ((3, ""), (2, str(tmp_path / "x.jsonl"))):
         with pytest.raises(ValueError):
             align(tiny_decider(seed=1), caps, data_root=root, out_dir=tmp_path / "r",
-                  config=AlignConfig(epochs=1, batch=4, mlm_head="", eval_every=0, seed=0, device="cpu", **kw))
+                  config=AlignConfig(epochs=1, batch=4, mlm_head="", eval_every=0, seed=0, device="cpu",
+                                     micro_batch=micro, decision_data=dec))
