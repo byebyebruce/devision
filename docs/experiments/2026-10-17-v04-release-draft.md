@@ -193,3 +193,39 @@ cp <候选轮次>/cpu/single.json release/v0.4/cpu_latency.json
 - `scripts/release/calibration.py`、`scripts/release/delivery.py` 和 `tests/release/test_release_evidence.py`（3 项）。
 - `scripts/data/v04_confirm.py`：新冻结确认集。
 - `release/v0.4/release.yaml`、`notes.md`：草案，候选和数字都标为 TBD。
+
+## 9. 512 路线发布准备更新（2026-10-18 00:40:38 +08:00）
+
+本节覆盖上文仍以256候选估计的包兼容、CPU和时间安排；上文18:45现状与排程作为当时草案保留，不代表现在已有候选。当前 exp39-H 在512输入下完成500/1000步，B配方及编排已验收，但H四条件、B训练及候选锁定均尚未完成。
+
+- **推理包必须支持512入口。** 本地标签 v0.2.1 的 ModelConfig 忽略 interpolate_pos_encoding，视觉调用不传插值，不能把旧包对512的正确推理写成已支持。若最终锁定512候选，准备新推理包（包版本号发布前核实），与模型 v0.4 分别版本化；新包要保留256旧模型兼容并支持512新模型。最低包版本同步进入HF/MS安装说明，MS仍须安装 `modelscope-hub`。不改活动训练环境，不带入无关未提交改动；本轮只准备，未发布任何包或权重。
+- **正式验证。** 模型空闲时在隔离安装环境验证新包加载v0.3与新候选的真实smoke/API；候选CPU延迟必须实测。第5节“结构没变、预计相近”和第6节“直接使用v0.2.1”的安排不适用于512候选。准备阶段只做轻量CPU夹具/打包，不加载真实权重或抢占H。
+- **报告衔接。** B正式输出为 `runs/v04b-screen.json`。其内部冻结身份已验收；发布工具读取的顶层 `model_sha256` 需由核验后的冻结身份派生，或使用已有与报告hash绑定的身份记录。该接口准备见 V04-REL-B-PREP-02；不是手填终点SHA，不改变五条筛查或发布复算。
+- **排程。** H截止02:39:05；只有其四条件通过且链结束才裁决B。B总预算min(启动+330分钟,08:30)，含筛查和报告；512完整29集及对照按6–7小时估，之后至少留4小时给确认集、校准、CPU/API、包/模型构建与双平台核验。若08:30进入全评，约18:30–19:30完成仍只是估计，须以实际吞吐修订，23:59目标和完整验证范围不变。
+- **发布顺序。** 先证明可安装的新推理包可用，再发布需该包的新模型默认版本；旧v0.3标签保留。候选未达标时不上传研究权重充作v0.4，不把包更新当作模型进步。现有完整评测、新确认集、概率质量、发布哈希及远端核验要求不减少。
+
+## 10. 512 推理包的准备（Engineer，2026-10-18 00:55，对应评论家 V04-REL-B-PREP-01 / 02）
+
+- **为什么要新包**：v0.2.1 的 `ModelConfig.from_dict` 会忽略 `interpolate_pos_encoding`，视觉塔也不传插值参数，读不了 512 的候选。新包要包含当前 develop 的 `ModelConfig.interpolate_pos_encoding` 和统一视觉入口 `vision_patches`。
+- **包内改动清单**（相对 v0.2.1 的 `src/devision`）：
+  - `model.py`：新字段，以及 image_size 与视觉塔原生尺寸不同时必须开插值，否则报错；
+  - 推理和训练三处的视觉调用统一走 `vision_patches`；
+  - 训练侧新增的选项（align 的 micro_batch / 数字遮罩 / 决策监督，rlcd 的 eval_batch）都默认关闭。
+  - Jev 接口和概率语义不变。
+- **隔离构建检查**：
+  - 在 48bafe0 的临时 git worktree 里构建（没有带入工作区里未提交的 demo / serve / README 改动），版本号只在这个 worktree 里临时改成 0.3.0.dev0，构建后删除了 worktree。
+  - wheel `86b4f902…`、sdist `f070efe6…` 放在 `/tmp/devision-pkg-dist`，只用于检查，不上传。
+  - wheel 里只有 `devision/` 下的 18 个文件和 dist-info：`model.py` 含 `interpolate_pos_encoding` 和 `vision_patches`；没有 snake / tetris / game-api 文件；sdist 里没有 scripts / runs / data。
+- **正式版本号**：发布前核实一个空闲的版本（如 0.3.0），改 pyproject 的唯一版本号，打 `v0.3.0` 标签走 PyPI 工作流；与模型标签 `model-v0.4` 分开。
+- **模型卡**：`release.yaml` 的 `min_package_version` 决定安装行。设置后 HF 写 `pip install "devision>=X"`，ModelScope 写同一个约束再加 `modelscope-hub`；不设时仍是 `pip install devision`，v0.3 的卡不变。（`hf.package_spec`，测试 `tests/release/test_install_spec.py`。）
+- **兼容验证**（候选锁定、包可获取之后再做，不在今晚跑）：
+  - 在隔离环境里安装新包，对 v0.3（256）和 v0.4（512）各跑真实 smoke / API；
+  - 测候选自己的 CPU P50 / P95；
+  - 确认 0.2.1 读 512 模型时的行为，并写进模型卡：0.2.1 不支持 512 模型；
+  - 保留旧模型的 tag。
+- **B 报告与 delivery 的接口**（V04-REL-B-PREP-02）：B 的 `runs/v04b-screen.json` 只有在 frozen.check 通过、走到完整分支时，才在顶层带 `model_sha256`；delivery 的 `report_weights` 直接读它。命令：
+
+  ```bash
+  uv run python scripts/release/delivery.py --config configs/v04-full-eval.yaml --extras configs/v04-extra-evidence.yaml \
+    --screen v04b --screen-report runs/v04b-screen.json --out release/v0.4/delivery_vs_v0.3.json
+  ```

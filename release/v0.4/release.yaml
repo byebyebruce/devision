@@ -25,6 +25,8 @@ datasets:
 - ryokamoi/VisOnlyQA_Train
 - RyanWW/Super-CLEVR
 - allenai/pixmo-count
+# min_package_version: set when a 512-input candidate is locked (the inference package that reads it, e.g. 0.3.0;
+# devision 0.2.1 ignores interpolate_pos_encoding). The card then installs "devision>=X" on HF and ModelScope.
 cpu_latency: release/v0.4/cpu_latency.json
 modelscope_repo: baibaibai000/devision
 evidence:
