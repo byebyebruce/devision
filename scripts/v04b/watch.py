@@ -49,7 +49,7 @@ def decide(windows: dict, mps: dict, ram: dict, since_last: float, limits=LIMITS
     return ""
 
 
-def main(argv=None, limits=LIMITS, poll: float = 30.0, slow: float = 6.0) -> int:
+def main(argv=None, limits=LIMITS, poll: float = 30.0, slow: float = 6.0, val_windows=VAL_WINDOWS) -> int:
     argv = sys.argv[1:] if argv is None else argv
     stage_dir, log = argv[0], argv[1]
     cmd = argv[argv.index("--") + 1:]
@@ -82,7 +82,7 @@ def main(argv=None, limits=LIMITS, poll: float = 30.0, slow: float = 6.0) -> int
                     out.write("%s windows %s\n" % (time.strftime("%T"), {k: round(v, 2) for k, v in sorted(win.items())[-3:]}))
                     out.flush()
             if not why:
-                why = decide(win, mps, ram, time.time() - last_change, limits=limits, slow=slow)
+                why = decide(win, mps, ram, time.time() - last_change, limits=limits, slow=slow, val_windows=val_windows)
             if why:
                 out.write("%s stop: %s (unreadable cache reads %d)\n" % (time.strftime("%T"), why, unreadable))
                 out.flush()

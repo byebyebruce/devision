@@ -90,6 +90,9 @@ class TrainConfig:
     # tower's top N encoder layers and its final layer norm, at lr_vision; 0: the tower stays frozen
     vision_unfreeze_top: int = 0
     lr_vision: float = 5e-6
+    # exp42 (docs/experiments/2026-10-18-exp42-objective-plan.md): "rlcd" = the RLCD policy term + gold CE (every run
+    # before it); "ce" = gold CE only. The RLCD noise is drawn either way, so both use the same random stream.
+    objective: str = "rlcd"
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -243,9 +246,13 @@ def _forward(model, batch, pixels, device, return_hidden: bool = False):
                  visual=visual, patches=patches, return_hidden=return_hidden)
 
 
-def _rlcd_loss(logits, mask, target, qtype, sigma, group_size):
+def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = "rlcd"):
+    """(loss, gold CE). objective "ce": the gold CE alone, after drawing the same RLCD noise (same random stream)."""
     k = mask.sum(-1, keepdim=True).float()
     eps = torch.randn((group_size,) + logits.shape, device=logits.device) * sigma * mask
+    if objective == "ce":
+        ce = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
+        return ce, ce
     eps = (eps - eps.sum(-1, keepdim=True) / k) * mask
     z = logits.detach().unsqueeze(0) + eps
     q = torch.softmax(z.masked_fill(~mask, -1e4), -1)
@@ -449,7 +456,7 @@ RESUME = "resume.pt"
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
-                "distill_blocks", "vision_unfreeze_top", "lr_vision")
+                "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -497,6 +504,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     c = config or TrainConfig()
     device = _device(c.device)
     distill_blocks = {b for b in c.distill_blocks.split(",") if b}
+    if c.objective not in ("rlcd", "ce"):
+        raise ValueError("objective must be rlcd or ce, got %r" % c.objective)
     if c.start_check and not (c.monitor_details and out_dir):
         raise ValueError("start_check compares step-0 records: it needs monitor_details and an out directory")
     teacher = None
@@ -653,7 +662,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     logits = _forward(model, batch, pixels, device)
                 logits = logits.float()
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
-                              batch["qtype"].to(device), sigma, c.group_size)
+                              batch["qtype"].to(device), sigma, c.group_size, c.objective)
             ground = None
             if grounded:
                 idx = torch.tensor(grounded, device=device)
@@ -745,4 +754,4 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             "temperature": temperature, "temperature_by_options": by_options,
             "calibration": {"per_type": bucket_metrics(set_logits["val"], calib, temperature),
                             "by_options": bucket_metrics(set_logits["val"], calib, temperature, by_options)},
-            "train_items": len(train_items), "calib_items": len(calib)}
+            "train_items": len(train_items), "calib_items": len(calib), "objective": c.objective}

@@ -1,0 +1,31 @@
+# exp42 arm R (docs/experiments/2026-10-18-exp42-objective-plan.md; critic EXP42-PREP-01): objective rlcd.
+# From exp40-M's frozen end (3fb4232e... / 74e32e7c...); data/exp42/train.jsonl (144 real-layout reading units x 8
+# questions, 4 repeats = 4,608 presentations, 576 updates of 8). Everything but the objective is the same in both
+# arms and as exp40's settings; no in-training extra sets (the readout is devision-eval at temperature 1 after
+# training); the in-training val / temperature fit on data/exp42/val_sub.jsonl.
+name: exp42-r
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp40-m/stage2
+  data: data/exp42/train.jsonl
+  val: data/exp42/val_sub.jsonl
+  params:
+    epochs: 1
+    objective: rlcd
+    micro_batch: 8
+    eval_batch: 8
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 500
+    amp: 'off'
+    seed: 1
+    monitor_details: true
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06
