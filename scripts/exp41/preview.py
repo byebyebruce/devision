@@ -1,5 +1,5 @@
 """exp41 preview (critic EXP41-PREP-01): 12 groups, each one (view, object) as the model gets it (256 letterbox):
-original | keep | zoom | other, with the asked questions' golds. Fixed rule, per form, in the build's hash order
+original | keep_text | keep_object | zoom | other (force: keep_object is the keep picture itself), with the asked questions' golds. Fixed rule, per form, in the build's hash order
 of families: F1 = the first family whose two objects differ in some reading value (in either view), F2 = the first such family with
 the non-default layout (temperature: Sample A on the right; force: Pair 1 on the right); groups F1 v0 both objects,
 F1 v1 first object (its value twin), F2 v0 both objects, F2 v1 first object. runs/exp41-preview/sheet.png, notes.json.
@@ -53,20 +53,20 @@ def main(argv=None):
             groups += [(f, "v0", objs[0]), (f, "v0", objs[1]), (f, "v1", objs[0])]
     os.makedirs(a.out, exist_ok=True)
     tile, pad, text_h = 256, 8, 40
-    sheet = Image.new("RGB", (4 * (tile + pad), len(groups) * (tile + text_h + pad)), "white")
+    sheet = Image.new("RGB", (5 * (tile + pad), len(groups) * (tile + text_h + pad)), "white")
     d = ImageDraw.Draw(sheet)
     notes = []
     for i, (f, v, o) in enumerate(groups):
         y = i * (tile + text_h + pad)
         c = by[(f, v, o)]
         orig = tune[c["keep"]["orig_id"]]["image"]
-        for k, img in enumerate([orig] + [c[x]["image"] for x in ("keep", "zoom", "other")]):
+        for k, img in enumerate([orig] + [c.get(x, c["keep"])["image"] for x in ("keep", "keep_object", "zoom", "other")]):
             sheet.paste(letterbox(Image.open(os.path.join(a.root, img)).convert("RGB"), tile), (k * (tile + pad), y))
         g = {c["keep"]["questions"][q]["instructions"]: gold(c["keep"], q) for q in c["keep"]["questions"]}
-        notes.append({"family": f, "view": v, "object": o, "original": orig, **{x: c[x]["image"] for x in ("keep", "zoom", "other")},
-                      "golds": g, "ink_256": {x: pics["%s_%s_%s_%s" % (f, v, o.replace(" ", ""), x)]["digit_ink_256"] for x in ("keep", "zoom", "other")}})
+        notes.append({"family": f, "view": v, "object": o, "original": orig, **{x: c.get(x, c["keep"])["image"] for x in ("keep", "keep_object", "zoom", "other")},
+                      "golds": g, "ink_256": {x: pics["%s_%s_%s_%s" % (f, v, o.replace(" ", ""), x)]["digit_ink_256"] for x in c}})
         d.text((0, y + tile + 4), "%s %s asked: %s | %s" % (f, v, o, "; ".join("%s -> %s" % (q[9:45], ans) for q, ans in g.items()))[:150], fill="black")
-        d.text((0, y + tile + 18), "original | keep | zoom | other (control)", fill="grey")
+        d.text((0, y + tile + 18), "original | keep_text | keep_object%s | zoom | other (control)" % ("" if "keep_object" in c else " (= keep)"), fill="grey")
     sheet.save(os.path.join(a.out, "sheet.png"))
     json.dump(notes, open(os.path.join(a.out, "notes.json"), "w"), indent=1)
     print("%d groups: %s" % (len(groups), groups))

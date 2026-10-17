@@ -48,7 +48,10 @@ _spec.loader.exec_module(_b40)
 field_of, object_of = _b40.field_of, _b40.object_of
 
 PAD = 6
-CONDITIONS = ("keep", "zoom", "other")
+CONDITIONS = ("keep", "keep_object", "zoom", "other")
+# keep is "keep_text" in the plan; keep_object (critic EXP41-R1-01) is drawn for temperature only -- on force the
+# keep picture already holds the whole pair, so the readout uses it as keep_object too (no second identical input)
+FORM_CONDITIONS = {"temp": CONDITIONS, "force": ("keep", "zoom", "other")}
 
 
 def sha(path: str) -> str:
@@ -60,8 +63,9 @@ def digit_ink(size: int) -> int:
     return int(b[3] - b[1])
 
 
-def temp_regions(s: Dict) -> Tuple[Dict[str, List[int]], int]:
-    """Per object name: the text block box (label + both rows), as temp_render places them; and the text size."""
+def temp_regions(s: Dict) -> Tuple[Dict[str, List[int]], int, Dict[str, List[int]]]:
+    """Per object name: the text block box (label + both rows), as temp_render places them; the text size; and the
+    object's whole half of the canvas (where temp_render draws its jar, particles and text: a_left decides the side)."""
     w = s["width"]
     probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     size = s["font"]
@@ -70,7 +74,7 @@ def temp_regions(s: Dict) -> Tuple[Dict[str, List[int]], int]:
         size -= 1
     line = int(size * s["spacing"])
     font, bold = ImageFont.truetype(rl.FONT, size), ImageFont.truetype(rl.BOLD, size)
-    out = {}
+    out, halves = {}, {}
     for k, name in enumerate(("A", "B") if s.get("a_left", True) else ("B", "A")):
         cx = w // 4 + k * (w // 2)
         top = 315 + line // 2
@@ -78,14 +82,17 @@ def temp_regions(s: Dict) -> Tuple[Dict[str, List[int]], int]:
         rows = [mass_line % s[name]["mass"], speed_line % rl.fmt(s[name]["speed"])]
         boxes = [probe.textbbox((cx, top), "Sample " + name, font=bold, anchor="mm")]
         boxes += [probe.textbbox((cx, top + (j + 1) * line), t, font=font, anchor="mm") for j, t in enumerate(rows)]
+        halves["sample " + name] = [0 if k == 0 else w // 2, 0, w // 2 if k == 0 else w, 10 ** 6]
         out["sample " + name] = [int(min(b[0] for b in boxes)) - PAD, int(min(b[1] for b in boxes)) - PAD,
                                  int(max(b[2] for b in boxes)) + PAD, int(max(b[3] for b in boxes)) + PAD]
-    return out, size
+    for o in out:     # the text block lies inside its own half
+        assert halves[o][0] <= out[o][0] + PAD and out[o][2] - PAD <= halves[o][2], (o, out[o], halves[o])
+    return out, size, halves
 
 
-def force_regions(s: Dict) -> Tuple[Dict[str, List[int]], int]:
+def force_regions(s: Dict) -> Tuple[Dict[str, List[int]], int, Dict[str, List[int]]]:
     g = rl.force_geometry(s)
-    return {"Pair %d" % (p + 1): [q["box"] - 4, 0, q["box"] + g["pw"] + 4, g["h"]] for p, q in enumerate(g["pairs"])}, s["font"]
+    return {"Pair %d" % (p + 1): [q["box"] - 4, 0, q["box"] + g["pw"] + 4, g["h"]] for p, q in enumerate(g["pairs"])}, s["font"], {}
 
 
 def scenes(root: str, fams: set) -> Dict[str, Tuple[str, Dict, Dict]]:
@@ -126,26 +133,29 @@ def build(root: str, per_form: int = 30) -> Dict:
         if redrawn.size != orig.size or not (np.asarray(redrawn) == np.asarray(orig)).all():
             problems.append("%s: re-drawn scene differs from the original PNG" % r["id"])
             continue
-        regions, size = (temp_regions if form == "temp" else force_regions)(scene)
+        regions, size, halves = (temp_regions if form == "temp" else force_regions)(scene)
         ink = digit_ink(size)
         reading = {qid: q for qid, q in r["questions"].items() if field_of(q["instructions"]) != "cmp"}
         clip = lambda b: [max(0, b[0]), max(0, b[1]), min(orig.width, b[2]), min(orig.height, b[3])]  # noqa: E731
         regions = {o: clip(b) for o, b in regions.items()}       # inside the picture (a padded box can reach -1)
+        halves = {o: clip(b) for o, b in halves.items()}
         for obj, box in regions.items():
             other = next(b for o, b in regions.items() if o != obj)
             qs = {qid: q for qid, q in reading.items() if object_of(q["instructions"]).lower() == obj.lower()}
             assert qs, (r["id"], obj)
-            for cond in CONDITIONS:
-                if cond == "keep":
+            for cond in FORM_CONDITIONS[form]:
+                if cond in ("keep", "keep_object"):     # original canvas: the text block / the whole half kept, the rest white
+                    kb = box if cond == "keep" else halves[obj]
                     img = Image.new("RGB", orig.size, "white")
-                    img.paste(orig.crop((box[0], box[1], box[2], box[3])), (box[0], box[1]))
+                    img.paste(orig.crop((kb[0], kb[1], kb[2], kb[3])), (kb[0], kb[1]))
                 else:
                     b = box if cond == "zoom" else other
                     img = orig.crop((b[0], b[1], b[2], b[3]))
                 tag = "%s_%s_%s_%s" % (r["family"], "v%d" % view, obj.replace(" ", ""), cond)
                 rel = "exp41/images/%s.png" % tag
                 img.save(os.path.join(root, rel))
-                pictures[tag] = {"box": box if cond != "other" else other, "covers": (
+                pictures[tag] = {"box": other if cond == "other" else halves[obj] if cond == "keep_object" else box, "covers": (
+                    "the object's whole half: jar, particles, label, both rows" if cond == "keep_object" else
                     "label 'Sample X', both field rows, numbers, units (jar outside)" if form == "temp" else
                     "label 'Pair N', magnets, distance bar, distance number and unit"),
                     "size": list(img.size), "digit_ink_256": round(ink * letterbox_scale(img.size), 1),
@@ -159,7 +169,7 @@ def build(root: str, per_form: int = 30) -> Dict:
     with open(path, "w") as fh:
         for x in rows:
             fh.write(json.dumps(x) + "\n")
-    ink = {(c, f): [p["digit_ink_256"] for t, p in pictures.items() if t.endswith(c) and sc[t[:7]][0] == f] for c in CONDITIONS for f in ("temp", "force")}
+    ink = {(c, f): [p["digit_ink_256"] for t, p in pictures.items() if t.endswith("_" + c) and sc[t[:7]][0] == f] for c in CONDITIONS for f in ("temp", "force")}
     m = {"families": sorted(chosen), "per_form": dict(Counter(sc[f][0] for f in chosen)), "problems": problems,
          "rows": len(rows), "questions": sum(len(x["questions"]) for x in rows),
          "questions_by_condition": {c: sum(len(x["questions"]) for x in rows if x["condition"] == c) for c in CONDITIONS},

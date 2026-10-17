@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # exp41 oracle region diagnosis (docs/experiments/2026-10-18-exp41-region-plan.md; critic EXP41-PREP-01). Only after
 # the exp40 chain has ended AND the critic's separate permission: exp40-M's frozen endpoint on data/exp41/questions.jsonl
-# (1,080 questions, 720 pictures), capped at 15 minutes (TERM, KILL 15 s later), then scripts/exp41/report.py.
+# (1,320 questions, 840 pictures), capped at 15 minutes (TERM, KILL 15 s later), then scripts/exp41/report.py.
 # One run, no retry, nothing else started.
 #   nohup bash scripts/exp41/run.sh > runs/exp41.out 2>&1 &
 set -u
