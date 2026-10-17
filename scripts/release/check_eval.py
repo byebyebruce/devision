@@ -20,8 +20,9 @@ order), the picture of the data file (mismatched: another picture), finite proba
 summing to 1, the arg-max as prediction and `correct` matching the gold; the summary's n and accuracy equal the
 details'. A question id that a data file holds more than once (data/r13b/val.jsonl: 242 ids twice, with different
 options) is matched copy by copy on its options, so every copy must be there once. The mismatched control must show
-exactly the picture evaluate.picture_pairs(samples, seed) assigns (seed recorded in the summary, 0 expected), and
-every probability lies in [0, 1]. `--legacy` (historical results without an identity, e.g. v0.3's) runs the
+exactly the picture evaluate.picture_pairs(samples, seed) assigns (seed recorded in the summary, 0 expected),
+every record carries the data file's image_id (the picture identity later statistics cluster on; a pre-built
+mismatched file is checked against its own rows), and every probability lies in [0, 1]. `--legacy` (historical results without an identity, e.g. v0.3's) runs the
 content checks only and says that identity is not proven.
 
 `--extras <yaml>` adds outputs outside the evaluation YAML to the same frozen identity (critic V04-REL-R2-04): a
@@ -199,6 +200,7 @@ def content(o: Output, checkpoint: str, temperature: Optional[Dict], cache: Dict
             "gold": r.get("gold") == q["gold"],
             "options": r.get("options") == options,
             "picture": "image_used" in r and r["image_used"] == picture and (control != "mismatched" or picture != q["image"]),
+            "image_id": r.get("image_id") == q["image_id"],     # the data file's picture identity (critic V04-REL-R3-01)
             "probabilities": set(p) == set(q["options"]) and len(vals) > 0
             and all(isinstance(v, (int, float)) and math.isfinite(v) and 0.0 <= v <= 1.0 for v in vals)
             and abs(sum(vals) - 1) < 1e-3,

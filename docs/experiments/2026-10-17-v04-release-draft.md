@@ -48,15 +48,17 @@
     - calibration.py / delivery.py 只读通过 check 的输出，按名字取。
   - 完整命令：
     ```bash
-    E="--extras configs/v04-extra-evidence.yaml"; C=configs/v04-full-eval.yaml
-    uv run python scripts/release/check_eval.py freeze $E $C
-    uv run python scripts/release/check_eval.py preflight --quarantine $E $C
-    uv run devision-pipeline $C
-    uv run python scripts/release/check_eval.py run-extras $E $C
-    uv run python scripts/release/check_eval.py seal $E $C
-    uv run python scripts/release/check_eval.py check $E $C
+    # 在 bash 里执行（zsh 直接粘贴时 $E 不会拆成两个参数）
+    bash -c 'C=configs/v04-full-eval.yaml; X=configs/v04-extra-evidence.yaml
+      uv run python scripts/release/check_eval.py freeze --extras $X $C &&
+      uv run python scripts/release/check_eval.py preflight --quarantine --extras $X $C &&
+      uv run devision-pipeline $C &&
+      uv run python scripts/release/check_eval.py run-extras --extras $X $C &&
+      uv run python scripts/release/check_eval.py seal --extras $X $C &&
+      uv run python scripts/release/check_eval.py check --extras $X $C'
     ```
-- 内容检查（每个输出）：
+    freeze 只在候选训练完成、锁定之后执行，不提前。
+- 内容检查（每个输出；每条明细的 image_id 必须等于数据文件的 image_id，V04-REL-R3-01）：
   - 摘要的 run 字段：checkpoint、数据 sha256、fitted、对照类型、用途；摘要的温度表与冻结的相同。
   - 明细：每题恰好一次。数据里重复出现的题号（如 r13b/val 的 242 个）按选项逐份配对，每一份都要在（V04-REL-R2-03）；倒序对照只覆盖选择题；题型和 gold 与数据文件相同；选项与数据文件相同（倒序对照则顺序相反）；图片与数据文件相同；配错图对照必须正好是 `picture_pairs(samples, seed=0)` 指定的那张，且 seed 记录为 0（V04-REL-R2-02）；概率只覆盖这些选项、都是 [0, 1] 内的有限值、和为 1；prediction 是 argmax；correct 与 gold 一致。
   - 摘要的题数、准确率与明细一致。
@@ -75,36 +77,42 @@
 
 ## 3. 交付证据（`release/v0.4/delivery_vs_v0.3.json`，`scripts/release/delivery.py`）
 
-- **主目标**：直接取 exp32 report 的 transfer 读出（68 : 114，准确率区间和看图收益区间），以及 exp32 预写的结局标签。这个标签是 exp32 的候选筛查结论，不等于发布条件全部满足；不改 exp32 预先约定的主判定。
-- **新能力保留**（V04-REL-R1-04）：
-  - 同一候选的 dev16 读数和比较：点估计、按族重采样的区间，各自按原规则判定（通过 = 点估计 ≥ 0.80 且下界 ≥ 0.75；失败 = 点估计 < 0.60 且上界 < 0.65）。复用 exp32 chain 的 dev16 明细，但它要按第 2 节的规则重评、seal。
-  - 擦除控制：候选锁定后在 `data/exp21/dev_syn_erased.jsonl` 上短测一次（约 1 分钟）。有效条件是读数 < 0.50 且比较 < 0.55；无效时 dev16 的判定作废。
-- **保护**：7 个面板的区间和预写代价。
-- **身份**：IDENTITY.json 里 model.safetensors / config.json 的哈希。
-- 夹具（`tests/release/test_release_evidence.py`）：擦除控制有效时 dev16 正常判定，无效时判定作废。
+delivery.py 只读通过 check 的输出（`check_eval.verified`），全部从已 seal 的同题明细重算；不直接取 exp32 chain 在 freeze 之前评的记录（V04-REL-R2-04）。
 
-## 3b. 新冻结确认集（V04-REL-R1-05；数据准备中，模型在候选锁定后才评）
+- **主目标**：用候选已 seal 的 `extra_sqa_{temp,force}{,_mism}` 和 v0.3 的 exp27 记录（只做内容检查，历史身份），按 exp21 的 readout.transfer 重算 68 : 114 准确率变化和看图收益变化及区间。
+  - exp32 预写的结局标签照录，同时给出 `exp32_report_matches`（重算值与 exp32 report 是否一致）。
+  - 这个标签是 exp32 的候选筛查结论，不等于发布条件全部满足；不改 exp32 预先约定的主判定。
+- **新能力保留**（V04-REL-R1-04）：
+  - 同一候选已 seal 的 `extra_dev16`：读数和比较的点估计、按族重采样的区间，各自按原规则判定（通过 = 点估计 ≥ 0.80 且下界 ≥ 0.75；失败 = 点估计 < 0.60 且上界 < 0.65）。
+  - `extra_syn_erased`：擦除控制，有效条件是读数 < 0.50 且比较 < 0.55；无效时 dev16 的判定作废。
+- **保护**：29 集里已 seal 的 7 个面板，对 v0.3 的区间和预写代价。
+- **身份**：IDENTITY.json 里 model.safetensors / config.json 的哈希。
+- 夹具（`tests/release/test_release_evidence.py`）：擦除控制有效时 dev16 正常判定，无效时作废；transfer 重算后与 exp32 的值做比对。
+
+## 3b. 新冻结确认集（V04-REL-R1-05、V04-CONF-01 / 02；模型在候选锁定后才评，只评一次）
 
 - 不用 rl_confirm 加历史 bench 来充当：
   - rl_confirm 保留为"同一生成器、未见过的数值 / 大小组合"的证据；
-  - `bench_lv_scienceqa` 的分项曾用来选研发方向（exp21 方案），对本候选在配置里明确标为 monitoring，历史报告不回写。
-- 来源：本地 ScienceQA 官方 test parquet（snapshot `f18b0a70…`），按评论家指定的四个原始 skill 全收，只做隔离剔除，不按模型输出筛题，也不为凑数补入已用过的图：
-  - 图表读数：Use climate data to make predictions；
-  - 图解属性：Read graphic organizers；
-  - 物体属性：Compare properties of objects、Identify properties of an object。
-- 隔离、数量、哈希：见 `data/v04_confirm/MANIFEST.json` 和 `EXCLUSIONS.json`（生成器 `scripts/data/v04_confirm.py`），实际数字写在 critic 回复里。
-- 固定的配错图对照：在各分项内按图做固定置换（seed 0），两个模型共用（`confirm_mism.jsonl`）。
-- 评测（候选锁定后只评一次，两个模型加对照合计 ≤ 5 分钟）：
-  - 三个分项分别报告 v0.3 与候选的准确率、真图 − 固定错图的收益、候选 − v0.3 的差值，以及按图聚类的 95% 区间；
-  - 另报选项倒序的敏感度；
-  - 图解只有 2 张图，只作描述，不下结论。
-- 冻结（V04-CONF-01）：物体属性 75 题 / 75 图通过复核。confirm.jsonl `5e5c8e2d…`，confirm_mism.jsonl `d9e55e18…`。
-- 图表替代（V04-CONF-02）：ScienceQA test 的气候图都是 train / val 换色重绘，改用 ChartQA 官方仓库固定提交 `044eabfc…` 的 test_augmented，取直接读单个数值的题，改编成四选一，最多 80 题，正在准备（`scripts/data/v04_chartqa.py`，`data/v04_chartqa/`）。
-- 报告：`scripts/release/confirm_report.py`（测试 `tests/release/test_confirm_report.py`）。
-  - 物体属性、图表分项分别报告；
-  - 区间按原图做 bootstrap。错图文件里的 image_id 是展示的那张图，所以分组按 sample_id 从真图数据文件恢复原图；
-  - 输出各模型的准确率、看图收益（真图 − 固定错图）及其变化、候选 − v0.3 差值、选项倒序时选择改变的比例。
-  - 候选的输入先过 check。
+  - `bench_lv_scienceqa` 的分项曾用来选研发方向，对本候选标为 monitoring，历史报告不回写。
+- **物体属性**（已冻结，V04-CONF-01）：
+  - 来源：ScienceQA 官方 test（snapshot `f18b0a70…`）的 Compare properties of objects / Identify properties of an object。
+  - 隔离后剩 75 题 / 75 图。confirm.jsonl `5e5c8e2d…`，confirm_mism.jsonl `d9e55e18…`（分项内按图固定置换）。
+  - 原定的图表、图解两个分项，隔离后都是 0 题：气候图都是 train / val 换色重绘，图解是完全相同的图或 JevBench 用过的行。详见 `data/v04_confirm/MANIFEST.json`、`EXCLUSIONS.json`。
+- **图表读数**（准备中，V04-CONF-02）：
+  - 来源：ChartQA 官方仓库固定提交 `044eabfc…` 的 test_augmented，取直接读单个数值的题，改编成四选一，最多 80 题（`scripts/data/v04_chartqa.py`，`data/v04_chartqa/`）。
+  - 冻结、经评论家复核后，再加入 extras 清单。
+- **评测**：
+  - 候选：`configs/v04-extra-evidence.yaml` 里的 `confirm_property{,_mism,_rev}`，与 29 集同一个冻结身份。
+  - v0.3：`configs/v04-v03-confirm.yaml`（没有常规集合）加 `configs/v04-confirm-extras.yaml`，只评新确认项。它的 freeze / run-extras / seal / check 只覆盖这几项，不重跑 v0.3 的 29 集。
+  - 两个模型加对照合计 ≤ 10 分钟。
+- **报告**：`scripts/release/confirm_report.py`。
+  - 两个分项分别报告：准确率、看图收益（真图 − 固定错图）及其变化、候选 − v0.3 差值，以及选项倒序时选择改变的比例。
+  - 区间按原图 bootstrap：错图文件的 image_id 是展示的那张图，所以分组按 sample_id 从真图数据文件恢复原图。
+  - 输入文件带 `extra_` 前缀：
+    ```bash
+    uv run python scripts/release/confirm_report.py --data data/v04_confirm/confirm.jsonl --name extra_confirm_property \
+      --v03 runs/r15-vision/eval --cand <候选轮次>/eval --out release/v0.4/confirm_property.json
+    ```
 - 这项证据不替换 68 : 114 主指标，不增设事后的通过阈值，也不能单独证明通用 OCR。第一次的结果要保留；结果一旦用于下一轮开发，就失去盲测资格。
 
 ## 4. 概率质量（V04-REL-R1-03，`scripts/release/calibration.py`）

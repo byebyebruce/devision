@@ -48,7 +48,7 @@ def write_result(env, mutate=None, name="a", control="none", pictures=None, data
         gold = row["gold"]["q"]["probabilities"]
         right = max(gold, key=lambda k: gold[k])
         p = {o: (0.7 if o == right else 0.3 / (len(opts) - 1)) for o in shown}
-        recs.append({"sample_id": row["id"], "qid": "q", "type": "choice", "options": shown,
+        recs.append({"sample_id": row["id"], "qid": "q", "type": "choice", "options": shown, "image_id": row["image_id"],
                      "image_used": (pictures or {}).get(row["image_id"], row["image"]),
                      "gold": gold, "probabilities": p, "prediction": right, "correct": True})
     if mutate:
@@ -103,6 +103,8 @@ def test_result_from_before_the_freeze_is_quarantined(env):
     lambda rs: rs.pop(),                                                         # a question missing
     lambda rs: rs[0].pop("image_used"),                                          # no picture recorded
     lambda rs: rs[0]["probabilities"].update(red=-0.2, blue=1.2, green=0.0),     # sums to 1, out of range
+    lambda rs: rs[0].pop("image_id"),                                            # picture identity missing
+    lambda rs: rs[1].update(image_id="i0"),                                      # another picture's identity
 ])
 def test_wrong_content_is_refused(env, damage):
     run("freeze", env["conf"])

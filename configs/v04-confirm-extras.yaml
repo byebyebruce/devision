@@ -1,0 +1,5 @@
+# The new frozen confirmation items (critic V04-CONF-01 / 02), the same entries as in configs/v04-extra-evidence.yaml,
+# for v0.3 (configs/v04-v03-confirm.yaml). ChartQA entries are added when that input is frozen and reviewed.
+- {name: confirm_property, data: data/v04_confirm/confirm.jsonl, temperature: fitted, control: none, role: heldout}
+- {name: confirm_property_mism, data: data/v04_confirm/confirm_mism.jsonl, temperature: fitted, control: none, role: heldout}
+- {name: confirm_property_rev, data: data/v04_confirm/confirm.jsonl, temperature: fitted, control: reversed, role: heldout}
