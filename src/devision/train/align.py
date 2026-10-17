@@ -7,6 +7,13 @@ before saving), as vision-language encoders do when they align. Deciding straigh
 projector stalls at nll = ln2 (docs/experiments/2026-09-30-rlcd-plateau.md); this gives it a dense
 signal first.
 
+With `decision_data` (exp33, docs/experiments/2026-10-17-exp33-decision-protect-plan.md) every step also takes
+`decision_micro_batch` decision questions (samples.py decision format) and adds `decision_weight` times their gold
+cross-entropy over the options (raw logits through the frozen decision head, no RLCD noise) to the caption loss,
+before one backward / clip / optimizer step: the old decisions supervise the same projector / LoRA that alignment
+moves. Decision questions are drawn from their own seeded order, so the caption and mask random stream is the same
+as without them; with no decision data or weight 0 the step is exactly the caption-only one.
+
 The checkpoint is a normal devision checkpoint; `devision-train --init` continues from it.
 """
 import math
@@ -19,8 +26,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.models.modernbert.modeling_modernbert import ModernBertPredictionHead
 
-from .rlcd import _device, _Images
-from .samples import Sample
+from laya.common import collate_items
+
+from .rlcd import _device, _forward, _Images, _items
+from .samples import Sample, read_decision_jsonl
 from .tracking import Tracker, TrainLog
 from ..infer import Decider
 from ..model import text_encoder
@@ -44,6 +53,9 @@ class AlignConfig:
     log_every: int = 10
     swanlab_project: str = ""
     run_name: str = ""
+    decision_data: str = ""        # JSONL of decision samples supervised alongside the captions (exp33)
+    decision_weight: float = 1.0
+    decision_micro_batch: int = 8
 
 
 class _MLMHead(nn.Module):
@@ -128,6 +140,11 @@ def _evaluate(model, head, tok, samples, images, c: AlignConfig, device) -> Dict
     return out
 
 
+def _gold_ce(logits: torch.Tensor, mask: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Gold cross-entropy over each question's options (the CE term of rlcd._rlcd_loss), mean over questions."""
+    return -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
+
+
 def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
           config: Optional[AlignConfig] = None,
           val_samples: Optional[Sequence[Sample]] = None) -> Dict[str, Any]:
@@ -172,13 +189,27 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     train_samples = [s for s in samples if s["captions"]]
     val = [s for s in (val_samples or []) if s["captions"]]
     steps = c.epochs * max(1, len(train_samples) // c.batch)
+    decide = bool(c.decision_data) and c.decision_weight != 0
+    dec_items = _items(decider, read_decision_jsonl(c.decision_data)) if decide else []
+    dec_rng = random.Random(c.seed + 1)            # its own stream: the caption / mask draws stay unchanged
+    dec_order: List[int] = []
+
+    def decision_batch() -> List[Dict[str, Any]]:
+        out = []
+        while len(out) < c.decision_micro_batch:
+            if not dec_order:
+                dec_order.extend(dec_rng.sample(range(len(dec_items)), len(dec_items)))
+            out.append(dec_items[dec_order.pop()])
+        return out
+
     optimizer = torch.optim.AdamW([{"params": params, "lr": c.lr}]
                                   + ([{"params": lora_params, "lr": c.lr_lora}] if lora_params else []),
                                   weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
     tracker = Tracker(c.swanlab_project, c.run_name, {"align": asdict(c), "model": decider.cfg.to_dict(),
-                           "train_images": len(train_samples), "val_images": len(val), "steps": steps},
+                           "train_images": len(train_samples), "val_images": len(val), "steps": steps,
+                           "decision_items": len(dec_items)},
                       record_dir=str(out_dir or ""))
     losses: List[float] = []
     evals: List[Dict[str, float]] = []
@@ -202,15 +233,28 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                                     torch.stack([images(s["image"]) for s in chunk]), device)
             y = target[:, 1:].to(device)
             m = y != -100
-            loss = F.cross_entropy(logits[m], y[m])
+            loss = mlm = F.cross_entropy(logits[m], y[m])
+            extra: Dict[str, float] = {}
+            if decide:
+                chunk_d = decision_batch()
+                batch = collate_items([chunk_d], tok.pad_token_id)
+                assert batch is not None
+                d_logits = _forward(model, batch, torch.stack([images(it["image"]) for it in chunk_d]), device).float()
+                d_mask, d_target = batch["marker_mask"].to(device), batch["target"].to(device)
+                dec = _gold_ce(d_logits, d_mask, d_target)
+                loss = mlm + c.decision_weight * dec
+                extra = {"decision_ce": dec.item(), "decision_accuracy": (d_logits.masked_fill(~d_mask, -1e4).argmax(-1)
+                                                                         == d_target.argmax(-1)).float().mean().item()}
+            if decide and not math.isfinite(loss.item()):
+                raise RuntimeError("step %d: loss is %r: the device is returning invalid results" % (len(losses), loss.item()))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(params + lora_params, 1.0)
             optimizer.step()
             scheduler.step()
-            losses.append(loss.item())
+            losses.append(mlm.item())
             log.add(len(chunk), loss=losses[-1], accuracy=(logits[m].argmax(-1) == y[m]).float().mean().item(),
-                    grad_norm=grad_norm.item())
+                    grad_norm=grad_norm.item(), **extra)
             means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
                                                        **({"lora": optimizer.param_groups[1]["lr"]}
                                                           if lora_params else {})})

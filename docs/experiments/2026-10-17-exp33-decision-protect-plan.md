@@ -1,4 +1,4 @@
-# exp33 方案（草案）：在对齐阶段加入旧决策监督，挡住保护代价（未实现、未运行；等 exp32 结果再选）
+# exp33 方案（草案）：在对齐阶段加入旧决策监督，挡住保护代价（已实现、未运行；等 exp32 结果再选）
 
 日期：2026-10-17。依据：评论家 EXP30-RESULT-01 / EXP30-NEXT-01 第 5 项。exp30 在对齐阶段加了真实图文回放，比 exp24A 好 5–18 个点，但对 v0.3 仍有三项代价：science −4.85、count_wide −10.33、flip −5.83。exp32 会回答"B 阶段的 12,000 道旧决策回放能不能在完整候选上恢复"。只有当 exp32 有迁移收益、但仍有保护代价时，才用本方案；exp32 无代价，或没有迁移收益时，本方案不运行。
 
@@ -37,14 +37,22 @@
   - 其他 → "对齐阶段的直接决策监督没有挡住代价"。
 - 只报告：ScienceQA 温度 / 磁力 / 浓度开发题（这个 checkpoint 不评判迁移）。
 
-## 实施（未写）
+## 实施（已写、未运行；评论家 EXP33-DESIGN-01 准备放行，训练仍等 exp32 结果和实现复核）
 
-- `src/devision/train/align.py`：新增 `--decision-data`、`--decision-weight`、`--decision-micro-batch`。
-  - 决策题的序列构造复用 `question_item` / `image_tensor`（推理和训练共用，不另写一份），打分复用 Laya 决策头。
-  - w = 0 或不给 `--decision-data` 时，与现在的路径逐位相同，用测试核对（CPU、同种子）。
-- `configs/exp33-align-decide.yaml`：与 `configs/exp30-align-replay.yaml` 只差决策相关参数和 name。
-- `scripts/exp33/{chain.sh,report.py}` + 测试：报告复用 exp30 的读出，加一列对 exp30 的配对差。
-- tiny 模型端到端冒烟：对齐时加决策题能跑通、能存盘、能加载。
+- `src/devision/train/align.py`：AlignConfig 新增 `decision_data`、`decision_weight`（默认 1.0）、`decision_micro_batch`（默认 8），CLI 和 YAML 自动获得对应参数。
+  - 决策题用 rlcd 的 `_items`（`question_item` 构造，同一 gold / 选项 mask 语义）和 `collate_items`。
+  - 用 rlcd 的 `_forward` 前向：决策头冻结，但不在 no_grad 下，梯度能到投影层和 LoRA。
+  - 在原始 logits 上算 gold CE（与 `_rlcd_loss` 的 CE 项同一公式），与 MLM 相加后只做一次 backward / clip / optimizer.step。
+  - 决策题按自己的种子顺序抽（seed + 1），caption 采样和 mask 的随机流不变。
+  - 不给 decision_data、或 weight 为 0 时，与原来只有说明文字的路径完全相同。
+- `tests/train/test_align_decisions.py`（tiny 模型，CPU）：
+  - weight 0 与不给决策数据的运行逐步损失相同、保存的权重逐位相同；
+  - 加入决策题后：第一步的说明文字损失不变（同一批、同一 mask）；训练轨迹改变；投影层和 LoRA（合并进 ModernBERT）有变化；视觉塔和决策头与起点逐位相同；存盘、加载正常。
+- `scripts/exp33/build.py` → `data/exp33/decisions.jsonl`：从 r14b 按块比例抽 20,000 题（seed 33，最大余数法），sha256 `a67df880…`。各块：ext 5,130、count_balanced 2,931、pixmo 2,931、existence 2,443、general 2,442、science 1,924、count_original 1,466、mirror 489、vsr 244。
+- `configs/exp33-align-decide.yaml`：与 exp30 的 YAML 只差 name 和三个决策参数，dry-run 通过。
+- `scripts/exp33/chain.sh`：用 2 小时绝对截止（`runs/exp33.deadline`，重启沿用），对齐和每个评测都在 `capped` 下运行，到点终止整个进程树。
+- `scripts/exp33/report.py` + `test_exp33.py`：抽样比例和四种结局。
+- 注意（EXP33-DESIGN-01）：w = 1 是单次预定选择；两种损失按 token / 按题平均，不代表梯度量级相近，不据此扫参。
 
 ## 预算
 
