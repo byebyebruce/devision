@@ -1,11 +1,11 @@
-# DRAFT (2026-10-17): v0.4 is not locked. `round` / `stage` point at the provisional candidate (exp32's final
-# checkpoint) and change only when the critic and Engineer lock the candidate; cpu_latency and the evidence files
+# DRAFT (2026-10-17): v0.4 is not locked and has no candidate yet (exp32 and exp36 did not pass their screens;
+# critic V04-FALLBACK-01). `round` is a placeholder set when the critic and Engineer lock a candidate; cpu_latency and the evidence files
 # are produced after the lock (docs/experiments/2026-10-17-v04-release-draft.md). Do not build for publishing
 # before then.
 version: v0.4
 git_tag: model-v0.4
 model_name: devision-v0.4
-round: runs/exp32-fit
+round: runs/CANDIDATE
 stage: stage2
 hub_repo: lukbit/devision
 license: apache-2.0
@@ -30,7 +30,5 @@ modelscope_repo: baibaibai000/devision
 evidence:
   cpu_latency.json: release/v0.4/cpu_latency.json
   delivery_vs_v0.3.json: release/v0.4/delivery_vs_v0.3.json
-  training_align_replay.yaml: configs/exp30-align-replay.yaml
-  training_align_bridge.yaml: configs/exp32-align.yaml
-  training_decision.yaml: configs/exp32-fit.yaml
+  # the locked candidate's training configs are listed here when it is locked
   real_layout_manifest.json: data/real_layout/MANIFEST.json

@@ -9,6 +9,7 @@ shown and the condition. Read only (no update, no temperature, MLM head from the
         --data data/real_layout/captions_tune.jsonl --out runs/exp36-b/numbers_tune
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -23,7 +24,7 @@ exp35 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(exp35)
 
 
-def run(checkpoint: str, data: str, out_dir: str, device: str = "mps") -> dict:
+def run(checkpoint: str, data: str, out_dir: str, device: str = "mps", original: bool = True) -> dict:
     import torch
 
     from devision.infer import Decider
@@ -47,14 +48,15 @@ def run(checkpoint: str, data: str, out_dir: str, device: str = "mps") -> dict:
     kind_of = [p["wrong_picture"] for p in pairs]
     shown = [p["wrong_picture_id"] for p in pairs]
     os.makedirs(out_dir, exist_ok=True)
-    start = {"checkpoint": checkpoint, "data": data, "rows": len(samples),
+    start = {"checkpoint": checkpoint, "data": data, "rows": len(samples), "original_condition": original,
+             "pictures_sha256": hashlib.sha256("".join(exp35._sha(os.path.join("data", s["image"])) for s in samples).encode()).hexdigest(),
              "sha256": {"model.safetensors": exp35._sha(os.path.join(checkpoint, "model.safetensors")), "data": exp35._sha(data)},
              "head": exp35.head_identity(), "order_and_wrong_pictures": pairs}
     json.dump(start, open(os.path.join(out_dir, "START.json"), "w"), indent=1)   # before any forward
 
     # original random-mask evaluation (align._evaluate), token classes
-    orig = {}
-    for mode in ("real", "shuffled"):
+    orig: dict = {}
+    for mode in (("real", "shuffled") if original else ()):   # exp37 reads the full-number condition only
         rng = random.Random(1)
         acc = defaultdict(exp35.Acc)
         with torch.no_grad():
@@ -80,7 +82,7 @@ def run(checkpoint: str, data: str, out_dir: str, device: str = "mps") -> dict:
                             acc["number:" + spans[which[t]]["field"]].add(hit, nll)
                             acc["number@" + kind_of[b + i]].add(hit, nll)
         orig[mode] = {k: v.out() for k, v in sorted(acc.items())}
-    for k in orig["real"]:
+    for k in orig.get("real", {}):
         r, w = orig["real"][k]["accuracy"], orig["shuffled"].get(k, {}).get("accuracy")
         orig["real"][k]["real_minus_shuffled"] = (r - w) if r is not None and w is not None else None
 
@@ -135,11 +137,15 @@ def main(argv=None):
     ap.add_argument("--data", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--device", default="mps")
+    ap.add_argument("--full-numbers-only", action="store_true", help="skip the original random-mask condition (exp37)")
     a = ap.parse_args(argv)
-    r = run(a.checkpoint, a.data, a.out, a.device)
-    print("%s on %s: original real %.4f shuffled %.4f (numbers %.3f / %.3f); %d number records; %.0f s" % (
-        a.checkpoint, a.data, r["original"]["real"]["all"]["accuracy"], r["original"]["shuffled"]["all"]["accuracy"],
-        r["original"]["real"]["number"]["accuracy"], r["original"]["shuffled"]["number"]["accuracy"], r["records"], r["seconds"]))
+    r = run(a.checkpoint, a.data, a.out, a.device, original=not a.full_numbers_only)
+    if r["original"]:
+        print("%s on %s: original real %.4f shuffled %.4f (numbers %.3f / %.3f); %d number records; %.0f s" % (
+            a.checkpoint, a.data, r["original"]["real"]["all"]["accuracy"], r["original"]["shuffled"]["all"]["accuracy"],
+            r["original"]["real"]["number"]["accuracy"], r["original"]["shuffled"]["number"]["accuracy"], r["records"], r["seconds"]))
+    else:
+        print("%s on %s: %d number records; %.0f s" % (a.checkpoint, a.data, r["records"], r["seconds"]))
 
 
 if __name__ == "__main__":

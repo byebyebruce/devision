@@ -11,7 +11,7 @@ name: full
 stages: []
 
 evaluate:
-  checkpoint: runs/exp32-fit/stage2     # PROVISIONAL: the candidate is locked after exp32 / validation; change here only
+  checkpoint: runs/CANDIDATE/stage2     # NOT LOCKED (critic V04-FALLBACK-01): exp32 failed its screen; set to the locked candidate, update history, then freeze
   calibration_fit: data/r13b/val.jsonl
   history: [data/ext/dev_ext.jsonl, data/r13/gqa/dev_bind_gqa.jsonl, data/r13b/panel_exist.jsonl, data/r13b/panel_science.jsonl,
             data/r13b/count_wide.jsonl, data/v11/dev_count_transfer.jsonl, data/exp14/pixmo_count_wide.jsonl,

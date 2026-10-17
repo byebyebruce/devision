@@ -33,7 +33,7 @@ import json
 import os
 import random
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -353,15 +353,12 @@ def split_of(key: tuple, n: int, n_tune: int, n_confirm: int) -> str:
 SPLITS = ("train", "tune", "confirm")
 
 
-def build(root: str, n: int, n_tune: int, n_confirm: int, seed: int = 31) -> Dict:
-    """n / n_tune / n_confirm scene families (a scene and its value twin, both drawn), alternating temperature
-    and force; families never cross splits. Captions for the alignment stage (train / tune), questions for every
-    split; confirm is drawn once and never used to choose a recipe."""
-    out = os.path.join(root, "real_layout")
-    os.makedirs(os.path.join(out, "images"), exist_ok=True)
+def families(n: int, n_tune: int, n_confirm: int, seed: int = 31, stats: Optional[Dict] = None):
+    """The scene families of `build`, in order: (number, split, form, scene, twin). The same seeded draws, split
+    rules and skips as the drawn data, without drawing anything (exp37 re-renders the same scenes). `stats`
+    receives the case owners, the per-split counts and the skip counts at the end."""
     rng = random.Random(seed)
     banned = transcribed_keys()
-    files: Dict[str, List[Dict]] = {"%s_%s" % (kind, sp): [] for kind in ("captions", "questions") for sp in SPLITS}
     want = {"train": n, "tune": n_tune, "confirm": n_confirm}
     have = {(sp, f): 0 for sp in SPLITS for f in ("temp", "force")}
     owner: Dict[tuple, str] = {}                              # case -> split
@@ -387,6 +384,21 @@ def build(root: str, n: int, n_tune: int, n_confirm: int, seed: int = 31) -> Dic
         for k in keys:
             owner[k] = split
         have[(split, form)] += 1
+        yield i, split, form, s, twin
+        i += 1
+    if stats is not None:
+        stats.update(owner=owner, have=have, skipped=skipped)
+
+
+def build(root: str, n: int, n_tune: int, n_confirm: int, seed: int = 31) -> Dict:
+    """n / n_tune / n_confirm scene families (a scene and its value twin, both drawn), alternating temperature
+    and force; families never cross splits. Captions for the alignment stage (train / tune), questions for every
+    split; confirm is drawn once and never used to choose a recipe."""
+    out = os.path.join(root, "real_layout")
+    os.makedirs(os.path.join(out, "images"), exist_ok=True)
+    files: Dict[str, List[Dict]] = {"%s_%s" % (kind, sp): [] for kind in ("captions", "questions") for sp in SPLITS}
+    stats: Dict = {}
+    for i, split, form, s, twin in families(n, n_tune, n_confirm, seed, stats):
         fam = "rl%05d" % i
         views = [s, twin]
         for v, scene in enumerate(views):
@@ -404,7 +416,7 @@ def build(root: str, n: int, n_tune: int, n_confirm: int, seed: int = 31) -> Dic
                 "questions": {"q%d" % j: {"type": "choice", "instructions": it["q"], "criteria": {o: None for o in it["options"]}}
                               for j, it in enumerate(items)},
                 "gold": {"q%d" % j: {"probabilities": {o: float(o == it["gold"]) for o in it["options"]}} for j, it in enumerate(items)}})
-        i += 1
+    owner, have, skipped = stats["owner"], stats["have"], stats["skipped"]
     cases = {sp: {f: sorted({repr(k) for k, o in owner.items() if o == sp and k[0] == f}) for f in ("temp", "force")} for sp in SPLITS}
     manifest: Dict = {"seed": seed, "families": {"%s_%s" % k: v for k, v in have.items()}, "skipped": skipped,
                       "cases": {sp: {f: len(v) for f, v in c.items()} for sp, c in cases.items()},

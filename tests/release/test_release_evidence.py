@@ -45,10 +45,11 @@ def test_delivery(erased_right, expect):
     cand, v03 = records(d, True), records(d, False)
     cand["dev16"] = syn_records(lambda f, v, h, q: True, heights=(16,))
     cand["syn_erased"] = syn_records(erased_right, heights=(0,), suffix=":erased")
-    exp32 = {"outcome": "x", "transfer": {"accuracy_change": {"value": 0.0}, "gain_change": {"value": 0.0}}}
-    out = d.build(cand, v03, IDENT, exp32)
+    report = {"outcome": "x", "transfer": {"accuracy_change": {"value": 0.0}, "gain_change": {"value": 0.0}}}
+    out = d.build(cand, v03, IDENT, d.screening(IDENT, "expN", report, "ab"))
     assert out["dev16"]["read_class"] == expect and out["dev16"]["cmp_class"] == expect
-    assert out["primary"]["target_met"] and not out["primary"]["exp32_report_matches"] and out["protection"]["costs"] == []
+    assert out["primary"]["target_met"] and not out["primary"]["screening_report_matches"] and out["protection"]["costs"] == []
+    assert out["primary"]["screening"]["outcome"] == "x"
     assert out["identity"]["model.safetensors"] == "ab"
 
 
@@ -64,3 +65,17 @@ def test_calibration_keeps_repeated_ids():
         c.compare(recs(0.9), recs(0.6)[:-1])
     with pytest.raises(SystemExit):
         c.compare(recs(0.9), recs(0.6, ("a", "c", "b")))
+
+
+def test_screening_labels_are_bound_to_their_weights():
+    """Two candidates cannot borrow each other's screening label: the label is carried only when the report's
+    weights are the frozen candidate's."""
+    d = load("delivery")
+    first = {"files": {"model.safetensors": "aaa"}}
+    second = {"files": {"model.safetensors": "bbb"}}
+    report = {"outcome": "delivery target met", "transfer": None}
+    assert d.screening(first, "expA", report, "aaa")["outcome"] == "delivery target met"
+    borrowed = d.screening(second, "expA", report, "aaa")
+    assert borrowed["outcome"] is None and borrowed["status"].startswith("unverifiable")
+    assert d.screening(second, "expB", report, "")["status"].startswith("unverifiable")
+    assert d.screening(second, "expB", None, "bbb")["status"] == "no screening report"
