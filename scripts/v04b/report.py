@@ -11,7 +11,9 @@ status file. REQUIRED, each completed or the outcome is "incomplete":
     both twin views right where the gold moves (exp32's readouts), against v0.3's exp32 records.
 The screen passes only when the transfer target is met, no protection cost, the erased control is valid and dev16
 reading and comparison both pass. Report only: exp31 by level with the predicted equal / Pair 1 / Pair 2 shares,
-exp34 semantics tune. Bound to the final weights (model / config sha256) and the start (exp39-H) given to the chain.
+exp34 semantics tune. Bound to the final weights (model / config sha256) and the start (exp39-H) given to the chain; the top-level
+"model_sha256" that release/delivery.py reads is set only on the complete branch, after the frozen identity and every
+required file were checked -- an incomplete or unverified report carries none.
 
     uv run python scripts/v04b/report.py runs/v04b-fit <start model sha256>
 """
@@ -107,6 +109,8 @@ def build(run: str, start_sha: str, status_path: str = "") -> dict:
         out["outcome"] = "incomplete: %s" % ", ".join((["train"] if st.get("train") != "completed" else []) + missing)
         return out
     frozen.check(run, list(REQUIRED))        # weights, config (temperatures) and every required file as frozen / recorded
+    # the identity release/delivery.py reads (report_weights): only after the frozen check (critic V04-REL-B-PREP-02)
+    out["model_sha256"] = fr["weights"]["model.safetensors"]
     for n in REQUIRED:
         run_info = json.load(open(os.path.join(ev, n + ".json")))["run"]
         if run_info.get("checkpoint") != ckpt or run_info.get("temperature") != "fitted":

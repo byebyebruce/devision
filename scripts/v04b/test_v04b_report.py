@@ -111,3 +111,40 @@ def test_no_run_directory_still_writes_incomplete(tmp_path):
     finally:
         os.chdir(cwd)
     assert written["outcome"].startswith("incomplete") and not os.path.exists(os.path.join(tmp_path, "runs", "v04b-fit"))
+
+
+def test_delivery_reads_the_screen_identity(tmp_path, monkeypatch):
+    """release/delivery.report_weights on the written screen: a checked complete screen gives its frozen weights, so
+    it labels that candidate only; an incomplete screen gives no identity."""
+    spec = importlib.util.spec_from_file_location("delivery", os.path.join(HERE, "..", "release", "delivery.py"))
+    assert spec is not None and spec.loader is not None
+    d = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(d)
+    run, st = setup(tmp_path, all_done())
+    write_evals(run, os.path.join(run, "stage2"))
+    fz.freeze(run)
+    for n in r.REQUIRED:
+        fz.record(run, n)
+    real_check = fz.check
+    stub = {"transfer": {"accuracy_change": {"value": 0.0, "ci95": [0, 0]}, "gain_change": {"value": 0, "ci95": [0, 0]}}}
+    monkeypatch.setattr(r, "transfer", lambda a, b: stub["transfer"])                  # statistics are not the point here
+    monkeypatch.setattr(r, "recs", lambda d_, n: [])
+    monkeypatch.setattr(r, "paired_metric", lambda *a, **k: {"difference": 0.0, "ci95": [-0.01, 0.01]})
+    monkeypatch.setattr(r, "syn_index", lambda rs: {})
+    monkeypatch.setattr(r, "syn_stat", lambda *a, **k: {"value": 0.9, "ci95": [0.85, 0.95]})
+    monkeypatch.setattr(r, "binding", lambda rs, p: {})
+    monkeypatch.setattr(r.r32, "by_family", lambda rs: rs)
+    out = r.build(run, "abc", st)
+    assert fz.check is real_check and out["model_sha256"] == out["identity"]["model.safetensors"]
+    screen = tmp_path / "screen.json"
+    screen.write_text(json.dumps(out, default=str))
+    w, src = d.report_weights(str(screen), None)
+    assert w == out["identity"]["model.safetensors"] and src == "the report itself"
+    own = {"files": {"model.safetensors": w}}
+    other = {"files": {"model.safetensors": "another candidate"}}
+    assert d.screening(own, "v04b", out, w, src)["status"].startswith("bound")
+    assert d.screening(other, "v04b", out, w, src)["status"].startswith("unverifiable")     # cannot borrow the label
+    run2, st2 = setup(tmp_path / "b", [("train", "failed")])
+    inc = r.build(run2, "abc", st2)
+    screen.write_text(json.dumps(inc, default=str))
+    assert "model_sha256" not in inc and d.report_weights(str(screen), None)[0] is None

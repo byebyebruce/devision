@@ -252,11 +252,19 @@ def front_matter(cfg: Dict[str, Any], res: Dict[str, Any]) -> str:
     return "---\n" + yaml.safe_dump(meta, sort_keys=False, allow_unicode=True) + "---"
 
 
+def package_spec(cfg: Dict[str, Any]) -> str:
+    """What the card's install line asks for: plain `devision`, or `"devision>=X"` when the release needs a newer
+    inference package than earlier models (release.yaml `min_package_version`; e.g. a 512-input model needs the
+    interpolated position embeddings that devision 0.2.1 does not have)."""
+    v = cfg.get("min_package_version")
+    return '"devision>=%s"' % v if v else "devision"
+
+
 def card(release_dir: str, cfg: Dict[str, Any], res: Dict[str, Any], config: Dict[str, Any], weights_bytes: int) -> str:
     text = open(os.path.join(ROOT, "release", "card_template.md")).read()
     n = notes(release_dir)
     size, shuffle = config.get("image_size", 256), config.get("visual_shuffle", 2)
-    fill = {"front_matter": front_matter(cfg, res), "version": cfg["version"],
+    fill = {"front_matter": front_matter(cfg, res), "version": cfg["version"], "package": package_spec(cfg),
             "git_tag": cfg["git_tag"], "hub_repo": cfg["hub_repo"], "image_size": str(size), "shuffle": str(shuffle),
             "visual_tokens": str((size // 16 // shuffle) ** 2), "weights_gb": "%.2f" % (weights_bytes / 1e9),
             "training": n.get("training", ""), "limitations": n.get("limitations", ""),

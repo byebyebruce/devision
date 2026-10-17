@@ -9,7 +9,7 @@
 ## Usage
 
 ```bash
-pip install devision
+pip install {{package}}
 ```
 
 ```python
