@@ -76,7 +76,13 @@ def run(checkpoint: str, data: str, out_dir: str, device: str = "mps") -> dict:
                         hit, nll = int(logits[i, t].argmax()) == int(y[i, t]), -float(logp[i, t, y[i, t]])
                         acc["all"].add(hit, nll)
                         acc["number" if which[t] is not None else "other"].add(hit, nll)
+                        if which[t] is not None:   # exp35's two splits, same forward (critic EXP36-R1-02)
+                            acc["number:" + spans[which[t]]["field"]].add(hit, nll)
+                            acc["number@" + kind_of[b + i]].add(hit, nll)
         orig[mode] = {k: v.out() for k, v in sorted(acc.items())}
+    for k in orig["real"]:
+        r, w = orig["real"][k]["accuracy"], orig["shuffled"].get(k, {}).get("accuracy")
+        orig["real"][k]["real_minus_shuffled"] = (r - w) if r is not None and w is not None else None
 
     # full-number mask, one record per number
     records = []

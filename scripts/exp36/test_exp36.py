@@ -80,3 +80,14 @@ def test_split(tmp_path):
     chosen = {f for v in m["families_chosen"].values() for f in v}
     assert len(fit) == 12 and {x["family"] for x in fit} <= chosen
     assert all(fit[i]["family"] == fit[i + 1]["family"] for i in range(0, 12, 2))
+
+
+def test_twin_macro_is_equal_weight_and_kinds_recombine():
+    r = load("report")
+    fam = {"f1": {"twin:mass": [1.0, 1.0], "twin:speed": [0.0, 9.0], "twin:distance": [1.0, 2.0],
+                  "kind:twin, numbers changed:real": [3.0, 4.0], "kind:twin, numbers changed:wrong": [1.0, 4.0],
+                  "kind:other family, same form:real": [1.0, 2.0], "kind:other family, same form:wrong": [1.0, 2.0]}}
+    assert abs(r.value(fam, ["f1"], "twin") - (1.0 + 0.0 + 0.5) / 3) < 1e-12        # not (2 / 12)
+    k = r.by_kind(fam)
+    assert k["twin, numbers changed"]["n"] == 4 and k["twin, numbers changed"]["real_minus_wrong"] == 0.5
+    assert sum(v["n"] for v in k.values()) == 6

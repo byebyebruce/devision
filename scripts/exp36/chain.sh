@@ -8,6 +8,7 @@
 #   nohup bash scripts/exp36/chain.sh > runs/exp36.out 2>&1 &
 set -u
 cd "$(dirname "$0")/../.."
+export HF_HUB_OFFLINE=1   # the MLM head of the readouts comes from the local cache only
 log() { echo "== $(date '+%F %T') $*"; }
 . scripts/exp35/guard.sh
 others=$(model_processes | grep -v "scripts/exp36/chain.sh")
@@ -57,7 +58,7 @@ for arm in a b; do
       --role monitoring > "${out%.json}.log" 2>&1 || { log "$arm $set failed"; exit 1; }
   done
 done
-uv run python scripts/exp36/report.py > runs/exp36-report.txt 2>&1
+capped uv run python scripts/exp36/report.py > runs/exp36-report.txt 2>&1
 rc=$?
 cat runs/exp36-report.txt
 log "report (exit $rc)"

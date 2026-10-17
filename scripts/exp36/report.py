@@ -67,6 +67,10 @@ def units(recs: Sequence[Dict]) -> Dict[str, Dict[str, List[float]]]:
                 f[0] += a["right"] and b["right"]
                 f[1] += 1
                 changed |= {(a["sample_id"], field, obj), (b["sample_id"], field, obj)}
+    for r in recs:   # whole numbers by the kind of wrong picture, real and wrong (critic EXP36-R1-02)
+        f = fam[r["family"]]["kind:%s:%s" % (r["wrong_picture_kind"], r["mode"])]
+        f[0] += r["right"]
+        f[1] += 1
     for r in recs:   # picture dependence: wrong picture is the own twin and this value changed between the views
         key = (r["sample_id"], r["field"], r["object"])
         if r["mode"] == "wrong" and r["wrong_picture_kind"].startswith("twin") and key in changed:
@@ -77,7 +81,7 @@ def units(recs: Sequence[Dict]) -> Dict[str, Dict[str, List[float]]]:
 
 
 def value(fam: Dict, families: Sequence[str], stat: str) -> float:
-    if stat in ("whole", "both"):
+    if stat in ("whole", "both", "twin"):   # equal-weight macro over the three fields
         vals = [value(fam, families, stat + ":" + f) for f in FIELDS]
         vals = [v for v in vals if v == v]
         return sum(vals) / len(vals) if vals else float("nan")
@@ -93,11 +97,25 @@ def interval(fn, families: Sequence[str], resamples: int = 2000, seed: int = 0) 
     return {"value": fn(list(families)), "ci95": [boots[int(0.025 * len(boots))], boots[int(0.975 * len(boots)) - 1]]}
 
 
+KINDS = ("twin, numbers changed", "twin, numbers unchanged", "other family, same form", "other family, other form")
+
+
+def by_kind(fam: Dict) -> Dict:
+    families = sorted(fam)
+    out = {}
+    for k in KINDS:
+        n = sum(fam[f]["kind:%s:real" % k][1] for f in families if "kind:%s:real" % k in fam[f])
+        real, wrong = value(fam, families, "kind:%s:real" % k), value(fam, families, "kind:%s:wrong" % k)
+        out[k] = {"n": n, "real": real, "wrong": wrong, "real_minus_wrong": real - wrong}
+    return out
+
+
 def arm_stats(fam: Dict) -> Dict:
     families = sorted(fam)
-    out: Dict = {s: value(fam, families, s) for s in ["whole", "both"] + ["%s:%s" % (k, f) for k in ("whole", "both", "twin") for f in FIELDS]}
+    out: Dict = {s: value(fam, families, s) for s in ["whole", "both", "twin"] + ["%s:%s" % (k, f) for k in ("whole", "both", "twin") for f in FIELDS]}
     out["dep"] = interval(lambda fs: value(fam, fs, "dep"), families)
     out["dep"]["n"] = sum(fam[f]["dep"][1] for f in families if "dep" in fam[f])
+    out["whole_by_wrong_picture"] = by_kind(fam)
     out["denominators"] = {s: sum(fam[f][s][1] for f in families if s in fam[f])
                            for s in ["%s:%s" % (k, f) for k in ("both", "twin") for f in FIELDS]}
     return out
@@ -140,9 +158,10 @@ def main():
     for split in ("tune", "fit"):
         for arm in ("A", "B"):
             s = out[split][arm]
-            print("%s %s whole %.3f (mass %.3f speed %.3f distance %.3f) | both %.3f | twin %s | dep %+.3f %s (n %d)" % (
-                split, arm, s["whole"], s["whole:mass"], s["whole:speed"], s["whole:distance"], s["both"],
+            print("%s %s whole %.3f (mass %.3f speed %.3f distance %.3f) | both %.3f | twin %.3f %s | dep %+.3f %s (n %d)" % (
+                split, arm, s["whole"], s["whole:mass"], s["whole:speed"], s["whole:distance"], s["both"], s["twin"],
                 {f: round(s["twin:" + f], 3) for f in FIELDS}, s["dep"]["value"], [round(x, 3) for x in s["dep"]["ci95"]], s["dep"]["n"]))
+            print("   by wrong picture: %s" % {k: (v["n"], round(v["real"], 3), round(v["wrong"], 3)) for k, v in s["whole_by_wrong_picture"].items()})
     for k, v in out["B_minus_A"].items():
         print("B - A %s %+.3f %s" % (k, v["value"], [round(x, 3) for x in v["ci95"]]))
     print("conditions %s -> continue the full-number route: %s" % (out["conditions"], out["continue_full_number_route"]))
