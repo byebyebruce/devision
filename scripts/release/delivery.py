@@ -5,9 +5,11 @@ nothing refitted, the rules unchanged:
   1. primary: the transfer readout (exp21's readout.transfer: ScienceQA temperature + force dev, 68 : 114,
      accuracy and picture-gain changes with intervals), recomputed from the candidate's sealed sqa_* outputs and
      v0.3's exp27 records (content-checked, historical identity), next to the candidate's own screening label
-     (critic V04-FALLBACK-01): --screen names the experiment, --screen-report its report and --screen-sha256 the
-     weights that report was made from; the label is carried only when that sha256 equals the frozen identity's
-     model.safetensors, otherwise it is marked unverifiable. A screening label is not the whole set of release
+     (critic V04-FALLBACK-01 / R1-01): --screen names the experiment and --screen-report its report. The weights the
+     report was made from are taken from the report itself ("model_sha256") or from a run identity file
+     (--screen-identity, written by the run) that names the report's own sha256 -- never typed in by hand. The label
+     is carried only when those weights are the frozen identity's model.safetensors; missing or mismatching evidence
+     is marked unverifiable. A screening label is not the whole set of release
      conditions; a recomputed value that differs from the screening report is flagged;
   2. new ability kept: the candidate's dev16 synthetic reading and comparison, point estimate and interval
      resampled by family, each with the original rule (pass = point >= 0.80 and lower bound >= 0.75; fail = point
@@ -19,14 +21,15 @@ nothing refitted, the rules unchanged:
 
     uv run python scripts/release/delivery.py --config configs/v04-full-eval.yaml \\
         --extras configs/v04-extra-evidence.yaml --screen <experiment> --screen-report <report.json> \\
-        --screen-sha256 <sha256 of the weights the report was made from> --out release/v0.4/delivery_vs_v0.3.json
+        [--screen-identity <run identity json>] --out release/v0.4/delivery_vs_v0.3.json
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
 import sys
-from typing import Optional
+from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "exp21"))
 from readout import classify, syn_index, syn_stat, transfer  # type: ignore  # noqa: E402
@@ -49,15 +52,32 @@ def recs(path: str, name: str):
     return [dict(r, image_id=r["image_id"].removesuffix(":flip")) for r in rs] if name == "flip" else rs
 
 
-def screening(identity: dict, name: str, report: Optional[dict], weights_sha256: str) -> dict:
-    """The candidate's screening label, bound to the weights it was made from."""
+def report_weights(report_path: str, run_identity_path: Optional[str]) -> Tuple[Optional[str], str]:
+    """(sha256 of the weights a screening report was made from, where it came from). Only evidence tied to the
+    report: its own "model_sha256" field, or a run identity file whose "report_sha256" is this report file's
+    sha256 and which names "model_sha256"."""
+    report = json.load(open(report_path))
+    if report.get("model_sha256"):
+        return report["model_sha256"], "the report itself"
+    if run_identity_path:
+        ident = json.load(open(run_identity_path))
+        digest = hashlib.sha256(open(report_path, "rb").read()).hexdigest()
+        if ident.get("report_sha256") != digest:
+            return None, "the run identity names another report (%s, this one is %s)" % (ident.get("report_sha256"), digest)
+        if ident.get("model_sha256"):
+            return ident["model_sha256"], "run identity %s" % run_identity_path
+    return None, "no weight identity tied to the report"
+
+
+def screening(identity: dict, name: str, report: Optional[dict], weights_sha256: Optional[str], source: str = "") -> dict:
+    """The candidate's screening label, carried only when the report's own weights are the frozen candidate."""
     model = identity["files"].get("model.safetensors")
     if report is None:
         return {"name": name, "status": "no screening report", "outcome": None}
     if not weights_sha256 or weights_sha256 != model:
-        return {"name": name, "status": "unverifiable: the report's weights (%s) are not the frozen candidate (%s)"
-                % (weights_sha256 or "not given", model), "outcome": None}
-    return {"name": name, "status": "bound to the frozen weights", "outcome": report.get("outcome"),
+        return {"name": name, "status": "unverifiable: the report's weights (%s; %s) are not the frozen candidate (%s)"
+                % (weights_sha256 or "unknown", source or "no evidence", model), "outcome": None}
+    return {"name": name, "status": "bound to the frozen weights (%s)" % source, "outcome": report.get("outcome"),
             "transfer": report.get("transfer")}
 
 
@@ -95,7 +115,7 @@ def main(argv=None):
     ap.add_argument("--extras", required=True)
     ap.add_argument("--screen", required=True, help="the experiment that screened the candidate")
     ap.add_argument("--screen-report", help="its report.json (outcome, transfer)")
-    ap.add_argument("--screen-sha256", default="", help="sha256 of the model.safetensors that report was made from")
+    ap.add_argument("--screen-identity", help="run identity json naming the report's sha256 and the weights' sha256")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     paths = check_eval.verified(a.config, a.extras, list(SQA) + list(GUARD) + ["dev16", "syn_erased"])
@@ -103,7 +123,11 @@ def main(argv=None):
     v03 = {n: recs(os.path.join(V03, n + ".details.jsonl"), n) for n in list(SQA) + list(GUARD)}
     plan = check_eval.Plan(a.config, a.extras)
     identity = json.load(open(plan.path("IDENTITY.json")))
-    screen = screening(identity, a.screen, json.load(open(a.screen_report)) if a.screen_report else None, a.screen_sha256)
+    if a.screen_report:
+        weights, source = report_weights(a.screen_report, a.screen_identity)
+        screen = screening(identity, a.screen, json.load(open(a.screen_report)), weights, source)
+    else:
+        screen = screening(identity, a.screen, None, None)
     out = build(cand, v03, identity, screen)
     json.dump(out, open(a.out, "w"), indent=1)
     t = out["primary"]["transfer"]

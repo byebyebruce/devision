@@ -15,7 +15,7 @@
 | 来源与步数 | TBD：完整的起点链和各阶段实际步数 |
 | 数据版本 | TBD：各阶段数据文件的 sha256 |
 | 权重指纹 | TBD：`model.safetensors` 的 sha256（freeze 时写入 IDENTITY.json） |
-| 筛查 | TBD：筛查实验名、报告，以及该报告所用权重的 sha256（`delivery.py --screen / --screen-report / --screen-sha256`；与冻结权重不一致时标为不可验证，不带入标签） |
+| 筛查 | TBD：筛查实验名和报告；报告所用权重的 sha256 取自报告本身或与报告哈希绑定的运行身份（`delivery.py --screen / --screen-report / --screen-identity`），与冻结权重不一致或缺证据时标为不可验证 |
 | 代价 | TBD：7 个面板 |
 
 锁定候选时要同步更新：
@@ -85,7 +85,8 @@
 delivery.py 只读通过 check 的输出（`check_eval.verified`），全部从已 seal 的同题明细重算；不直接取候选训练流程在 freeze 之前评的记录（V04-REL-R2-04）。
 
 - **主目标**：用候选已 seal 的 `extra_sqa_{temp,force}{,_mism}` 和 v0.3 的 exp27 记录（只做内容检查，历史身份），按 exp21 的 readout.transfer 重算 68 : 114 准确率变化和看图收益变化及区间。
-  - 候选自己的筛查标签：`--screen <实验> --screen-report <报告> --screen-sha256 <报告所用权重>`。只有该 sha256 等于冻结的 model.safetensors 时才带入标签，否则标为不可验证（V04-FALLBACK-01）；另给出 `screening_report_matches`。
+  - 候选自己的筛查标签：`--screen <实验> --screen-report <报告> [--screen-identity <运行身份>]`。报告所用权重的 sha256 只从报告自身的 `model_sha256` 读取，或从运行时写下、并记有该报告文件 sha256 的身份文件读取，不接受手填。只有它等于冻结的 model.safetensors 时才带入标签，缺证据或不一致都标为不可验证（V04-FALLBACK-01 / R1-01）。另给出 `screening_report_matches`。
+  - 所以候选的训练 chain 要在出报告时把 `model_sha256` 写进报告，或同时写一个记有报告 sha256 的身份文件。正在运行的 exp37 不改。
   - 筛查标签不等于发布条件全部满足；不改各实验预先约定的主判定。
 - **新能力保留**（V04-REL-R1-04）：
   - 同一候选已 seal 的 `extra_dev16`：读数和比较的点估计、按族重采样的区间，各自按原规则判定（通过 = 点估计 ≥ 0.80 且下界 ≥ 0.75；失败 = 点估计 < 0.60 且上界 < 0.65）。

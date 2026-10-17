@@ -1,7 +1,9 @@
 """scripts/release/delivery.py and calibration.py on fabricated records: dev16 labels follow the original rule
 only with a valid erased control; the transfer is recomputed from the given records and compared with exp32's;
 the calibration comparison keeps every copy of a repeated question id and refuses different copies."""
+import hashlib
 import importlib.util
+import json
 import os
 import sys
 
@@ -46,7 +48,7 @@ def test_delivery(erased_right, expect):
     cand["dev16"] = syn_records(lambda f, v, h, q: True, heights=(16,))
     cand["syn_erased"] = syn_records(erased_right, heights=(0,), suffix=":erased")
     report = {"outcome": "x", "transfer": {"accuracy_change": {"value": 0.0}, "gain_change": {"value": 0.0}}}
-    out = d.build(cand, v03, IDENT, d.screening(IDENT, "expN", report, "ab"))
+    out = d.build(cand, v03, IDENT, d.screening(IDENT, "expN", report, "ab", "test"))
     assert out["dev16"]["read_class"] == expect and out["dev16"]["cmp_class"] == expect
     assert out["primary"]["target_met"] and not out["primary"]["screening_report_matches"] and out["protection"]["costs"] == []
     assert out["primary"]["screening"]["outcome"] == "x"
@@ -67,15 +69,26 @@ def test_calibration_keeps_repeated_ids():
         c.compare(recs(0.9), recs(0.6, ("a", "c", "b")))
 
 
-def test_screening_labels_are_bound_to_their_weights():
-    """Two candidates cannot borrow each other's screening label: the label is carried only when the report's
-    weights are the frozen candidate's."""
+def test_screening_labels_are_bound_to_their_weights(tmp_path):
+    """A screening label is carried only with weight evidence tied to the report itself: a report from candidate A
+    cannot label candidate B even if B's correct sha is at hand; missing evidence is unverifiable."""
     d = load("delivery")
-    first = {"files": {"model.safetensors": "aaa"}}
-    second = {"files": {"model.safetensors": "bbb"}}
-    report = {"outcome": "delivery target met", "transfer": None}
-    assert d.screening(first, "expA", report, "aaa")["outcome"] == "delivery target met"
-    borrowed = d.screening(second, "expA", report, "aaa")
+    a_report = tmp_path / "a_report.json"
+    a_report.write_text(json.dumps({"outcome": "delivery target met", "transfer": None, "model_sha256": "aaa"}))
+    plain = tmp_path / "plain_report.json"
+    plain.write_text(json.dumps({"outcome": "delivery target met", "transfer": None}))
+    first, second = {"files": {"model.safetensors": "aaa"}}, {"files": {"model.safetensors": "bbb"}}
+    w, src = d.report_weights(str(a_report), None)
+    assert d.screening(first, "expA", json.loads(a_report.read_text()), w, src)["outcome"] == "delivery target met"
+    borrowed = d.screening(second, "expA", json.loads(a_report.read_text()), w, src)       # wrong report, B candidate
     assert borrowed["outcome"] is None and borrowed["status"].startswith("unverifiable")
-    assert d.screening(second, "expB", report, "")["status"].startswith("unverifiable")
-    assert d.screening(second, "expB", None, "bbb")["status"] == "no screening report"
+    w, src = d.report_weights(str(plain), None)                                            # no evidence at all
+    assert w is None and d.screening(second, "expB", {}, w, src)["status"].startswith("unverifiable")
+    ident = tmp_path / "run_identity.json"                                                  # identity of another report
+    ident.write_text(json.dumps({"report_sha256": "0" * 64, "model_sha256": "bbb"}))
+    w, src = d.report_weights(str(plain), str(ident))
+    assert w is None and "another report" in src
+    ident.write_text(json.dumps({"report_sha256": hashlib.sha256(plain.read_bytes()).hexdigest(), "model_sha256": "bbb"}))
+    w, src = d.report_weights(str(plain), str(ident))
+    assert w == "bbb" and d.screening(second, "expB", {"outcome": "ok"}, w, src)["outcome"] == "ok"
+    assert d.screening(second, "expB", None, None)["status"] == "no screening report"
