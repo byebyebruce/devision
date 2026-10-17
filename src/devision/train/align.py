@@ -14,10 +14,18 @@ before one backward / clip / optimizer step: the old decisions supervise the sam
 moves. Decision questions are drawn from their own seeded order, so the caption and mask random stream is the same
 as without them; with no decision data or weight 0 the step is exactly the caption-only one.
 
+With `number_mask_sources` (exp36, docs/experiments/2026-10-17-exp36-number-mask-plan.md) captions of those sources
+are supervised only on their numbers: after the usual random mask is drawn (so the random stream, caption choice and
+every other row are exactly as without it), such a row is rewritten so that every token of every number span (mass /
+speed / distance values of both objects, see `number_spans`) is masked and is the only target; labels, quantity
+names and units stay visible. A caption whose expected numbers are missing or cut by max_caption_tokens is refused.
+`track_sources` logs, per listed source and for the rest, the supervised tokens and their share of the batch loss.
+
 The checkpoint is a normal devision checkpoint; `devision-train --init` continues from it.
 """
 import math
 import random
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -56,6 +64,8 @@ class AlignConfig:
     decision_data: str = ""        # JSONL of decision samples supervised alongside the captions (exp33)
     decision_weight: float = 1.0
     decision_micro_batch: int = 8
+    number_mask_sources: str = ""  # comma-separated caption sources supervised only on their numbers (exp36)
+    track_sources: str = ""        # comma-separated sources whose supervised tokens / loss share are logged
 
 
 class _MLMHead(nn.Module):
@@ -99,6 +109,44 @@ def _masked_batch(tok, captions: Sequence[str], c: AlignConfig, rng: random.Rand
         input_ids[i, :len(s)], attention[i, :len(s)], target[i, :len(lab)] = (
             torch.tensor(s), 1, torch.tensor(lab))
     return input_ids, attention, target
+
+
+NUMBER_PATTERNS = [("mass", re.compile(r"mass of each particle ([\d,]+(?:\.\d+)?) u")),
+                   ("speed", re.compile(r"average particle speed ([\d,]+(?:\.\d+)?) m/s")),
+                   ("distance", re.compile(r"(\d[\d,]*(?:\.\d+)?) (?:in|cm|mm) apart"))]
+NUMBERS_EXPECTED = {"Sample": 4, "Pair": 2}   # a real-layout caption: 2 samples x (mass, speed), 2 pairs x distance
+
+
+def number_spans(caption: str) -> List[Dict[str, Any]]:
+    """[{field, start, end, text}] of the numbers of a real-layout caption -- the digits (with "," / ".") after
+    "mass of each particle", "average particle speed" and before "<unit> apart"; never a "Pair 1" / "Sample A"
+    label or a unit (the rule scripts/exp35/mlm_numbers.py read with)."""
+    out = [{"field": f, "start": m.start(1), "end": m.end(1), "text": m.group(1)}
+           for f, pat in NUMBER_PATTERNS for m in pat.finditer(caption)]
+    return sorted(out, key=lambda x: x["start"])
+
+
+def _number_rows(tok, captions: Sequence[str], rows: Sequence[int], input_ids, target, c: AlignConfig) -> None:
+    """Rewrites rows `rows` of a _masked_batch batch in place: every token overlapping a number span masked and the
+    only target, every other token visible and not a target."""
+    for i in rows:
+        cap = captions[i]
+        spans = number_spans(cap)
+        kind = "Sample" if cap.startswith("Sample") else "Pair" if cap.startswith("Pair") else None
+        if kind is None or len(spans) != NUMBERS_EXPECTED[kind]:
+            raise ValueError("number mask: %r does not hold the expected numbers" % cap)
+        enc = tok(cap, add_special_tokens=False, return_offsets_mapping=True)
+        ids, offs = enc["input_ids"], enc["offset_mapping"]
+        hit = [any(a < s["end"] and b > s["start"] and b > a for s in spans) for a, b in offs]
+        if len(ids) > c.max_caption_tokens:
+            raise ValueError("number mask: %r is longer than max_caption_tokens" % cap)
+        for s in spans:
+            covered = "".join(cap[a:b] for (a, b), h in zip(offs, hit) if h and a < s["end"] and b > s["start"])
+            if covered.strip() != s["text"]:
+                raise ValueError("number mask: tokens of %r cover %r" % (s["text"], covered))
+        for t, (tid, h) in enumerate(zip(ids, hit)):
+            input_ids[i, 1 + t] = tok.mask_token_id if h else tid
+            target[i, 1 + t] = tid if h else -100
 
 
 def _mlm_logits(model, head, input_ids, attention, pixels, device) -> torch.Tensor:
@@ -193,6 +241,8 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     dec_items = _items(decider, read_decision_jsonl(c.decision_data)) if decide else []
     dec_rng = random.Random(c.seed + 1)            # its own stream: the caption / mask draws stay unchanged
     dec_order: List[int] = []
+    number_sources = {x for x in c.number_mask_sources.split(",") if x}
+    tracked = [x for x in c.track_sources.split(",") if x]
 
     def decision_batch() -> List[Dict[str, Any]]:
         out = []
@@ -228,13 +278,26 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         rng.shuffle(order)
         for b in range(0, len(order) - c.batch + 1, c.batch):
             chunk = order[b:b + c.batch]
-            input_ids, attention, target = _masked_batch(tok, [rng.choice(s["captions"]) for s in chunk], c, rng)
+            caps = [rng.choice(s["captions"]) for s in chunk]
+            input_ids, attention, target = _masked_batch(tok, caps, c, rng)
+            if number_sources:   # after the random draw, so the random stream is the same as without it
+                _number_rows(tok, caps, [i for i, s in enumerate(chunk) if s.get("source") in number_sources],
+                             input_ids, target, c)
             logits = _mlm_logits(model, head, input_ids, attention,
                                     torch.stack([images(s["image"]) for s in chunk]), device)
             y = target[:, 1:].to(device)
             m = y != -100
             loss = mlm = F.cross_entropy(logits[m], y[m])
             extra: Dict[str, float] = {}
+            if tracked:
+                with torch.no_grad():
+                    per = F.cross_entropy(logits.transpose(1, 2), y.clamp(min=0), reduction="none") * m
+                    total = per.sum()
+                    for name in tracked + ["rest"]:
+                        rows = [i for i, s in enumerate(chunk) if (s.get("source") == name if name != "rest" else s.get("source") not in tracked)]
+                        key = name.replace("-", "_")
+                        extra["tokens_" + key] = float(m[rows].sum().item()) if rows else 0.0
+                        extra["loss_share_" + key] = float((per[rows].sum() / total).item()) if rows else 0.0
             if decide:
                 chunk_d = decision_batch()
                 batch = collate_items([chunk_d], tok.pad_token_id)
