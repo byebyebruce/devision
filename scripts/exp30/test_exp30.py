@@ -68,10 +68,10 @@ def fixture(tmp_path, gap, base_ok, new_ok, a24_ok):
 
 
 @pytest.mark.parametrize("gap,new,a24,start", [
-    (0.4, lambda p, i: True, lambda p, i: i % 2, "replay protects"),
-    (0.4, lambda p, i: i % 4 != 0 if p in ("exist", "science") else i % 2, lambda p, i: i % 2 == 0 and i % 4 != 0, "replay helps, not enough"),
-    (0.4, lambda p, i: i % 2, lambda p, i: i % 2, "replay does not help"),
-    (0.2, lambda p, i: True, lambda p, i: i % 2, "reading lost"),
+    (0.4, lambda p, i: True, lambda p, i: i % 2, "passes this protection screen"),
+    (0.4, lambda p, i: i % 4 != 0 if p in ("exist", "science") else i % 2, lambda p, i: i % 2 == 0 and i % 4 != 0, "both panels improve"),
+    (0.4, lambda p, i: i % 2, lambda p, i: i % 2, "the pre-written two-panel improvement"),
+    (0.2, lambda p, i: True, lambda p, i: i % 2, "reading gate not passed"),
 ])
 def test_outcomes(tmp_path, monkeypatch, gap, new, a24, start):
     run, base = fixture(tmp_path, gap, lambda p, i: True, new, a24)
