@@ -21,6 +21,13 @@ speed / distance values of both objects, see `number_spans`) is masked and is th
 names and units stay visible. A caption whose expected numbers are missing or cut by max_caption_tokens is refused.
 `track_sources` logs, per listed source and for the rest, the supervised tokens and their share of the batch loss.
 
+With `micro_batch` (exp39, docs/experiments/2026-10-17-exp39-lowmem-plan.md) each batch of `batch` rows is drawn,
+masked and rewritten exactly as without it, then run in forward / backward passes of `micro_batch` rows: each part's
+loss is its masked-token cross-entropy SUM divided by the masked tokens of the whole batch, so the summed gradient is
+the whole batch's mean; one zero_grad, one clip, one optimizer and one scheduler step per batch; every part is checked
+finite before the step. Evaluation keeps its batches of `batch` rows (captions, masks, rotated pictures) and only
+splits the forward pass. Not combined with decision supervision.
+
 The checkpoint is a normal devision checkpoint; `devision-train --init` continues from it.
 """
 import math
@@ -66,6 +73,7 @@ class AlignConfig:
     decision_micro_batch: int = 8
     number_mask_sources: str = ""  # comma-separated caption sources supervised only on their numbers (exp36)
     track_sources: str = ""        # comma-separated sources whose supervised tokens / loss share are logged
+    micro_batch: int = 0           # > 0: run each batch of `batch` rows in forward passes of this many rows (exp39)
 
 
 class _MLMHead(nn.Module):
@@ -158,6 +166,14 @@ def _mlm_logits(model, head, input_ids, attention, pixels, device) -> torch.Tens
     return head(h[:, visual.size(1) + 1:]).float()
 
 
+def _logits_in_parts(model, head, input_ids, attention, pixels, device, micro: int) -> torch.Tensor:
+    """_mlm_logits of a whole batch, run `micro` rows at a time when micro > 0 (same rows, same padding)."""
+    if not micro or micro >= input_ids.size(0):
+        return _mlm_logits(model, head, input_ids, attention, pixels, device)
+    return torch.cat([_mlm_logits(model, head, input_ids[i:i + micro], attention[i:i + micro], pixels[i:i + micro], device)
+                      for i in range(0, input_ids.size(0), micro)])
+
+
 def _evaluate(model, head, tok, samples, images, c: AlignConfig, device) -> Dict[str, float]:
     """Masked-token accuracy / nll on held-out images, with their own captions and with captions
     of other images ("shuffled"). Real beating shuffled means the projector carries image content."""
@@ -174,8 +190,8 @@ def _evaluate(model, head, tok, samples, images, c: AlignConfig, device) -> Dict
                 caps = [rng.choice(s["captions"]) for s in chunk]
                 pix_src = chunk if mode == "real" else chunk[1:] + chunk[:1]
                 input_ids, attention, target = _masked_batch(tok, caps, c, rng)
-                logits = _mlm_logits(model, head, input_ids, attention,
-                                        torch.stack([images(s["image"]) for s in pix_src]), device)
+                logits = _logits_in_parts(model, head, input_ids, attention,
+                                          torch.stack([images(s["image"]) for s in pix_src]), device, c.micro_batch)
                 y = target[:, 1:].to(device)
                 m = y != -100
                 nll += F.cross_entropy(logits[m], y[m], reduction="sum").item()
@@ -191,6 +207,48 @@ def _evaluate(model, head, tok, samples, images, c: AlignConfig, device) -> Dict
 def _gold_ce(logits: torch.Tensor, mask: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """Gold cross-entropy over each question's options (the CE term of rlcd._rlcd_loss), mean over questions."""
     return -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
+
+
+def _micro_step(model, head, input_ids, attention, target, chunk, images, device, c: AlignConfig, tracked, optimizer,
+                params, step: int):
+    """One optimizer step over a whole batch run in parts of c.micro_batch rows (see the module docstring); returns
+    (mean masked-token loss, accuracy, tracked-source stats, grad norm)."""
+    y_all = target[:, 1:]
+    n_tok = int((y_all != -100).sum().item())
+    pixels = torch.stack([images(s["image"]) for s in chunk])
+    optimizer.zero_grad(set_to_none=True)
+    loss_sum, hits = 0.0, 0
+    src_tok: Dict[str, float] = {}
+    src_ce: Dict[str, float] = {}
+    for r0 in range(0, len(chunk), c.micro_batch):
+        rows = slice(r0, r0 + c.micro_batch)
+        logits = _mlm_logits(model, head, input_ids[rows], attention[rows], pixels[rows], device)
+        y = y_all[rows].to(device)
+        m = y != -100
+        part = F.cross_entropy(logits[m], y[m], reduction="sum") / max(1, n_tok)
+        if not math.isfinite(part.item()):   # before the step: a broken part never reaches the weights
+            raise RuntimeError("step %d: loss is %r: the device is returning invalid results" % (step, part.item()))
+        part.backward()
+        loss_sum += part.item()
+        hits += int((logits[m].argmax(-1) == y[m]).sum().item())
+        if tracked:
+            with torch.no_grad():
+                per = F.cross_entropy(logits.transpose(1, 2), y.clamp(min=0), reduction="none") * m
+                for i, s in enumerate(chunk[rows]):
+                    name = s.get("source") if s.get("source") in tracked else "rest"
+                    src_tok[name] = src_tok.get(name, 0.0) + float(m[i].sum().item())
+                    src_ce[name] = src_ce.get(name, 0.0) + float(per[i].sum().item())
+        del logits, part
+    grad_norm = torch.nn.utils.clip_grad_norm_(params, 1.0)
+    optimizer.step()
+    extra: Dict[str, float] = {}
+    if tracked:
+        total = sum(src_ce.values()) or 1.0
+        for name in tracked + ["rest"]:
+            key = name.replace("-", "_")
+            extra["tokens_" + key] = src_tok.get(name, 0.0)
+            extra["loss_share_" + key] = src_ce.get(name, 0.0) / total
+    return loss_sum, hits / max(1, n_tok), extra, float(grad_norm.item())
 
 
 def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
@@ -241,6 +299,10 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     dec_items = _items(decider, read_decision_jsonl(c.decision_data)) if decide else []
     dec_rng = random.Random(c.seed + 1)            # its own stream: the caption / mask draws stay unchanged
     dec_order: List[int] = []
+    if c.micro_batch and decide:
+        raise ValueError("micro_batch is not combined with decision supervision")
+    if c.micro_batch < 0 or (c.micro_batch and c.batch % c.micro_batch):
+        raise ValueError("micro_batch must divide batch")
     number_sources = {x for x in c.number_mask_sources.split(",") if x}
     tracked = [x for x in c.track_sources.split(",") if x]
 
@@ -283,6 +345,22 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             if number_sources:   # after the random draw, so the random stream is the same as without it
                 _number_rows(tok, caps, [i for i, s in enumerate(chunk) if s.get("source") in number_sources],
                              input_ids, target, c)
+            if c.micro_batch:
+                mlm_value, acc_value, extra, grad_norm = _micro_step(model, head, input_ids, attention, target, chunk,
+                                                                     images, device, c, tracked, optimizer,
+                                                                     params + lora_params, len(losses))
+                scheduler.step()
+                losses.append(mlm_value)
+                log.add(len(chunk), loss=losses[-1], accuracy=acc_value, grad_norm=grad_norm, **extra)
+                means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
+                                                           **({"lora": optimizer.param_groups[1]["lr"]}
+                                                              if lora_params else {})})
+                if means:
+                    print("epoch %d step %d/%d loss %.4f acc %.3f" % (epoch + 1, len(losses), steps,
+                                                                     means["train/loss"], means["train/accuracy"]), flush=True)
+                if c.eval_every and len(losses) % c.eval_every == 0:
+                    run_eval()
+                continue
             logits = _mlm_logits(model, head, input_ids, attention,
                                     torch.stack([images(s["image"]) for s in chunk]), device)
             y = target[:, 1:].to(device)
