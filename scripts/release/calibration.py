@@ -2,12 +2,16 @@
 probabilities (all temperatures 1, `devision-eval --no-temperature`) against the candidate's stored temperatures
 (`devision-eval`, fitted), accuracy / NLL / ECE overall and by option count. Each set is labelled with its use:
 the calibration set (where the temperatures were fitted; its gain is in-sample) and sets that did not take part
-in fitting them. No refit, nothing written to the checkpoint. Records of the two runs must be the same questions
-of the same checkpoint.
+in fitting them. No refit, nothing written to the checkpoint.
 
-    uv run python scripts/release/calibration.py --out release/v0.4/calibration.json \\
-        val:calibration_fit:<raw.details.jsonl>:<fitted.details.jsonl> \\
-        bench_lv_scienceqa:monitoring:<raw.details.jsonl>:<fitted.details.jsonl>
+Inputs are named outputs that pass `check_eval.py check` under the frozen identity (critic V04-REL-R2-04): extras
+of configs/v04-extra-evidence.yaml or planned sets of the evaluation YAML. The two runs of a set must hold the same
+question copies -- an id repeated in the data (data/r13b/val.jsonl: 242 ids twice, with different options) is
+matched copy by copy on its options and every copy is kept (critic V04-REL-R2-03).
+
+    uv run python scripts/release/calibration.py --config configs/v04-full-eval.yaml \\
+        --extras configs/v04-extra-evidence.yaml --out release/v0.4/calibration.json \\
+        val:calibration_fit:calib_val_raw:calib_val_fitted bench_lv_scienceqa:monitoring:lv_scienceqa_raw:bench_lv_scienceqa
 """
 import argparse
 import json
@@ -16,8 +20,15 @@ import sys
 from collections import defaultdict
 from typing import Dict, List
 
+import importlib.util
+
 import numpy as np
 from laya.common import ece_score
+
+_spec = importlib.util.spec_from_file_location("check_eval", os.path.join(os.path.dirname(__file__), "check_eval.py"))
+assert _spec is not None and _spec.loader is not None
+check_eval = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(check_eval)
 
 
 def metrics(rs: List[Dict]) -> Dict:
@@ -25,11 +36,16 @@ def metrics(rs: List[Dict]) -> Dict:
             "ece": float(ece_score(np.array([r["p_prediction"] for r in rs]), np.array([r["correct"] for r in rs], dtype=float)))}
 
 
+def copies(rs: List[Dict]) -> Dict:
+    out: Dict = defaultdict(int)
+    for r in rs:
+        out[(r["sample_id"], r["qid"], tuple(r["options"]))] += 1
+    return out
+
+
 def compare(raw: List[Dict], fitted: List[Dict]) -> Dict:
-    ka = {(r["sample_id"], r["qid"]) for r in raw}
-    kb = {(r["sample_id"], r["qid"]) for r in fitted}
-    if ka != kb or len(ka) != len(raw):
-        raise SystemExit("the raw and fitted runs are not the same questions")
+    if copies(raw) != copies(fitted):
+        raise SystemExit("the raw and fitted runs are not the same question copies")
     def split(rs):
         g = defaultdict(list)
         for r in rs:
@@ -48,12 +64,16 @@ def load(path: str) -> List[Dict]:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("sets", nargs="+", help="name:use:raw_details:fitted_details")
+    ap.add_argument("sets", nargs="+", help="name:use:raw_output:fitted_output (output names, see the docstring)")
+    ap.add_argument("--config", required=True)
+    ap.add_argument("--extras", required=True)
     ap.add_argument("--out")
     a = ap.parse_args(argv)
+    specs = [x.split(":", 3) for x in a.sets]
+    paths = check_eval.verified(a.config, a.extras, sorted({n for _, _, r, f in specs for n in (r, f)}))
     report = {}
-    for spec in a.sets:
-        name, use, raw, fitted = spec.split(":", 3)
+    for name, use, raw_name, fitted_name in specs:
+        raw, fitted = paths[raw_name], paths[fitted_name]
         for path, want in ((raw, "none (raw)"), (fitted, "fitted")):
             run = json.load(open(path.replace(".details.jsonl", ".json")))["run"]
             if run.get("temperature") != want:

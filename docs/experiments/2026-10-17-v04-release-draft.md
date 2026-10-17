@@ -30,7 +30,7 @@
 - 结果写到候选轮次的 `eval/`。注意：dry-run 时 `runs/exp32-fit/run.json` 还不存在，输出路径显示为 `stage2/`；exp32 训练后就会是 `runs/exp32-fit/eval/`。
 - **执行顺序**（V04-REL-R1-01 / 02，`scripts/release/check_eval.py`）：
   1. `freeze`：候选第一次做最终评测之前，把 checkpoint 目录里每个文件（权重、带温度的 config、tokenizer 等）的 sha256 和温度表写入 `<eval>/IDENTITY.json`。已有一份不同的身份时拒绝覆盖。
-  2. `preflight --quarantine`：把每个计划输出（集合及其每个对照）分为三类：
+  2. `preflight --quarantine`（隔离时同时撤销对应的 seal 记录，旧记录写进隔离目录的 QUARANTINE.json，V04-REL-R2-01）：把每个计划输出（集合及其每个对照）分为三类：
      - ok：已在当前身份下 seal，文件哈希不变，内容检查通过；
      - missing：不存在，交给 pipeline 新跑；
      - invalid：存在但证明不了身份（freeze 之前写的、权重或温度不同），或内容不对。
@@ -38,9 +38,27 @@
   3. `devision-pipeline configs/v04-full-eval.yaml`：补跑 missing。
   4. `seal`：确认 checkpoint 仍与 IDENTITY 一致；对 freeze 之后写出、内容检查通过的输出，记下文件哈希，写入 `RESULTS.json`。
   5. `check`：全量核查——每个计划输出都在、已 seal、未改动、内容通过。
+  - 附加证据（V04-REL-R2-04）：29 个集合以外的证据列在 `configs/v04-extra-evidence.yaml`，每条写明数据、温度模式（fitted / raw）、对照和用途：
+    - sqa_temp / force 及其错图版；
+    - dev16、syn_erased；
+    - 校准集的 fitted / raw 两份；
+    - bench_lv_scienceqa 的 raw；
+    - 新确认集的真图、固定错图和倒序。
+    - 上面每一步都加 `--extras configs/v04-extra-evidence.yaml`，再加一步 `run-extras` 补跑缺的附加证据，与 29 个集合同一个冻结身份、同样 seal 和 check。
+    - calibration.py / delivery.py 只读通过 check 的输出，按名字取。
+  - 完整命令：
+    ```bash
+    E="--extras configs/v04-extra-evidence.yaml"; C=configs/v04-full-eval.yaml
+    uv run python scripts/release/check_eval.py freeze $E $C
+    uv run python scripts/release/check_eval.py preflight --quarantine $E $C
+    uv run devision-pipeline $C
+    uv run python scripts/release/check_eval.py run-extras $E $C
+    uv run python scripts/release/check_eval.py seal $E $C
+    uv run python scripts/release/check_eval.py check $E $C
+    ```
 - 内容检查（每个输出）：
   - 摘要的 run 字段：checkpoint、数据 sha256、fitted、对照类型、用途；摘要的温度表与冻结的相同。
-  - 明细：每题恰好一次（倒序对照只覆盖选择题）；题型和 gold 与数据文件相同；选项与数据文件相同（倒序对照则顺序相反）；图片与数据文件相同（配错图对照则必须不同）；概率只覆盖这些选项、都是有限值、和为 1；prediction 是 argmax；correct 与 gold 一致。
+  - 明细：每题恰好一次。数据里重复出现的题号（如 r13b/val 的 242 个）按选项逐份配对，每一份都要在（V04-REL-R2-03）；倒序对照只覆盖选择题；题型和 gold 与数据文件相同；选项与数据文件相同（倒序对照则顺序相反）；图片与数据文件相同；配错图对照必须正好是 `picture_pairs(samples, seed=0)` 指定的那张，且 seed 记录为 0（V04-REL-R2-02）；概率只覆盖这些选项、都是 [0, 1] 内的有限值、和为 1；prediction 是 argmax；correct 与 gold 一致。
   - 摘要的题数、准确率与明细一致。
 - exp32 chain 在 freeze 之前评过的 7 个保护面板证明不了身份，按规则在 preflight 时移走、重评，约 5 分钟。
 - 夹具（`tests/release/test_check_eval.py`，7 项）：

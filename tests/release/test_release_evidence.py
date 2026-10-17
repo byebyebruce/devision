@@ -1,7 +1,7 @@
 """scripts/release/delivery.py and calibration.py on fabricated records: dev16 labels follow the original rule
-only with a valid erased control; the calibration comparison pairs raw and fitted runs of the same questions."""
+only with a valid erased control; the transfer is recomputed from the given records and compared with exp32's;
+the calibration comparison keeps every copy of a repeated question id and refuses different copies."""
 import importlib.util
-import json
 import os
 import sys
 
@@ -20,28 +20,47 @@ def load(name):
     return mod
 
 
-REPORT = {"transfer": {"accuracy_change": {"value": 0.12, "ci95": [0.03, 0.2]}, "gain_change": {"value": 0.1, "ci95": [0.01, 0.2]}},
-          "target_met": True, "outcome": "delivery target met with no pre-written protection cost", "guard": {}, "costs": []}
+def rows(n, right, source):
+    return [{"sample_id": "%s%d" % (source, i), "qid": "q", "image_id": "%s-p%d" % (source, i), "source": source,
+             "gold": {"a": 1.0, "b": 0.0}, "correct": bool(right(i)), "nll": 0.5} for i in range(n)]
+
+
 IDENT = {"checkpoint": "runs/c/stage2", "files": {"model.safetensors": "ab", "config.json": "cd"}, "frozen": "t"}
+
+
+def records(d, new):
+    out = {}
+    for k, n in (("temp", 41), ("force", 120)):
+        out["sqa_" + k] = rows(n, (lambda i: True) if new else (lambda i: i % 3 == 0), k)
+        out["sqa_%s_mism" % k] = rows(n, lambda i: i % 3 == 0, k)
+    for p in d.GUARD:
+        out[p] = [r for s in d.EXT_SOURCES for r in rows(20, lambda i: True, s)] if p == "ext" else rows(60, lambda i: True, p)
+    return out
 
 
 @pytest.mark.parametrize("erased_right,expect", [(lambda f, v, h, q: f % 3 == 0, "pass"),
                                                  (lambda f, v, h, q: True, "void: erased control invalid")])
-def test_dev16_needs_a_valid_erased_control(erased_right, expect):
+def test_delivery(erased_right, expect):
     d = load("delivery")
-    dev16 = syn_records(lambda f, v, h, q: True, heights=(16,))
-    erased = syn_records(erased_right, heights=(0,), suffix=":erased")
-    out = d.build(REPORT, dev16, erased, IDENT)
+    cand, v03 = records(d, True), records(d, False)
+    cand["dev16"] = syn_records(lambda f, v, h, q: True, heights=(16,))
+    cand["syn_erased"] = syn_records(erased_right, heights=(0,), suffix=":erased")
+    exp32 = {"outcome": "x", "transfer": {"accuracy_change": {"value": 0.0}, "gain_change": {"value": 0.0}}}
+    out = d.build(cand, v03, IDENT, exp32)
     assert out["dev16"]["read_class"] == expect and out["dev16"]["cmp_class"] == expect
-    assert out["primary"]["exp32_outcome"] == REPORT["outcome"] and out["identity"]["model.safetensors"] == "ab"
+    assert out["primary"]["target_met"] and not out["primary"]["exp32_report_matches"] and out["protection"]["costs"] == []
+    assert out["identity"]["model.safetensors"] == "ab"
 
 
-def test_calibration_pairs_same_questions():
+def test_calibration_keeps_repeated_ids():
     c = load("calibration")
-    def recs(p):
-        return [{"sample_id": "s%d" % i, "qid": "q", "type": "choice", "options": ["a", "b"], "correct": i % 2 == 0,
-                 "nll": 0.7, "p_prediction": p} for i in range(10)]
+    def recs(p, opts_of_copy2=("a", "b", "c")):
+        rs = [{"sample_id": "s%d" % i, "qid": "q", "type": "choice", "options": ["a", "b"], "correct": i % 2 == 0,
+               "nll": 0.7, "p_prediction": p} for i in range(10)]
+        return rs + [dict(rs[0], options=list(opts_of_copy2))]          # s0 held twice, with different options
     out = c.compare(recs(0.9), recs(0.6))
-    assert out["all"]["raw"]["ece"] > out["all"]["fitted"]["ece"] and "choice:2" in out
+    assert out["all"]["raw"]["n"] == 11 and out["all"]["raw"]["ece"] > out["all"]["fitted"]["ece"] and "choice:3" in out
     with pytest.raises(SystemExit):
-        c.compare(recs(0.9), recs(0.6)[:5])
+        c.compare(recs(0.9), recs(0.6)[:-1])
+    with pytest.raises(SystemExit):
+        c.compare(recs(0.9), recs(0.6, ("a", "c", "b")))

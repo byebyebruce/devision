@@ -1,0 +1,20 @@
+# v0.4 evidence outside the 29-set evaluation (critic V04-REL-R2-04): every entry is evaluated on the frozen
+# candidate (scripts/release/check_eval.py run-extras), sealed and checked under the same IDENTITY.json as the 29
+# sets; scripts/release/calibration.py and delivery.py read only entries that pass `check`.
+# Output: <candidate eval dir>/extra_<name>.json (+ .details.jsonl). temperature raw = devision-eval --no-temperature.
+# primary transfer (delivery plan; exp21 readout.transfer)
+- {name: sqa_temp, data: data/exp21/dev_sqa_temp.jsonl, temperature: fitted, control: none, role: monitoring}
+- {name: sqa_force, data: data/exp21/dev_sqa_force.jsonl, temperature: fitted, control: none, role: monitoring}
+- {name: sqa_temp_mism, data: data/exp21/dev_sqa_temp_mism.jsonl, temperature: fitted, control: none, role: monitoring}
+- {name: sqa_force_mism, data: data/exp21/dev_sqa_force_mism.jsonl, temperature: fitted, control: none, role: monitoring}
+# new ability kept: dev16 with exp26's rule, and its erased-digit control
+- {name: dev16, data: data/exp22/dev16.jsonl, temperature: fitted, control: none, role: monitoring}
+- {name: syn_erased, data: data/exp21/dev_syn_erased.jsonl, temperature: fitted, control: none, role: monitoring}
+# calibration: T=1 against the stored temperatures, on the calibration set and on the full ScienceQA benchmark
+- {name: calib_val_fitted, data: data/r13b/val.jsonl, temperature: fitted, control: none, role: calibration_fit}
+- {name: calib_val_raw, data: data/r13b/val.jsonl, temperature: raw, control: none, role: calibration_fit}
+- {name: lv_scienceqa_raw, data: data/lv_bench/scienceqa.jsonl, temperature: raw, control: none, role: monitoring}
+# new frozen confirmation (critic V04-CONF-01): object properties, fixed mismatched pictures, reversed options
+- {name: confirm_property, data: data/v04_confirm/confirm.jsonl, temperature: fitted, control: none, role: heldout}
+- {name: confirm_property_mism, data: data/v04_confirm/confirm_mism.jsonl, temperature: fitted, control: none, role: heldout}
+- {name: confirm_property_rev, data: data/v04_confirm/confirm.jsonl, temperature: fitted, control: reversed, role: heldout}
