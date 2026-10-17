@@ -98,20 +98,27 @@ delivery.py 只读通过 check 的输出（`check_eval.verified`），全部从�
   - 来源：ScienceQA 官方 test（snapshot `f18b0a70…`）的 Compare properties of objects / Identify properties of an object。
   - 隔离后剩 75 题 / 75 图。confirm.jsonl `5e5c8e2d…`，confirm_mism.jsonl `d9e55e18…`（分项内按图固定置换）。
   - 原定的图表、图解两个分项，隔离后都是 0 题：气候图都是 train / val 换色重绘，图解是完全相同的图或 JevBench 用过的行。详见 `data/v04_confirm/MANIFEST.json`、`EXCLUSIONS.json`。
-- **图表读数**（准备中，V04-CONF-02）：
-  - 来源：ChartQA 官方仓库固定提交 `044eabfc…` 的 test_augmented，取直接读单个数值的题，改编成四选一，最多 80 题（`scripts/data/v04_chartqa.py`，`data/v04_chartqa/`）。
-  - 冻结、经评论家复核后，再加入 extras 清单。
+- **图表读数**（ChartQA 改编的图表单值四选一确认子集，V04-CONF-02、V04-CHART-R1-01）：
+  - 来源：ChartQA 官方仓库固定提交 `044eabfc…` 的 test_augmented。按 SHA256(imgname + query) 遍历前 225 题，保留直接读单个数值的 80 题 / 80 图，四选一，干扰项都取同一 CSV 列。
+  - 80 张图都看过：执行方 21 张、评论家 27 张、Spec 评审 32 张。70 题图上印着被问的数值；10 题要从柱高 / 点位估读，其中 multi_col_40409 读的是堆叠段的厚度。
+  - 冻结：chartqa.jsonl `e129226b…`，chartqa_mism.jsonl `e059d318…`，EXCLUSIONS.json `8902145e…`。
+    - 与评审时的版本（`82c1c082…` / `e316cce7…`）相比，题目、选项、gold、图片、题序和错图映射逐条相同，只补了 value_printed / checked_by 两个字段。
+    - 图片、256 预览和计数的哈希都没变；隔离记录复用已审的那份，没有重扫 75 万张图。
+  - 它不是官方 ChartQA 成绩，也不是 80 题精确 OCR 测试；数值在 256 输入里约 2–4 px（按 12 px 字高估算，不是逐图测量）。
 - **评测**：
-  - 候选：`configs/v04-extra-evidence.yaml` 里的 `confirm_property{,_mism,_rev}`，与 29 集同一个冻结身份。
-  - v0.3：`configs/v04-v03-confirm.yaml`（没有常规集合）加 `configs/v04-confirm-extras.yaml`，只评新确认项。它的 freeze / run-extras / seal / check 只覆盖这几项，不重跑 v0.3 的 29 集。
+  - 候选：`configs/v04-extra-evidence.yaml` 里的 `confirm_property{,_mism,_rev}` 和 `confirm_chartqa{,_mism,_rev}`，与 29 集同一个冻结身份。
+  - v0.3：`configs/v04-v03-confirm.yaml`（没有常规集合）加 `configs/v04-confirm-extras.yaml`，只评这 6 项新确认项，题单和模式与候选完全相同。它的 freeze / run-extras / seal / check 只覆盖这 6 项，不重跑 v0.3 的 29 集。
   - 两个模型加对照合计 ≤ 10 分钟。
 - **报告**：`scripts/release/confirm_report.py`。
   - 两个分项分别报告：准确率、看图收益（真图 − 固定错图）及其变化、候选 − v0.3 差值，以及选项倒序时选择改变的比例。
-  - 区间按原图 bootstrap：错图文件的 image_id 是展示的那张图，所以分组按 sample_id 从真图数据文件恢复原图。
+  - 区间按原图 bootstrap。两份错图文件的 image_id 约定不同：属性集记的是展示的那张图（原图在 mismatched_from），图表集保留原图（展示图在 shown_image_id）。统计一律按 sample_id 从真图数据文件恢复原图，两种约定都适用。
+  - 图表集的解读（V04-CHART-R1-02）：不看图、只选四项中最大的值就能对 49 / 80 = 61.25%，只选最小的值是 17 / 80；正确答案的位置分布是 25 / 15 / 25 / 15。所以准确率超过 25% 不能当作看图的证据，要看真图 − 错图的收益及其变化。可以在同一批明细里把 70 道印字题和 10 道估读题分列描述，10 题不做显著性检验，不设门槛。
   - 输入文件带 `extra_` 前缀：
     ```bash
     uv run python scripts/release/confirm_report.py --data data/v04_confirm/confirm.jsonl --name extra_confirm_property \
       --v03 runs/r15-vision/eval --cand <候选轮次>/eval --out release/v0.4/confirm_property.json
+    uv run python scripts/release/confirm_report.py --data data/v04_chartqa/chartqa.jsonl --name extra_confirm_chartqa \
+      --v03 runs/r15-vision/eval --cand <候选轮次>/eval --out release/v0.4/confirm_chartqa.json
     ```
 - 这项证据不替换 68 : 114 主指标，不增设事后的通过阈值，也不能单独证明通用 OCR。第一次的结果要保留；结果一旦用于下一轮开发，就失去盲测资格。
 

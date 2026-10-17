@@ -104,7 +104,7 @@ MANUAL: Dict[str, dict] = {
     "v04-chartqa:multi_col_101283.png:0": {"value_printed": False, "gold_matches_chart": True, "verdict": "keep",
         "note": 'no values printed; Industrial sector 2020 bar ~900 on a 25,000 axis, consistent with 944; distractors 1513-1914 are visibly taller bars'},
     "v04-chartqa:multi_col_40409.png:0": {"value_printed": False, "gold_matches_chart": True, "verdict": "keep",
-        "note": 'stacked bars, no values printed; 2020 Air segment ~47.8 to ~50.3, consistent with 2.4'},
+        "note": 'stacked bars, no values printed; 2020 Air segment ~47.8 to ~50.3, consistent with 2.4 -- a segment thickness read from its upper and lower edges, not a printed figure (critic V04-CHART-R1-01)'},
     "v04-chartqa:multi_col_80175.png:0": {"value_printed": False, "gold_matches_chart": True, "verdict": "keep",
         "note": "grouped bars, no values printed; Asia Pacific 2020 (green) ~2,100, consistent with 2111; distractors are the other regions' 2020 bars"},
     "v04-chartqa:multi_col_60912.png:1": {"value_printed": True, "gold_matches_chart": True, "verdict": "keep",
@@ -144,6 +144,38 @@ MANUAL: Dict[str, dict] = {
     "v04-chartqa:two_col_62268.png:0": {"value_printed": True, "gold_matches_chart": True, "verdict": "keep",
         "note": '52 printed at 1999/00'},
 }
+# The remaining 59 kept pictures, looked at by the critic (27) and the Spec reviewer (32) on 2026-10-17 13:49
+# (critic/critic.md, "ChartQA输入内容复核通过", V04-CHART-R1-01): stem -> who. Each target value is printed on the
+# chart except the stems in REVIEW_NOT_PRINTED (read from bar / point position); question, axis unit and gold agree.
+REVIEW_CHECKS: Dict[str, str] = {
+    **{"two_col_%s" % n: "critic" for n in (
+        "4072 41019 41344 41555 42220 4260 42998 43586 4651 47 5289 5541 60100 61425 62073 62141 62315 63561 80053 "
+        "81813 81873 81950 82084 82215 82741 83153 83537").split()},
+    **{"two_col_%s" % n: "spec-review" for n in (
+        "82499 41604 3220 43770 81794 102195 102327 102453 102598 103550 103789 104396 1192 1260 1391 20064 20485 "
+        "20539 20669 20883 20905 21004 21062 21855 22593 23099 23555 23724 2392 3253 40073 40350").split()},
+}
+REVIEW_NOT_PRINTED: Dict[str, str] = {
+    "two_col_20669": "2019 fresh-fruit bar ~880 with no figure on top; distinguishable from 844.73 and the others",
+    "two_col_22593": "2019 point ~23, unlabelled; the nearby 23.13 belongs to 2018, other options <= 14.31",
+    "two_col_41555": "2019 bar ~264,000, clearly above the nearest option 241174",
+    "two_col_82215": "2019 bar ~480, clearly above the nearest option 414.94",
+    "two_col_83537": "2019 point ~77,500, unlabelled; 75505 belongs to 2018, other options <= 53715",
+}
+
+
+def value_printed(qid: str, img: str) -> Optional[bool]:
+    """From the hand checks: the engineer's 21 (MANUAL, by question id) and the reviewers' 59 (by picture stem)."""
+    if qid in MANUAL:
+        return MANUAL[qid]["value_printed"]
+    stem = img.rsplit(".", 1)[0]
+    return (stem not in REVIEW_NOT_PRINTED) if stem in REVIEW_CHECKS else None
+
+
+def checked_by(qid: str, img: str) -> Optional[str]:
+    return "engineer" if qid in MANUAL else REVIEW_CHECKS.get(img.rsplit(".", 1)[0])
+
+
 # Items a hand check found wrong or unverifiable: id -> reason.
 MANUAL_EXCLUDE: Dict[str, str] = {}
 
@@ -471,7 +503,7 @@ def main(argv=None) -> None:
         scale = 256 / max(w, hgt)
         row["readability"] = {"original_size": [w, hgt], "letterbox_scale": round(scale, 4),
                               "est_text_px_256": round(12 * scale, 1),
-                              "value_printed": MANUAL.get(qid, {}).get("value_printed")}
+                              "value_printed": value_printed(qid, img), "checked_by": checked_by(qid, img)}
         row["isolation_nearest"] = {"data_max_dhash_phash": dist["data"]["both"], "data_dhash": dist["data"]["dhash"],
                                     "data_phash": dist["data"]["phash"]}
         dst = os.path.join(out, "images", img)
@@ -521,7 +553,8 @@ def main(argv=None) -> None:
                               "sha256(imgname + query) ascending, one question per picture, target %d" % a.target,
                       "reject_patterns": dict(REJECT), "equality": "numeric after removing thousands commas, %, "
                       "currency signs, '*', spaces; no rounding, no unit scaling",
-                      "hand_checks": MANUAL, "hand_excluded": MANUAL_EXCLUDE},
+                      "hand_checks": MANUAL, "review_checks": REVIEW_CHECKS, "review_not_printed": REVIEW_NOT_PRINTED,
+                      "hand_excluded": MANUAL_EXCLUDE},
         "distractor_rule": "3 cells of the same CSV, same column first (random.Random('same:'+id) order), then other "
                            "value columns (random.Random('other:'+id)); formatted with the label's decimals and %% / "
                            "currency sign; values equal to the gold or an earlier option after formatting skipped; "
@@ -555,11 +588,13 @@ def main(argv=None) -> None:
                         "original_sizes": dict(Counter("%dx%d" % tuple(r["readability"]["original_size"])
                                                        for r in kept).most_common(10)),
                         "note": "most pictures are 800 px wide Statista screenshots, so the letterbox scale is ~0.32 "
-                                "and printed values are ~3-4 px tall at 256 (marginal legibility); 6 of 21 hand-checked "
-                                "charts print no value for the asked cell (read from bar / point position only)",
-                        "hand_checked": len(MANUAL),
-                        "value_printed_in_hand_checks": dict(Counter(str(v.get("value_printed"))
-                                                                     for v in MANUAL.values()))},
+                                "and printed values are an estimated ~2-4 px tall at 256 (12 px assumed, not measured per "
+                                "picture); every kept picture was looked at (21 engineer + 27 critic + 32 spec review): "
+                                "70 print the asked value, 10 do not (read from bar / point position; multi_col_40409 "
+                                "is a stacked-segment thickness)",
+                        "hand_checked": sum(r["readability"]["checked_by"] is not None for r in kept),
+                        "checked_by": dict(Counter(str(r["readability"]["checked_by"]) for r in kept)),
+                        "value_printed": dict(Counter(str(r["readability"]["value_printed"]) for r in kept))},
         "mismatched_control": {"seed": 0, "rule": "v04_confirm.derangement over the kept image_ids (sorted); "
                                "image_id stays the original, shown_image_id is the picture shown", "map": move},
         "files": {"chartqa.jsonl": {"rows": len(kept), "sha256": sha256(os.path.join(out, "chartqa.jsonl"))},

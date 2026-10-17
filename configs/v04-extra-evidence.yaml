@@ -18,3 +18,8 @@
 - {name: confirm_property, data: data/v04_confirm/confirm.jsonl, temperature: fitted, control: none, role: heldout}
 - {name: confirm_property_mism, data: data/v04_confirm/confirm_mism.jsonl, temperature: fitted, control: none, role: heldout}
 - {name: confirm_property_rev, data: data/v04_confirm/confirm.jsonl, temperature: fitted, control: reversed, role: heldout}
+# ChartQA-adapted single-value chart questions (critic V04-CHART-R1-01 / NEXT-01): 80 questions, 70 printed values
+# and 10 read from bar / point position; image_id of the mismatched file stays the original picture
+- {name: confirm_chartqa, data: data/v04_chartqa/chartqa.jsonl, temperature: fitted, control: none, role: heldout}
+- {name: confirm_chartqa_mism, data: data/v04_chartqa/chartqa_mism.jsonl, temperature: fitted, control: none, role: heldout}
+- {name: confirm_chartqa_rev, data: data/v04_chartqa/chartqa.jsonl, temperature: fitted, control: reversed, role: heldout}
