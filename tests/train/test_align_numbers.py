@@ -56,8 +56,8 @@ def test_refuses_captions_without_their_numbers():
 def test_a_source_not_in_the_data_is_the_plain_run(tmp_path, data):  # noqa: F811
     root, captions, _ = data
     runs = []
-    for name, kw in (("plain", {}), ("absent", {"number_mask_sources": "real-layout-temp"})):
+    for name, sources in (("plain", ""), ("absent", "real-layout-temp")):
         runs.append(align(tiny_decider(seed=1), captions, data_root=root, out_dir=tmp_path / name,
                           config=AlignConfig(epochs=1, batch=4, lr=3e-3, warmup=2, mlm_head="", eval_every=0, lora_r=4,
-                                             lr_lora=3e-3, seed=0, device="cpu", **kw))["losses"])
+                                             lr_lora=3e-3, seed=0, device="cpu", number_mask_sources=sources))["losses"])
     assert runs[0] == runs[1]
