@@ -5,7 +5,13 @@ with HF_HUB_OFFLINE=1).
 
 Data: the 600 development captions of data/real_layout/captions_tune.jsonl (already used in development; never
 rl_confirm, the 75 object-property or the 80 ChartQA items), in file order: a family's two views (v0, v1) are
-consecutive, and with the original in-batch rotation the "shuffled" picture of a v0 is usually its own value twin.
+consecutive, so with the original in-batch rotation half of the wrong pictures are the item's own twin (205 with
+changed numbers, 95 with the same numbers) and half another family (132 of them another form). The overall
+real - wrong difference is therefore the gain from the picture under this fixed wrong picture, mixing numbers,
+object attributes, layout and form; whether numbers are bound to their labels is read from the full-number,
+different-values and twin readouts, and the number classes are also split by the kind of wrong picture
+(critic EXP35-R1-02). START.json (written before the first forward) records the head actually read, the item
+order and every wrong picture (EXP35-R1-01).
 
   1. original: align._evaluate's exact procedure (batch 16, max_caption_tokens 44, mask_prob 0.5, Random(1),
      pictures rotated by one inside each batch) -- the totals must reproduce the checkpoint's final real / shuffled
@@ -34,10 +40,51 @@ import random
 import re
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Sequence, Tuple
 
 DATA = "data/real_layout/captions_tune.jsonl"
+HEAD_REPO = "answerdotai/ModernBERT-large"
+
+
+def head_identity() -> Dict:
+    """The MLM head actually read: the cached file (offline), its snapshot revision and sha256, and the three tensors
+    _MLMHead.load_pretrained copies (dtype, shape, sha256 of the raw bytes). The decoder is tied to the input
+    embeddings of the checkpoint being evaluated (its model.safetensors sha256 is recorded separately)."""
+    import numpy as np
+    from huggingface_hub import hf_hub_download
+    from safetensors import safe_open
+
+    path = hf_hub_download(HEAD_REPO, "model.safetensors")
+    tensors = {}
+    with safe_open(path, "pt") as f:
+        for name in ("head.dense.weight", "head.norm.weight", "decoder.bias"):
+            t = f.get_tensor(name)
+            raw = t.float().numpy() if str(t.dtype) == "torch.bfloat16" else t.numpy()
+            tensors[name] = {"dtype": str(t.dtype), "shape": list(t.shape),
+                             "sha256_float32": hashlib.sha256(np.ascontiguousarray(raw, dtype=np.float32).tobytes()).hexdigest()}
+    parts = os.path.normpath(path).split(os.sep)
+    revision = parts[parts.index("snapshots") + 1] if "snapshots" in parts else None
+    return {"repo": HEAD_REPO, "file": path, "snapshot": revision, "sha256": _sha(path), "tensors": tensors,
+            "decoder": "tied to the evaluated checkpoint's input embeddings"}
+
+
+def pairing(samples: Sequence[Dict], batch: int) -> List[Dict]:
+    """Per item, in file order: its id, the id whose picture the original evaluation shows instead (rotation by one
+    inside each batch of `batch`), and what that wrong picture differs in: the twin with changed numbers, the twin
+    with the same numbers, another family of the same form, or another form (critic EXP35-R1-02)."""
+    out = []
+    for b in range(0, len(samples), batch):
+        idx = list(range(b, min(b + batch, len(samples))))
+        for i, j in zip(idx, idx[1:] + idx[:1]):
+            a, w = samples[i], samples[j]
+            if a["family"] == w["family"]:
+                kind = "twin, numbers changed" if [x["text"] for x in number_spans(a["captions"][0])] != \
+                    [x["text"] for x in number_spans(w["captions"][0])] else "twin, numbers unchanged"
+            else:
+                kind = "other family, same form" if a.get("source") == w.get("source") else "other family, other form"
+            out.append({"id": a["id"], "wrong_picture_id": w["id"], "wrong_picture": kind})
+    return out
 SPAN_PATTERNS = [("mass", re.compile(r"mass of each particle ([\d,]+(?:\.\d+)?) u")),
                  ("speed", re.compile(r"average particle speed ([\d,]+(?:\.\d+)?) m/s")),
                  ("distance", re.compile(r"(\d[\d,]*(?:\.\d+)?) (?:in|cm|mm) apart"))]
@@ -105,7 +152,7 @@ def run(checkpoint: str, out: str, device: str = "mps", data: str = DATA) -> Dic
     decider = Decider.load(checkpoint, device=device)
     model, tok = decider.model, decider.tok
     head = _MLMHead(text_encoder(model.decision))
-    head.load_pretrained("answerdotai/ModernBERT-large")
+    head.load_pretrained(HEAD_REPO)
     dev = next(model.parameters()).device
     model.eval()
     head.to(dev).eval()
@@ -115,11 +162,13 @@ def run(checkpoint: str, out: str, device: str = "mps", data: str = DATA) -> Dic
                     "sha256": {"model.safetensors": _sha(os.path.join(checkpoint, "model.safetensors")), "data": _sha(data)},
                     "settings": {"batch": c.batch, "max_caption_tokens": c.max_caption_tokens, "mask_prob": c.mask_prob,
                                  "rng": "Random(1) per mode", "wrong_picture": "next item in the batch (rotation by one)"}}
-    rotation = []
-    for b in range(0, len(samples), c.batch):
-        chunk = list(range(b, min(b + c.batch, len(samples))))
-        rotation += list(zip(chunk, chunk[1:] + chunk[:1]))
-    report["wrong_picture_is_twin"] = sum(samples[i]["family"] == samples[j]["family"] for i, j in rotation)
+    pairs = pairing(samples, c.batch)
+    report["order_and_wrong_pictures"] = pairs
+    report["wrong_picture_kinds"] = dict(sorted(Counter(p["wrong_picture"] for p in pairs).items()))
+    report["head"] = head_identity()
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    json.dump(report, open(os.path.join(os.path.dirname(out) or ".", "START.json"), "w"), indent=1)   # before any forward
+    kind_of = [p["wrong_picture"] for p in pairs]
 
     # 1. the original evaluation, token classes added
     orig: Dict = {}
@@ -149,14 +198,17 @@ def run(checkpoint: str, out: str, device: str = "mps", data: str = DATA) -> Dic
                         acc["number" if k is not None else "other"].add(hit, nll)
                         if k is not None:
                             acc["number:" + spans[k]["field"]].add(hit, nll)
+                            acc["number@" + kind_of[b + i]].add(hit, nll)
         orig[mode] = {k: v.out() for k, v in sorted(acc.items())}
     for k in orig["real"]:
         r, s = orig["real"][k]["accuracy"], orig["shuffled"].get(k, {}).get("accuracy")
         orig["real"][k]["real_minus_shuffled"] = (r - s) if r is not None and s is not None else None
-    n, a, l = recombine([orig["real"]["number"], orig["real"]["other"]])
     report["original"] = orig
-    report["recombines"] = abs(a - orig["real"]["all"]["accuracy"]) < 1e-12 and n == orig["real"]["all"]["n"] \
-        and abs(l - orig["real"]["all"]["nll"]) < 1e-9
+    report["recombines"] = {}
+    for mode in ("real", "shuffled"):
+        n, a, l = recombine([orig[mode]["number"], orig[mode]["other"]])
+        report["recombines"][mode] = abs(a - orig[mode]["all"]["accuracy"]) < 1e-12 and n == orig[mode]["all"]["n"] \
+            and abs(l - orig[mode]["all"]["nll"]) < 1e-9
     final = json.load(open(os.path.join(checkpoint, "align_report.json")))["val"][-1]
     report["reproduction"] = {"report_real": final["val/mlm_acc_real"], "report_shuffled": final["val/mlm_acc_shuffled"],
                               "here_real": orig["real"]["all"]["accuracy"], "here_shuffled": orig["shuffled"]["all"]["accuracy"]}
@@ -200,6 +252,7 @@ def run(checkpoint: str, out: str, device: str = "mps", data: str = DATA) -> Dic
                         ok[k] = ok[k] and hit
                     for k, s in enumerate(spans):
                         acc["number:" + s["field"]].add(ok[k], 0.0)
+                        acc["number@" + kind_of[idx[i]]].add(ok[k], 0.0)
                         right[(idx[i], k)] = ok[k]
         full[mode] = {k: {"n": v.n, "accuracy": v.out()["accuracy"]} | ({"nll": v.out()["nll"]} if k.startswith("token") else {})
                       for k, v in sorted(acc.items())}
@@ -272,7 +325,7 @@ def main(argv=None):
         x, y = r["full_numbers"]["real"][k], r["full_numbers"]["wrong"][k]
         print("full numbers %-16s n %5d real %.3f wrong %.3f diff %+.3f" % (k, x["n"], x["accuracy"], y["accuracy"], x["accuracy"] - y["accuracy"]))
     print(json.dumps(r["full_numbers_binding"], indent=1))
-    print("wrong picture is the twin for %d of %d items; %.0f s" % (r["wrong_picture_is_twin"], r["rows"], r["seconds"]))
+    print("wrong pictures: %s; %.0f s" % (r["wrong_picture_kinds"], r["seconds"]))
 
 
 if __name__ == "__main__":
