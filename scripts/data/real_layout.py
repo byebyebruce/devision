@@ -13,7 +13,7 @@ Each picture yields alignment captions (the drawn values in a fixed order, as ex
 questions: reading questions (one shared candidate set per field, as exp28's fields) and the ScienceQA-style
 question (temperature: higher M * V^2; force: closer or larger -> stronger, one factor at a time, six wordings).
 
-    uv run python scripts/data/real_layout.py --root data --n 6000 --val 300
+    uv run python scripts/data/real_layout.py --root data --n 6000 --tune 300 --confirm 300
 """
 import argparse
 import hashlib
@@ -52,16 +52,36 @@ def temp_scene(rng: random.Random) -> Dict:
             break
     return {"case": case, "A": {"mass": ma, "speed": va}, "B": {"mass": mb, "speed": vb},
             "colours": [rng.choice(COLOURS), rng.choice(COLOURS)], "count": rng.randint(5, 12),
-            "width": rng.randint(540, 580), "font": rng.randint(15, 17), "seed": rng.random()}
+            "width": rng.randint(520, 600), "font": rng.choice([13, 14, 15, 15, 16, 16, 17, 18, 20, 22, 24]),
+            "a_left": rng.random() < 0.7, "wording": int(rng.random() < 0.25), "spacing": rng.uniform(1.5, 2.1),
+            "seed": rng.random()}
+
+
+LINES = [("Mass of each particle: %d u", "Average particle speed: %s m/s"), ("Particle mass: %d u", "Average speed: %s m/s")]
+
+
+def temp_twin(s: Dict) -> Dict:
+    """The same picture with only values changed (critic: paired counterfactuals change values or the label
+    mapping only): A and B swap their values; an equal pair instead gets a faster sample B."""
+    if s["case"] == "equal":
+        return dict(s, case="same mass", B=dict(s["B"], speed=s["B"]["speed"] + 100))
+    return dict(s, A=s["B"], B=s["A"])
 
 
 def temp_render(s: Dict) -> Image.Image:
-    w, h = s["width"], 405
+    w = s["width"]
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    size = s["font"]
+    longest = LINES[s["wording"]][1] % "1,999"
+    while size > 11 and probe.textlength(longest, font=ImageFont.truetype(FONT, size)) > w / 2 - 12:
+        size -= 1                             # the longest line must fit in its half
+    line = int(size * s["spacing"])
+    h = max(405, 315 + 3 * line + size)
     img = Image.new("RGB", (w, h), "white")
     d = ImageDraw.Draw(img)
     rng = random.Random(s["seed"])
-    font, bold = ImageFont.truetype(FONT, s["font"]), ImageFont.truetype(BOLD, s["font"])
-    for k, name in enumerate(("A", "B")):
+    font, bold = ImageFont.truetype(FONT, size), ImageFont.truetype(BOLD, size)
+    for k, name in enumerate(("A", "B") if s.get("a_left", True) else ("B", "A")):
         cx = w // 4 + k * (w // 2)
         x0, x1, y0, y1 = cx - 95, cx + 95, 30, 300
         d.rounded_rectangle((x0, y0 + 25, x1, y1), radius=28, outline="#9a9a9a", width=2)
@@ -71,9 +91,11 @@ def temp_render(s: Dict) -> Image.Image:
         for _ in range(s["count"]):
             px, py = rng.randint(x0 + 20 + r, x1 - 20 - r), rng.randint(y0 + 50 + r, y1 - 15 - r)
             d.ellipse((px - r, py - r, px + r, py + r), fill=s["colours"][k])
-        d.text((cx, 330), "Sample " + name, fill="black", font=bold, anchor="mm")
-        d.text((cx, 360), "Mass of each particle: %d u" % mass, fill="black", font=font, anchor="mm")
-        d.text((cx, 390), "Average particle speed: %s m/s" % fmt(s[name]["speed"]), fill="black", font=font, anchor="mm")
+        top = 315 + line // 2
+        mass_line, speed_line = LINES[s.get("wording", 0)]
+        d.text((cx, top), "Sample " + name, fill="black", font=bold, anchor="mm")
+        d.text((cx, top + line), mass_line % mass, fill="black", font=font, anchor="mm")
+        d.text((cx, top + 2 * line), speed_line % fmt(s[name]["speed"]), fill="black", font=font, anchor="mm")
     return img
 
 
@@ -110,8 +132,18 @@ def force_scene(rng: random.Random) -> Dict:
     shape = rng.choice(["bar", "disc", "diamond"])
     poles = [[rng.choice(["NS", "SN"]) for _ in range(2)] for _ in range(2)]
     return {"case": case, "unit": unit, "d": [d1, d2], "big": big, "shape": shape, "poles": poles,
-            "colours": rng.choice(MAG_COLOURS), "font": rng.randint(13, 15), "tall": rng.choice([90, 130, 170]),
-            "width": rng.randint(580, 700)}
+            "colours": rng.choice(MAG_COLOURS), "font": rng.choice([12, 13, 13, 14, 15, 16, 18, 20]),
+            "tall": rng.choice([90, 130, 170]), "width": rng.randint(580, 700)}
+
+
+def force_twin(s: Dict) -> Dict:
+    """Only values change: the two pairs swap their distances and magnet sizes; an equal pair instead gets a longer
+    distance in Pair 2."""
+    if s["case"] == "equal":
+        unit_values = dict(UNITS)[s["unit"]]
+        longer = [v for v in unit_values if v > s["d"][0]] or [s["d"][0] * 2]
+        return dict(s, case="distance", d=[s["d"][0], longer[0]])
+    return dict(s, d=s["d"][::-1], big=s["big"][::-1])
 
 
 def _magnet(d: ImageDraw.ImageDraw, box, shape, poles, colours, font):
@@ -222,30 +254,73 @@ def reading(q: str, cands: List[float], right: float, unit: str, slot: int, kind
     return {"q": q, "options": opts, "gold": "%s %s" % (fmt(right), unit), "kind": kind}
 
 
-def build(root: str, n: int, n_val: int, seed: int = 31) -> Dict:
+def transcribed_keys() -> set:
+    """Value combinations of the 24 diagnostic pictures (either order): never drawn (critic: no diagnostic picture
+    or its transcription in training)."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "exp28"))
+    from build import parse_force, parse_temp  # type: ignore
+    notes = json.load(open(os.path.join(os.path.dirname(__file__), "..", "exp21", "sqa_transcribed.json")))
+    keys = set()
+    for k, v in notes.items():
+        if k == "_note":
+            continue
+        if v.startswith("Sample"):
+            t = parse_temp(v)
+            a, b = (t["A"]["mass"], t["A"]["speed"]), (t["B"]["mass"], t["B"]["speed"])
+            keys |= {("temp",) + a + b, ("temp",) + b + a}
+        else:
+            f = parse_force(v)
+            keys |= {("force", f["1"]["distance"], f["2"]["distance"], f["1"]["unit"]),
+                     ("force", f["2"]["distance"], f["1"]["distance"], f["1"]["unit"])}
+    return keys
+
+
+def scene_key(form: str, s: Dict) -> tuple:
+    if form == "temp":
+        return ("temp", float(s["A"]["mass"]), float(s["A"]["speed"]), float(s["B"]["mass"]), float(s["B"]["speed"]))
+    return ("force", float(s["d"][0]), float(s["d"][1]), s["unit"])
+
+
+SPLITS = ("train", "tune", "confirm")
+
+
+def build(root: str, n: int, n_tune: int, n_confirm: int, seed: int = 31) -> Dict:
+    """n / n_tune / n_confirm scene families (a scene and its value twin, both drawn), alternating temperature
+    and force; families never cross splits. Captions for the alignment stage (train / tune), questions for every
+    split; confirm is drawn once and never used to choose a recipe."""
     out = os.path.join(root, "real_layout")
     os.makedirs(os.path.join(out, "images"), exist_ok=True)
     rng = random.Random(seed)
-    files: Dict[str, List[Dict]] = {"captions_train": [], "captions_val": [], "questions_train": [], "questions_val": []}
-    for i in range(n + n_val):
-        split = "train" if i < n else "val"
+    banned = transcribed_keys()
+    files: Dict[str, List[Dict]] = {"%s_%s" % (kind, sp): [] for kind in ("captions", "questions") for sp in SPLITS}
+    total, i, skipped = n + n_tune + n_confirm, 0, 0
+    while i < total:
+        split = "train" if i < n else "tune" if i < n + n_tune else "confirm"
         form = "temp" if i % 2 == 0 else "force"
         s = temp_scene(rng) if form == "temp" else force_scene(rng)
-        img = temp_render(s) if form == "temp" else force_render(s)
-        rel = "real_layout/images/%s_%05d.png" % (split, i)
-        img.save(os.path.join(root, rel))
-        iid = "real-layout:%05d" % i
-        caption, items = (temp_items if form == "temp" else force_items)(s, i)
-        hint = TEMP_HINT if form == "temp" else FORCE_HINT + (", but some of them are different sizes." if s["case"] == "size" else ".")
-        files["captions_" + split].append({"id": iid, "source": "real-layout-" + form, "image_id": iid, "image": rel,
-                                          "captions": [caption]})
-        files["questions_" + split].append({
-            "id": iid, "source": "real-layout-" + form, "kind": form, "axis": s["case"], "image_id": iid, "image": rel,
-            "state_text": hint,
-            "questions": {"q%d" % j: {"type": "choice", "instructions": it["q"], "criteria": {o: None for o in it["options"]}}
-                          for j, it in enumerate(items)},
-            "gold": {"q%d" % j: {"probabilities": {o: float(o == it["gold"]) for o in it["options"]}} for j, it in enumerate(items)}})
-    manifest = {"seed": seed}
+        twin = temp_twin(s) if form == "temp" else force_twin(s)
+        if scene_key(form, s) in banned or scene_key(form, twin) in banned:
+            skipped += 1
+            continue
+        fam = "rl%05d" % i
+        for v, scene in enumerate((s, twin)):
+            img = temp_render(scene) if form == "temp" else force_render(scene)
+            rel = "real_layout/images/%s_v%d.png" % (fam, v)
+            img.save(os.path.join(root, rel))
+            iid = "real-layout:%s:v%d" % (fam, v)
+            caption, items = (temp_items if form == "temp" else force_items)(scene, 2 * i + v)
+            hint = TEMP_HINT if form == "temp" else FORCE_HINT + (", but some of them are different sizes." if scene["case"] == "size" else ".")
+            files["captions_" + split].append({"id": iid, "source": "real-layout-" + form, "image_id": iid, "image": rel,
+                                              "family": fam, "captions": [caption]})
+            files["questions_" + split].append({
+                "id": iid, "source": "real-layout-" + form, "kind": form, "axis": scene["case"], "image_id": iid, "image": rel,
+                "family": fam, "group": fam, "state_text": hint,
+                "questions": {"q%d" % j: {"type": "choice", "instructions": it["q"], "criteria": {o: None for o in it["options"]}}
+                              for j, it in enumerate(items)},
+                "gold": {"q%d" % j: {"probabilities": {o: float(o == it["gold"]) for o in it["options"]}} for j, it in enumerate(items)}})
+        i += 1
+    manifest: Dict = {"seed": seed, "families": {"train": n, "tune": n_tune, "confirm": n_confirm},
+                      "skipped_transcribed_values": skipped}
     for name, rows in files.items():
         path = os.path.join(out, name + ".jsonl")
         with open(path, "w") as fh:
@@ -261,6 +336,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--root", default="data")
     p.add_argument("--n", type=int, default=6000)
-    p.add_argument("--val", type=int, default=300)
+    p.add_argument("--tune", type=int, default=300)
+    p.add_argument("--confirm", type=int, default=300)
     a = p.parse_args()
-    print(json.dumps(build(a.root, a.n, a.val), indent=1))
+    print(json.dumps(build(a.root, a.n, a.tune, a.confirm), indent=1))

@@ -38,8 +38,25 @@ def test_force_labels():
 def test_pictures_and_build(tmp_path):
     rng = random.Random(3)
     for _ in range(20):
-        assert temp_render(temp_scene(rng)).size[1] == 405
+        assert temp_render(temp_scene(rng)).size[1] >= 405
         im = force_render(force_scene(rng))
         assert 580 <= im.size[0] <= 700
-    m = build(str(tmp_path), n=8, n_val=2)
-    assert m["questions_train"]["rows"] == 8 and m["captions_val"]["rows"] == 2
+    m = build(str(tmp_path), n=8, n_tune=2, n_confirm=2)
+    assert m["questions_train"]["rows"] == 16 and m["captions_tune"]["rows"] == 4 and m["questions_confirm"]["rows"] == 4
+    import json
+    rows = {sp: [json.loads(x) for x in open(tmp_path / "real_layout" / ("questions_%s.jsonl" % sp))] for sp in ("train", "tune", "confirm")}
+    fams = [{r["family"] for r in rows[sp]} for sp in rows]
+    assert not (fams[0] & fams[1] or fams[0] & fams[2] or fams[1] & fams[2])
+
+
+def test_twins_change_only_values():
+    from real_layout import force_twin, temp_twin
+    rng = random.Random(5)
+    for k in range(200):
+        s = temp_scene(rng)
+        t = temp_twin(s)
+        assert {x: s[x] for x in s if x not in ("A", "B", "case")} == {x: t[x] for x in t if x not in ("A", "B", "case")}
+        assert temp_items(s, k)[1][0]["gold"] != temp_items(t, k)[1][0]["gold"] or s["case"] == "equal"
+        f = force_scene(rng)
+        g = force_twin(f)
+        assert {x: f[x] for x in f if x not in ("d", "big", "case")} == {x: g[x] for x in g if x not in ("d", "big", "case")}

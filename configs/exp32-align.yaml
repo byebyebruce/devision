@@ -1,0 +1,26 @@
+# exp32 stage A2 (docs/experiments/2026-10-17-exp32-bridge-plan.md): real-layout binding alignment. From exp30's
+# alignment-with-replay checkpoint, the same alignment stage and settings as exp24 / exp30 phase A, on real-layout
+# caption pictures (scripts/data/real_layout.py; captions name sample A / B or pair 1 / 2 first whatever side they
+# are drawn on) mixed 1:1 with isolated real COCO captions, one pass = 1,500 steps.
+name: exp32-align
+device: mps
+common:
+  log_every: 50
+stages:
+- name: stage1
+  kind: align
+  init: runs/exp30-align-replay/stage1
+  data: data/exp32/align_mix.jsonl
+  val: data/real_layout/captions_tune.jsonl
+  params:
+    epochs: 1
+    batch: 16
+    lr: 2.0e-05
+    lora_r: 16
+    lora_alpha: 32
+    lr_lora: 1.0e-04
+    warmup: 100
+    mask_prob: 0.5
+    max_caption_tokens: 40
+    eval_every: 500
+    seed: 0
