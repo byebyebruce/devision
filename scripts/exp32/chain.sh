@@ -16,9 +16,20 @@ init=runs/exp30-align-replay/stage1/model.safetensors
 [ -f "$init" ] || { log "missing exp30's checkpoint"; exit 1; }
 outcome=$(uv run python -c "import json; print(json.load(open('runs/exp30-align-replay/report.json'))['outcome'])") \
   || { log "no exp30 report"; exit 1; }
-case "$outcome" in "passes this protection screen"*) ;; *) log "exp30 did not pass: $outcome"; exit 1;; esac
 sha=$(shasum -a 256 "$init" | cut -d' ' -f1)
 log "start checkpoint $init sha256 $sha"
+# The one explicit exception the critic released (EXP30-NEXT-01, 2026-10-17): exp30 ended with this exact outcome
+# and this exact checkpoint; exp32 runs once from it. Any other non-passing outcome or checkpoint still stops here.
+EXCEPTION_OUTCOME="both panels improve over exp24A, pre-written costs remain"
+EXCEPTION_SHA=ec89b8377ca0fcf724013040d052c5d4a1aabc79f766d06904684c1b91bdda24
+case "$outcome" in
+  "passes this protection screen"*) ;;
+  *) if [ "$outcome" = "$EXCEPTION_OUTCOME" ] && [ "$sha" = "$EXCEPTION_SHA" ]; then
+       log "exp30 did not pass ($outcome); running under the critic's exception EXP30-NEXT-01 for sha256 $sha"
+     else
+       log "exp30 did not pass: $outcome"; exit 1
+     fi;;
+esac
 [ "${EXP32_INIT_SHA256:-}" = "$sha" ] || { log "EXP32_INIT_SHA256 does not match the released checkpoint"; exit 1; }
 # One absolute deadline for everything (critic EXP32-N01-BUDGET): written once to runs/exp32.deadline (epoch
 # seconds, start + 3.5 h) and kept across restarts. Every model step runs under `capped`, which polls the deadline

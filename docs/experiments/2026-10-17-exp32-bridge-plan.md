@@ -103,3 +103,16 @@
 **启动前检查**（EXP32-N01）：chain 先读 exp30 的 report.json，结局必须是"通过本轮保护筛查"；再算 exp30 checkpoint 的 sha256，必须等于评论家放行时写明的值（`EXP32_INIT_SHA256`）。预算是一个绝对截止时间（EXP32-N01-BUDGET）：第一次通过检查时写入 `runs/exp32.deadline`（开始时间 + 3.5 小时），重启沿用、不清零。A2、B（最多 3 次尝试）和每个评测都在 `capped` 下运行：每 20 秒查一次截止时间，到点就终止该步骤的整个进程树，不再启动新步骤。已有的 checkpoint 和 resume.pt 保留，由我处置。
 
 命令：`EXP32_INIT_SHA256=<放行的 sha256> nohup bash scripts/exp32/chain.sh > runs/exp32.out 2>&1 &`
+
+## 修订：从未通过保护筛查的 exp30 继续运行一次（评论家 EXP30-NEXT-01，2026-10-17）
+
+- exp30 的结局是"双面板有改善但仍有预定代价"，不满足本方案的前置条件。exp30 的结局不改。
+- 评论家放行一次例外：从 `runs/exp30-align-replay/stage1`（sha256 `ec89b8377ca0fcf724013040d052c5d4a1aabc79f766d06904684c1b91bdda24`）运行一次 exp32。
+- 不变的部分：数据、训练设置、3.5 小时总预算、终点判定（交付目标与 7 个面板的预写代价），全部照原样。
+- chain 只加一个精确的例外：exp30 的 report 结局必须正好是 "both panels improve over exp24A, pre-written costs remain"，并且 checkpoint 的 sha256 必须正好等于上面的值，两者都匹配才继续。其他未通过的结局或其他 checkpoint，仍按默认保护分支停止。
+- 本地验证：
+  - 结局相同但 checkpoint 不同 → 停止；
+  - 其他未通过的结局 → 停止；
+  - 通过的结局 → 继续；
+  - 真实 exp30 checkpoint 加该结局 → 走例外分支继续。
+- exp31 的监测题（`data/exp31/`）不进入任何训练数据。

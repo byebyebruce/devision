@@ -54,7 +54,7 @@
 
 命令：`nohup bash scripts/exp30/chain.sh > runs/exp30.out 2>&1 &`
 
-## 结果（2026-10-17 11:42–13:08，代码 293378b，`runs/exp30-align-replay/report.txt`）
+## 结果（2026-10-17 11:42–13:08，`runs/exp30-align-replay/report.txt`；实际启动代码按 run.json 是 `d616bac+dirty`，方案与报告代码在 293378b 定稿）
 
 - **用时**：对齐 2,500 步，11:42:50–12:59:38，约 77 分钟（估计 80 分钟）。评 15 个集合约 9 分钟。全程约 86 分钟，在 2 小时上限内。
 - **checkpoint**：`runs/exp30-align-replay/stage1/model.safetensors`，sha256 `ec89b837…bdda24`。
