@@ -60,3 +60,15 @@ def setup(tmp_path, monkeypatch):
 def test_outcomes(setup, true, mism, drop, start):
     out = report.build(setup(true, mism, drop))
     assert out["outcome"].startswith(start)
+
+
+def test_real_layout_families():
+    """Two views of a family share one resampling unit; 'follows the values' counts pairs whose gold moved."""
+    rs = []
+    for f in range(4):
+        for v in range(2):
+            rs.append({"sample_id": "real-layout:rl%05d:v%d" % (f, v), "qid": "q0", "image_id": "real-layout:rl%05d:v%d" % (f, v),
+                       "gold_answer": "sample A" if v == 0 or f % 2 else "sample B", "correct": f != 0 or v == 0})
+    assert {r["image_id"] for r in report.by_family(rs)} == {"real-layout:rl%05d" % f for f in range(4)}
+    v = report.views(rs)
+    assert v["pairs"] == 4 and v["both_views_right"] == 0.75 and v["moved_pairs"] == 2 and v["follows_values"] == 0.5

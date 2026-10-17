@@ -2,14 +2,25 @@
 # exp32 on one Mac (docs/experiments/2026-10-17-exp32-bridge-plan.md):
 # A2. real-layout binding alignment from exp30's checkpoint (configs/exp32-align.yaml); exp24's gate on the
 #     real-layout tune captions is recorded, not a stop;
-# B.  decision training to the end (configs/exp32-fit.yaml; re-running the YAML resumes; at most 3 attempts);
+# B.  decision training to the end (configs/exp32-fit.yaml; re-running the YAML resumes; at most 3 attempts, all
+#     within the 3.5 h budget);
 # E.  devision-eval of the final checkpoint on exp27's 15 sets + the real-layout tune and confirm questions;
 #     scripts/exp32/report.py.
-#   nohup bash scripts/exp32/chain.sh > runs/exp32.out 2>&1 &
+#   EXP32_INIT_SHA256=<released sha> nohup bash scripts/exp32/chain.sh > runs/exp32.out 2>&1 &
 set -u
 cd "$(dirname "$0")/../.."
 log() { echo "== $(date '+%F %T') $*"; }
-[ -f runs/exp30-align-replay/stage1/model.safetensors ] || { log "missing exp30's checkpoint"; exit 1; }
+# Preconditions (critic EXP32-N01): exp30 passed its protection screen, and the start checkpoint is the one the
+# critic released (EXP32_INIT_SHA256, sha256 of exp30's model.safetensors); a model file alone is not a pass.
+init=runs/exp30-align-replay/stage1/model.safetensors
+[ -f "$init" ] || { log "missing exp30's checkpoint"; exit 1; }
+outcome=$(uv run python -c "import json; print(json.load(open('runs/exp30-align-replay/report.json'))['outcome'])") \
+  || { log "no exp30 report"; exit 1; }
+case "$outcome" in "passes this protection screen"*) ;; *) log "exp30 did not pass: $outcome"; exit 1;; esac
+sha=$(shasum -a 256 "$init" | cut -d' ' -f1)
+log "start checkpoint $init sha256 $sha"
+[ "${EXP32_INIT_SHA256:-}" = "$sha" ] || { log "EXP32_INIT_SHA256 does not match the released checkpoint"; exit 1; }
+BUDGET=$((210 * 60))                    # 3.5 hours for everything, retries included
 if [ ! -f runs/exp32-align/stage1/align_report.json ]; then
   log "A2: real-layout binding alignment"
   uv run devision-pipeline configs/exp32-align.yaml || { log "A2 failed"; exit 1; }
@@ -18,6 +29,7 @@ uv run python scripts/exp24/gate.py runs/exp32-align/stage1/align_report.json > 
 cat runs/exp32-align/gate.txt
 for attempt in 1 2 3; do
   [ -f runs/exp32-fit/stage2/model.safetensors ] && break
+  [ "$SECONDS" -lt "$BUDGET" ] || { log "over the 3.5 h budget, no more attempts"; break; }
   log "B attempt $attempt"
   uv run devision-pipeline configs/exp32-fit.yaml || log "B exited non-zero"
 done

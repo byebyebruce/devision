@@ -9,9 +9,21 @@ with labels computed from the drawn values -- never a ScienceQA picture.
     small) with a distance bar and a label ("3 in", "1.25 cm", "42.8 mm") under each pair (picture about
     600-700 x 120-175).
 
-Each picture yields alignment captions (the drawn values in a fixed order, as exp26's panel captions) and decision
-questions: reading questions (one shared candidate set per field, as exp28's fields) and the ScienceQA-style
-question (temperature: higher M * V^2; force: closer or larger -> stronger, one factor at a time, six wordings).
+Each picture yields alignment captions (the drawn values by label: Sample A then B, Pair 1 then 2; temperature
+fields in the order the rows are drawn) and decision questions: reading questions (one shared candidate set per
+field, as exp28's fields) and the ScienceQA-style question (temperature: higher M * V^2; force: closer or larger ->
+stronger, one factor at a time, six wordings).
+
+Positions are decoupled from labels: Sample A is on the right in 30% of the pictures, Pair 1 in 30%, and the speed
+row is above the mass row in 30%. A force picture uses one magnet scale and one distance-to-gap mapping for both
+pairs (fixed per unit, growing with the distance), so equal distances are drawn as equal gaps and every large magnet has the same size
+(critic EXP32-R1-01).
+
+A family is a scene and its value twin. Within a family only the values change (critic EXP32-R1-04): the layout,
+particle positions, question wording, candidate set and option arrangement are frozen; the candidates cover both
+views' values. Splits are assigned by canonical case -- the unordered pair of (value, size) of the two objects --
+so no case (and no family linked to it through a twin) is in two splits (critic EXP32-R1-03); the 24 diagnostic
+cases are never drawn.
 
     uv run python scripts/data/real_layout.py --root data --n 6000 --tune 300 --confirm 300
 """
@@ -26,7 +38,7 @@ from typing import Dict, List, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, os.path.dirname(__file__))
-from rules_text import FORCE_HINT, FORCE_Q, TEMP_HINT, TEMP_Q, TEMP_SAME, UNITS, fmt  # noqa: E402
+from rules_text import FORCE_HINT, FORCE_Q, TEMP_HINT, TEMP_Q, TEMP_SAME, fmt  # noqa: E402
 
 FONT = "/System/Library/Fonts/Supplemental/Arial.ttf"
 BOLD = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
@@ -54,9 +66,10 @@ def temp_scene(rng: random.Random) -> Dict:
             "colours": [rng.choice(COLOURS), rng.choice(COLOURS)], "count": rng.randint(5, 12),
             "width": rng.randint(520, 600), "font": rng.choice([13, 14, 15, 15, 16, 16, 17, 18, 20, 22, 24]),
             "a_left": rng.random() < 0.7, "wording": int(rng.random() < 0.25), "spacing": rng.uniform(1.5, 2.1),
-            "seed": rng.random()}
+            "speed_first": rng.random() < 0.3, "seed": rng.random()}
 
 
+R_MAX = 6 + 46 // 5                            # the largest particle radius (mass 46)
 LINES = [("Mass of each particle: %d u", "Average particle speed: %s m/s"), ("Particle mass: %d u", "Average speed: %s m/s")]
 
 
@@ -88,39 +101,54 @@ def temp_render(s: Dict) -> Image.Image:
         d.rectangle((x0 + 10, y0, x1 - 10, y0 + 20), fill="#9a9a9a")
         mass = s[name]["mass"]
         r = 6 + mass // 5                      # heavier particles drawn bigger, as in the real diagrams
-        for _ in range(s["count"]):
-            px, py = rng.randint(x0 + 20 + r, x1 - 20 - r), rng.randint(y0 + 50 + r, y1 - 15 - r)
+        for _ in range(s["count"]):            # centres do not depend on the mass (twins move no particle)
+            px, py = rng.randint(x0 + 20 + R_MAX, x1 - 20 - R_MAX), rng.randint(y0 + 50 + R_MAX, y1 - 15 - R_MAX)
             d.ellipse((px - r, py - r, px + r, py + r), fill=s["colours"][k])
         top = 315 + line // 2
         mass_line, speed_line = LINES[s.get("wording", 0)]
+        rows = [mass_line % mass, speed_line % fmt(s[name]["speed"])]
+        if s.get("speed_first"):
+            rows = rows[::-1]
         d.text((cx, top), "Sample " + name, fill="black", font=bold, anchor="mm")
-        d.text((cx, top + line), mass_line % mass, fill="black", font=font, anchor="mm")
-        d.text((cx, top + 2 * line), speed_line % fmt(s[name]["speed"]), fill="black", font=font, anchor="mm")
+        d.text((cx, top + line), rows[0], fill="black", font=font, anchor="mm")
+        d.text((cx, top + 2 * line), rows[1], fill="black", font=font, anchor="mm")
     return img
 
 
-def temp_items(s: Dict, k: int) -> Tuple[str, List[Dict]]:
+def temp_items(s: Dict, k: int, views: List[Dict]) -> Tuple[str, List[Dict]]:
+    """k: the family's number (the same for both views); views: the family's scenes, whose values the shared
+    candidates cover."""
     a, b = s["A"], s["B"]
-    caption = "Sample A: mass of each particle %d u, average particle speed %s m/s. Sample B: mass of each particle %d u, average particle speed %s m/s." % (
-        a["mass"], fmt(a["speed"]), b["mass"], fmt(b["speed"]))
+    def part(name):
+        m, v = "mass of each particle %d u" % s[name]["mass"], "average particle speed %s m/s" % fmt(s[name]["speed"])
+        return "Sample %s: %s." % (name, ", ".join([v, m] if s.get("speed_first") else [m, v]))
+    caption = part("A") + " " + part("B")
     ka, kb = a["mass"] * a["speed"] ** 2, b["mass"] * b["speed"] ** 2
     gold = "sample A" if ka > kb else "sample B" if kb > ka else TEMP_SAME
     opts = ["sample A", "sample B", TEMP_SAME]
     random.Random(k).shuffle(opts)
     items = [{"q": TEMP_Q, "options": opts, "gold": gold, "kind": "temp-question"}]
-    for field, unit, q in (("mass", "u", "What is the mass of each particle in sample %s?"),
-                           ("speed", "m/s", "What is the average particle speed in sample %s?")):
-        cands = shared(a[field], b[field], field, k)
-        for j, name in enumerate(("A", "B")):
-            items.append(reading(q % name, cands, s[name][field], unit, k + j, "temp-" + field))
+    for f, (field, unit, q) in enumerate((("mass", "u", "What is the mass of each particle in sample %s?"),
+                                          ("speed", "m/s", "What is the average particle speed in sample %s?"))):
+        order = family_candidates([v[x][field] for v in views for x in "AB"], field, k + f)
+        for name in ("A", "B"):
+            items.append(reading(q % name, order, s[name][field], unit, "temp-" + field))
     return caption, items
 
 
 # ---------------------------------------------------------------- force
 
+FORCE_VALUES = {"in": [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4, 4.25, 4.5, 4.75, 5],
+                "cm": [0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.75, 0.8, 1, 1.2, 1.25, 1.5, 1.6, 1.8, 2, 2.5, 3, 3.5, 4,
+                       4.5, 5, 6, 7, 8],
+                "mm": [5.5, 8.4, 9.6, 12.1, 13.2, 16.9, 18.3, 21.5, 24.7, 28.9, 31.6, 35.2, 42.8, 47.5, 51.3, 58.7,
+                       63.4, 70.2]}
+
+
 def force_scene(rng: random.Random) -> Dict:
     case = rng.choice(["distance", "size", "equal"])
-    unit, values = rng.choice(UNITS)
+    unit = rng.choice(list(FORCE_VALUES))
+    values = FORCE_VALUES[unit]
     d1 = d2 = rng.choice(values)
     big = [[True, True], [True, True]]
     if case == "distance":
@@ -133,16 +161,16 @@ def force_scene(rng: random.Random) -> Dict:
     poles = [[rng.choice(["NS", "SN"]) for _ in range(2)] for _ in range(2)]
     return {"case": case, "unit": unit, "d": [d1, d2], "big": big, "shape": shape, "poles": poles,
             "colours": rng.choice(MAG_COLOURS), "font": rng.choice([12, 13, 13, 14, 15, 16, 18, 20]),
-            "tall": rng.choice([90, 130, 170]), "width": rng.randint(580, 700)}
+            "tall": rng.choice([90, 130, 170]), "width": rng.randint(580, 700), "p1_left": rng.random() < 0.7}
 
 
 def force_twin(s: Dict) -> Dict:
-    """Only values change: the two pairs swap their distances and magnet sizes; an equal pair instead gets a longer
-    distance in Pair 2."""
+    """Only values change: the two pairs swap their distances and magnet sizes; an equal pair instead gets the next
+    longer distance in Pair 2 (the next shorter one at the top of the range)."""
     if s["case"] == "equal":
-        unit_values = dict(UNITS)[s["unit"]]
-        longer = [v for v in unit_values if v > s["d"][0]] or [s["d"][0] * 2]
-        return dict(s, case="distance", d=[s["d"][0], longer[0]])
+        unit_values = FORCE_VALUES[s["unit"]]
+        other = [v for v in unit_values if v > s["d"][0]] or [v for v in unit_values if v < s["d"][0]][-1:]
+        return dict(s, case="distance", d=[s["d"][0], other[0]])
     return dict(s, d=s["d"][::-1], big=s["big"][::-1])
 
 
@@ -164,27 +192,44 @@ def _magnet(d: ImageDraw.ImageDraw, box, shape, poles, colours, font):
         d.text(((hx0 + hx1) / 2, (hy0 + hy1) / 2), p, fill="white", font=font, anchor="mm")
 
 
-def force_render(s: Dict) -> Image.Image:
+def force_geometry(s: Dict) -> Dict:
+    """One layout for both pairs: the magnet scale fits two large magnets in a pair box, and the gap between the
+    magnets depends only on the distance (its rank in the unit's value list, so it grows with the distance), the
+    same mapping for both pairs."""
     w, h = s["width"], s["tall"] + 10
+    pw = (w - 30) // 2
+    big = max(26, int((s["tall"] - 50) * 0.95))
+    wide = 2 if s["shape"] == "bar" else 1
+    room = pw - 16 - 2 * big * wide                          # what is left for the gap with two large magnets
+    if room < 0.35 * pw:                                     # too big for the box: shrink every magnet alike
+        big = int((0.65 * pw - 16) / (2 * wide))
+        room = pw - 16 - 2 * big * wide
+    small = int(big * 0.6)
+    values = FORCE_VALUES[s["unit"]]
+    pairs = []
+    for p in range(2):
+        sizes = [big if s["big"][p][j] else small for j in range(2)]
+        widths = [z * wide for z in sizes]
+        gap = int(room * (0.3 + 0.65 * values.index(s["d"][p]) / (len(values) - 1)))
+        box = 1 - p if not s.get("p1_left", True) else p           # Pair 1 drawn on the right in 30% of pictures
+        bx0 = 10 + box * (pw + 10)
+        start = bx0 + (pw - widths[0] - gap - widths[1]) // 2
+        pairs.append({"box": bx0, "sizes": sizes, "widths": widths, "gap": gap, "start": start})
+    return {"w": w, "h": h, "pw": pw, "pairs": pairs}
+
+
+def force_render(s: Dict) -> Image.Image:
+    g = force_geometry(s)
+    w, h, pw = g["w"], g["h"], g["pw"]
     img = Image.new("RGB", (w, h), "white")
     d = ImageDraw.Draw(img)
     font, label = ImageFont.truetype(FONT, s["font"]), ImageFont.truetype(FONT, s["font"] + 3)
-    pw = (w - 30) // 2
-    mag = max(26, int((s["tall"] - 50) * 0.95))
-    for p in range(2):
-        bx0 = 10 + p * (pw + 10)
+    cy = 24 + (h - 26 - 24) // 2
+    for p, q in enumerate(g["pairs"]):
+        bx0 = q["box"]
         d.text((bx0 + pw / 2, 12), "Pair %d" % (p + 1), fill="black", font=label, anchor="mm")
         d.rectangle((bx0, 24, bx0 + pw, h - 2), outline="#cccccc", width=2)
-        cy = 24 + (h - 26 - 24) // 2
-        sizes = [mag if s["big"][p][j] else int(mag * 0.6) for j in range(2)]
-        widths = [z * (2 if s["shape"] == "bar" else 1) for z in sizes]
-        room = pw - 16 - widths[0] - widths[1]               # what is left for the gap inside the box
-        if room < 0.35 * pw:                                  # too big for the box: shrink the magnets
-            f = (0.65 * pw - 16) / (widths[0] + widths[1])
-            sizes, widths = [int(z * f) for z in sizes], [int(x * f) for x in widths]
-            room = pw - 16 - widths[0] - widths[1]
-        gap = int(room * (0.35 + 0.6 * s["d"][p] / max(s["d"])))   # wider gap for a longer distance, inside the box
-        start = bx0 + 8 + (room - gap) // 2
+        sizes, widths, gap, start = q["sizes"], q["widths"], q["gap"], q["start"]
         for j in range(2):
             x = start if j == 0 else start + widths[0] + gap
             _magnet(d, (x, cy - sizes[j] // 2, x + widths[j], cy + sizes[j] // 2), s["shape"], s["poles"][p][j], s["colours"], font)
@@ -200,7 +245,7 @@ def force_render(s: Dict) -> Image.Image:
     return img
 
 
-def force_items(s: Dict, k: int) -> Tuple[str, List[Dict]]:
+def force_items(s: Dict, k: int, views: List[Dict]) -> Tuple[str, List[Dict]]:
     desc = []
     for p in range(2):
         b = s["big"][p]
@@ -231,10 +276,10 @@ def force_items(s: Dict, k: int) -> Tuple[str, List[Dict]]:
         gold = opts[pick - 1]
     rng.shuffle(opts)
     items = [{"q": FORCE_Q, "options": opts, "gold": gold, "kind": "force-question"}]
-    cands = shared(s["d"][0], s["d"][1], "distance", k)
+    order = family_candidates([v["d"][p] for v in views for p in range(2)], "distance", k)
     for p in range(2):
-        items.append(reading("What is the distance between the magnets in Pair %d?" % (p + 1), cands, s["d"][p], s["unit"],
-                             k + p, "force-distance"))
+        items.append(reading("What is the distance between the magnets in Pair %d?" % (p + 1), order, s["d"][p], s["unit"],
+                             "force-distance"))
     return caption, items
 
 
@@ -246,10 +291,17 @@ def shared(a: float, b: float, field: str, k: int) -> List[float]:
     return candidates(a, b, field, k)
 
 
-def reading(q: str, cands: List[float], right: float, unit: str, slot: int, kind: str) -> Dict:
-    others = [x for x in cands if x != right]
-    order = list(others)
-    order.insert(slot % 3, right)
+def family_candidates(values: List[float], field: str, k: int) -> List[float]:
+    """One candidate set for a field over both views of a family (at most two distinct values: twins swap values
+    or change one), in a display order fixed for the family."""
+    vals = sorted(set(values))
+    assert len(vals) <= 2, vals
+    cands = shared(vals[0], vals[-1], field, k)
+    random.Random(k).shuffle(cands)
+    return cands
+
+
+def reading(q: str, order: List[float], right: float, unit: str, kind: str) -> Dict:
     opts = ["%s %s" % (fmt(x), unit) for x in order]
     return {"q": q, "options": opts, "gold": "%s %s" % (fmt(right), unit), "kind": kind}
 
@@ -281,6 +333,23 @@ def scene_key(form: str, s: Dict) -> tuple:
     return ("force", float(s["d"][0]), float(s["d"][1]), s["unit"])
 
 
+def case_key(form: str, s: Dict) -> tuple:
+    """The canonical case of a view: the unordered pair of the two objects' values (force: distance and magnet
+    sizes) -- what a split must not share."""
+    if form == "temp":
+        objs = sorted((s[x]["mass"], s[x]["speed"]) for x in "AB")
+    else:
+        objs = sorted((float(s["d"][p]), "large" if all(s["big"][p]) else "mixed") for p in range(2))
+    return (form, s.get("unit", ""), tuple(objs))
+
+
+def split_of(key: tuple, n: int, n_tune: int, n_confirm: int) -> str:
+    """A fixed split for a new case, by hash, in proportion to the family counts."""
+    u = int(hashlib.sha256(repr(key).encode()).hexdigest()[:12], 16) / 16 ** 12
+    total = n + n_tune + n_confirm
+    return "confirm" if u < n_confirm / total else "tune" if u < (n_confirm + n_tune) / total else "train"
+
+
 SPLITS = ("train", "tune", "confirm")
 
 
@@ -293,34 +362,54 @@ def build(root: str, n: int, n_tune: int, n_confirm: int, seed: int = 31) -> Dic
     rng = random.Random(seed)
     banned = transcribed_keys()
     files: Dict[str, List[Dict]] = {"%s_%s" % (kind, sp): [] for kind in ("captions", "questions") for sp in SPLITS}
-    total, i, skipped = n + n_tune + n_confirm, 0, 0
-    while i < total:
-        split = "train" if i < n else "tune" if i < n + n_tune else "confirm"
-        form = "temp" if i % 2 == 0 else "force"
+    want = {"train": n, "tune": n_tune, "confirm": n_confirm}
+    have = {(sp, f): 0 for sp in SPLITS for f in ("temp", "force")}
+    owner: Dict[tuple, str] = {}                              # case -> split
+    i, skipped, attempts = 0, {"transcribed": 0, "case in another split": 0, "split full": 0}, 0
+    while any(have[(sp, f)] < (want[sp] + (f == "temp")) // 2 for sp in SPLITS for f in ("temp", "force")):
+        attempts += 1
+        assert attempts < 200 * (n + n_tune + n_confirm) + 10000, "cannot fill the splits"
+        form = "temp" if attempts % 2 else "force"
         s = temp_scene(rng) if form == "temp" else force_scene(rng)
         twin = temp_twin(s) if form == "temp" else force_twin(s)
         if scene_key(form, s) in banned or scene_key(form, twin) in banned:
-            skipped += 1
+            skipped["transcribed"] += 1
             continue
+        keys = {case_key(form, s), case_key(form, twin)}
+        known = {owner[k] for k in keys if k in owner}
+        if len(known) > 1:
+            skipped["case in another split"] += 1
+            continue
+        split = known.pop() if known else split_of(min(keys), n, n_tune, n_confirm)
+        if have[(split, form)] >= (want[split] + (form == "temp")) // 2:
+            skipped["split full"] += 1
+            continue
+        for k in keys:
+            owner[k] = split
+        have[(split, form)] += 1
         fam = "rl%05d" % i
-        for v, scene in enumerate((s, twin)):
+        views = [s, twin]
+        for v, scene in enumerate(views):
             img = temp_render(scene) if form == "temp" else force_render(scene)
             rel = "real_layout/images/%s_v%d.png" % (fam, v)
             img.save(os.path.join(root, rel))
             iid = "real-layout:%s:v%d" % (fam, v)
-            caption, items = (temp_items if form == "temp" else force_items)(scene, 2 * i + v)
+            caption, items = (temp_items if form == "temp" else force_items)(scene, i, views)
             hint = TEMP_HINT if form == "temp" else FORCE_HINT + (", but some of them are different sizes." if scene["case"] == "size" else ".")
             files["captions_" + split].append({"id": iid, "source": "real-layout-" + form, "image_id": iid, "image": rel,
                                               "family": fam, "captions": [caption]})
             files["questions_" + split].append({
                 "id": iid, "source": "real-layout-" + form, "kind": form, "axis": scene["case"], "image_id": iid, "image": rel,
-                "family": fam, "group": fam, "state_text": hint,
+                "family": fam, "group": fam, "case": repr(case_key(form, scene)), "state_text": hint,
                 "questions": {"q%d" % j: {"type": "choice", "instructions": it["q"], "criteria": {o: None for o in it["options"]}}
                               for j, it in enumerate(items)},
                 "gold": {"q%d" % j: {"probabilities": {o: float(o == it["gold"]) for o in it["options"]}} for j, it in enumerate(items)}})
         i += 1
-    manifest: Dict = {"seed": seed, "families": {"train": n, "tune": n_tune, "confirm": n_confirm},
-                      "skipped_transcribed_values": skipped}
+    cases = {sp: {f: sorted({repr(k) for k, o in owner.items() if o == sp and k[0] == f}) for f in ("temp", "force")} for sp in SPLITS}
+    manifest: Dict = {"seed": seed, "families": {"%s_%s" % k: v for k, v in have.items()}, "skipped": skipped,
+                      "cases": {sp: {f: len(v) for f, v in c.items()} for sp, c in cases.items()},
+                      "case_overlap": {"%s-%s" % (a, b): sum(len(set(cases[a][f]) & set(cases[b][f])) for f in ("temp", "force"))
+                                       for a, b in (("train", "tune"), ("train", "confirm"), ("tune", "confirm"))}}
     for name, rows in files.items():
         path = os.path.join(out, name + ".jsonl")
         with open(path, "w") as fh:

@@ -7,7 +7,8 @@ checkpoint (runs/exp32-fit/stage2, devision-eval with its fitted temperatures) a
   - protection: the 7 panels (a cost when <= -3 points with the upper bound < 0; ext 13-source macro, flip with
     its originals) -- no cost found is not equivalence;
   - report: the real-layout tune and confirm questions (reading by field, the ScienceQA-form question) against
-    v0.3; dev16 synthetic reading (exp26's pass rule) as a regression check; concentration / attract-repel;
+    v0.3, intervals resampling families (both views together), both views right and the answer following the
+    values; dev16 synthetic reading (exp26's pass rule) as a regression check; concentration / attract-repel;
     the transcribed / blank questions.
 
     uv run python scripts/exp32/report.py
@@ -46,6 +47,24 @@ def by_kind(rs, data_path):
     return {k: sum(v) / len(v) for k, v in out.items()}
 
 
+def by_family(rs):
+    """Real-layout records keyed to their family (critic EXP32-R1-02): image_id real-layout:<family>:v<view> ->
+    real-layout:<family>, so intervals resample a family's two views together."""
+    return [dict(r, image_id=r["image_id"].rsplit(":", 1)[0] if r["image_id"].startswith("real-layout:") else r["image_id"]) for r in rs]
+
+
+def views(rs):
+    """Per (family, question): both views right; and, where the gold differs between the views, both right (the
+    answer follows the drawn values)."""
+    pairs = defaultdict(list)
+    for r in by_family(rs):
+        pairs[(r["image_id"], r["qid"])].append(r)
+    both = [v for v in pairs.values() if len(v) == 2]
+    moved = [v for v in both if v[0].get("gold_answer") != v[1].get("gold_answer")]
+    rate = lambda vs: sum(all(x["correct"] for x in v) for v in vs) / len(vs) if vs else None  # noqa: E731
+    return {"both_views_right": rate(both), "pairs": len(both), "follows_values": rate(moved), "moved_pairs": len(moved)}
+
+
 def build(run: str = RUN) -> dict:
     ev = os.path.join(run, "eval")
     real = lambda d: {k: recs(d, "sqa_" + k) for k in ("temp", "force", "temp_mism", "force_mism")}  # noqa: E731
@@ -65,7 +84,8 @@ def build(run: str = RUN) -> dict:
         a, b = recs(os.path.join(run, "eval_v03"), split), recs(ev, split)
         path = "data/real_layout/questions_%s.jsonl" % split.split("_")[1]
         out["real_layout"][split] = {"v03": by_kind(a, path), "exp32": by_kind(b, path),
-                                     "change": paired_metric(a, b, "accuracy")}
+                                     "change": paired_metric(by_family(a), by_family(b), "accuracy"),
+                                     "views": {"v03": views(a), "exp32": views(b)}}
     d = syn_index(recs(ev, "dev16"))
     out["dev16"] = {"read": syn_stat(d, 16, "read"), "cmp": syn_stat(d, 16, "cmp")}
     out["dev16"]["read_class"] = classify(out["dev16"]["read"])
@@ -98,6 +118,10 @@ def main():
         print("%s: v0.3 %s | exp32 %s | change %+.1f [%+.1f, %+.1f]" % (
             s, {k: round(v, 3) for k, v in r["v03"].items()}, {k: round(v, 3) for k, v in r["exp32"].items()},
             100 * c["difference"], 100 * c["ci95"][0], 100 * c["ci95"][1]))
+        for m, v in r["views"].items():
+            f = lambda x: "-" if x is None else "%.3f" % x  # noqa: E731
+            print("   %s: both views right %s (%d pairs), answer follows the values %s (%d pairs)" % (
+                m, f(v["both_views_right"]), v["pairs"], f(v["follows_values"]), v["moved_pairs"]))
     print("dev16 read %.3f (%s), compare %.3f" % (out["dev16"]["read"]["value"], out["dev16"]["read_class"], out["dev16"]["cmp"]["value"]))
     print("report only: %s" % {k: {m: round(v, 3) for m, v in d.items()} for k, d in out["report_only"].items()})
     print("outcome: " + out["outcome"])
