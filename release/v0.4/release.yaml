@@ -1,0 +1,36 @@
+# DRAFT (2026-10-17): v0.4 is not locked. `round` / `stage` point at the provisional candidate (exp32's final
+# checkpoint) and change only when the critic and Engineer lock the candidate; cpu_latency and the evidence files
+# are produced after the lock (docs/experiments/2026-10-17-v04-release-draft.md). Do not build for publishing
+# before then.
+version: v0.4
+git_tag: model-v0.4
+model_name: devision-v0.4
+round: runs/exp32-fit
+stage: stage2
+hub_repo: lukbit/devision
+license: apache-2.0
+base_model:
+- convaiinnovations/laya
+- google/siglip2-base-patch16-256
+datasets:
+- HuggingFaceM4/VQAv2
+- lmms-lab/GQA
+- HuggingFaceM4/A-OKVQA
+- derek-thomas/ScienceQA
+- HuggingFaceM4/the_cauldron
+- cambridgeltl/vsr_random
+- jxu124/objects365
+- J1mb0o/e-SNLI-VE
+- Vision-Flan/vision-flan_191-task_1k
+- ryokamoi/VisOnlyQA_Train
+- RyanWW/Super-CLEVR
+- allenai/pixmo-count
+cpu_latency: release/v0.4/cpu_latency.json
+modelscope_repo: baibaibai000/devision
+evidence:
+  cpu_latency.json: release/v0.4/cpu_latency.json
+  delivery_vs_v0.3.json: release/v0.4/delivery_vs_v0.3.json
+  training_align_replay.yaml: configs/exp30-align-replay.yaml
+  training_align_bridge.yaml: configs/exp32-align.yaml
+  training_decision.yaml: configs/exp32-fit.yaml
+  real_layout_manifest.json: data/real_layout/MANIFEST.json
