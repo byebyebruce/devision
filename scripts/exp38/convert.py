@@ -29,7 +29,7 @@ def convert(src: str, dst: str, image_size: int) -> dict:
     cfg["image_size"] = image_size
     cfg["interpolate_pos_encoding"] = image_size != 256
     json.dump(cfg, open(cfg_path, "w"), indent=1)
-    out = {"source": src, "image_size": image_size, "interpolate_pos_encoding": cfg["interpolate_pos_encoding"],
+    out = {"source": src, "source_model_sha256": sha(os.path.join(src, "model.safetensors")), "image_size": image_size, "interpolate_pos_encoding": cfg["interpolate_pos_encoding"],
            "files_identical": {}, "config_sha256": sha(cfg_path)}
     for base, _, files in os.walk(src):
         for f in files:

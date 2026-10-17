@@ -70,3 +70,16 @@ def test_both_stages_train_at_512(ckpt):
     assert trained.cfg.image_size == 512
     assert any(not torch.equal(final[k], after[k]) for k in final if k.startswith("vision.") and "encoder.layers" in k)
     assert json.load(open(ckpt / "t512" / "config.json"))["interpolate_pos_encoding"] is True
+
+
+def test_a_non_finite_caption_loss_stops_before_any_update(ckpt, monkeypatch):
+    """A NaN masked-caption loss (no decision data) stops alignment before the optimizer step; nothing is saved."""
+    import devision.train.align as A
+    root = ckpt / "data"
+    samples = synthetic_samples(root, 8)
+    real = A._mlm_logits
+    monkeypatch.setattr(A, "_mlm_logits", lambda *a, **k: real(*a, **k) * float("nan"))
+    with pytest.raises(RuntimeError):
+        align(Decider.load(ckpt / "c512", device="cpu"), caption_samples(samples), data_root=root, out_dir=ckpt / "nan",
+              config=AlignConfig(epochs=1, batch=4, lr=3e-3, warmup=1, mlm_head="", eval_every=0, seed=0, device="cpu"))
+    assert not (ckpt / "nan" / "model.safetensors").exists() and not (ckpt / "nan" / "align_report.json").exists()

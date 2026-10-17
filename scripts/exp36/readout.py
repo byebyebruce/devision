@@ -16,6 +16,7 @@ import os
 import random
 import sys
 import time
+from typing import Any
 from collections import defaultdict
 
 _spec = importlib.util.spec_from_file_location("exp35_numbers", os.path.join(os.path.dirname(__file__), "..", "exp35", "mlm_numbers.py"))
@@ -48,7 +49,14 @@ def run(checkpoint: str, data: str, out_dir: str, device: str = "mps", original:
     kind_of = [p["wrong_picture"] for p in pairs]
     shown = [p["wrong_picture_id"] for p in pairs]
     os.makedirs(out_dir, exist_ok=True)
+    from devision.infer import config_path
+    vc: Any = model.vision.config
+    side = decider.cfg.image_size // int(vc.patch_size) // decider.cfg.visual_shuffle
     start = {"checkpoint": checkpoint, "data": data, "rows": len(samples), "original_condition": original,
+             "input": {"config_sha256": exp35._sha(config_path(checkpoint)), "image_size": decider.cfg.image_size,
+                       "vision_native_image_size": int(vc.image_size), "patch_size": int(vc.patch_size),
+                       "visual_shuffle": decider.cfg.visual_shuffle, "visual_tokens": side * side,
+                       "interpolate_pos_encoding": bool(decider.cfg.interpolate_pos_encoding)},
              "pictures_sha256": hashlib.sha256("".join(exp35._sha(os.path.join("data", s["image"])) for s in samples).encode()).hexdigest(),
              "sha256": {"model.safetensors": exp35._sha(os.path.join(checkpoint, "model.safetensors")), "data": exp35._sha(data)},
              "head": exp35.head_identity(), "order_and_wrong_pictures": pairs}

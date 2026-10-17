@@ -308,7 +308,7 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 loss = mlm + c.decision_weight * dec
                 extra = {"decision_ce": dec.item(), "decision_accuracy": (d_logits.masked_fill(~d_mask, -1e4).argmax(-1)
                                                                          == d_target.argmax(-1)).float().mean().item()}
-            if decide and not math.isfinite(loss.item()):
+            if not math.isfinite(loss.item()):   # before any update: nothing is saved from a broken run (critic EXP38-R1-03)
                 raise RuntimeError("step %d: loss is %r: the device is returning invalid results" % (len(losses), loss.item()))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
