@@ -28,7 +28,7 @@ stages:
     lr_head: 1.0e-05
     lr_lora: 5.0e-05
     warmup: 100
-    eval_every: 1000
+    eval_every: 1600
     save_every: 500
     amp: 'off'
     seed: 1
