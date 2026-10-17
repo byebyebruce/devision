@@ -138,3 +138,18 @@ def test_split_forward_equals_the_whole_batch():
         whole = _logits_in_parts(d.model, head, ids, att, px, torch.device("cpu"), 0)
         parts = _logits_in_parts(d.model, head, ids, att, px, torch.device("cpu"), 2)
     assert torch.allclose(whole, parts, atol=1e-5)
+
+
+def test_eval_batch_does_not_change_evaluation_logits(tmp_path):
+    """rlcd's evaluation in forward passes of 32 or of 3 questions: the same logits (candidate B's 512 memory)."""
+    from test_pipeline import synthetic_samples as syn
+
+    from devision.train.rlcd import _Images, _items, _val_logits
+    d = tiny_decider(seed=4)
+    samples = syn(tmp_path / "d", 6)
+    items = _items(d, samples)
+    images = _Images(tmp_path / "d", d)
+    a = _val_logits(d.model, items, images, d.tok.pad_token_id, torch.device("cpu"), 32)
+    b = _val_logits(d.model, items, images, d.tok.pad_token_id, torch.device("cpu"), 3)
+    assert len(a) == len(b) == len(items)
+    assert all(abs(x - y) < 1e-5 for ra, rb in zip(a, b) for x, y in zip(ra, rb))

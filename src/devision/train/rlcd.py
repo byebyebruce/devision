@@ -45,6 +45,7 @@ MIN_BUCKET_ITEMS = 50    # fewer val questions in a bucket: no bucket temperatur
 class TrainConfig:
     epochs: int = 4
     micro_batch: int = 8
+    eval_batch: int = 32         # questions per forward pass when evaluating (val / --eval sets); results do not depend on it
     group_size: int = 4          # RLCD noisy-logit samples per item
     sigma_start: float = 0.4
     sigma_end: float = 0.1
@@ -309,14 +310,14 @@ def fit_temperatures(logits, items, previous: Optional[ModelConfig] = None,
     return temperature, dict(sorted(by_options.items()))
 
 
-def _val_logits(model, items, images, pad_id, device):
-    """Temperature-free option logits for each item, in eval mode."""
+def _val_logits(model, items, images, pad_id, device, per: int = 32):
+    """Temperature-free option logits for each item, in eval mode; `per` questions per forward pass."""
     was_training = model.training
     model.eval()
     out = []
     with torch.no_grad():
-        for b in range(0, len(items), 32):
-            chunk = items[b:b + 32]
+        for b in range(0, len(items), per):
+            chunk = items[b:b + per]
             batch = collate_items([chunk], pad_id)
             assert batch is not None
             logits = _forward(model, batch, torch.stack([images(it["image"]) for it in chunk]), device)
@@ -605,7 +606,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             return evals[-1]
         row: Dict[str, float] = {}
         for name, its in sets.items():
-            logits = _val_logits(model, its, images, tok.pad_token_id, device)
+            logits = _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch)
             row.update(_set_metrics(name, logits, its))
             if c.monitor_details and out_dir:
                 _write_records(os.path.join(str(out_dir), "monitor", "step%d" % len(losses),
@@ -710,7 +711,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if hasattr(model, "grounding"):   # S1's head is a training device, not part of the model that answers
         del model.grounding
     model.eval()
-    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device) for name, its in sets.items()}
+    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch) for name, its in sets.items()}
     temperature, by_options = fit_temperatures(set_logits["val"], calib)
     decider.cfg.temperature, decider.cfg.temperature_by_options = temperature, by_options
     print("temperatures (choice, score, noul):", [round(t, 3) for t in temperature])
