@@ -1,26 +1,30 @@
-"""exp39 resource watch (docs/experiments/2026-10-17-exp39-lowmem-plan.md): reads the training run's SwanLab cache and
-stops the run (TERM to the given pattern's processes, KILL 15 s later) on the pre-written rules:
+"""exp39 resource watch (docs/experiments/2026-10-17-exp39-lowmem-plan.md; critic EXP39-R2-02). The watch STARTS the
+training command itself, in its own process group, and owns it: it reads that run's SwanLab cache and stops exactly
+that process group (TERM, then KILL 15 s later) on the pre-written rules --
   - first window (step 50): step_s > 9, or MPS driver memory > 16 GB with system memory available < 2 GB;
-  - two consecutive training windows > 12 s / step (windows that contain a validation -- the one after step 500 --
-    are not counted);
-  - a stall: no new window for 10 minutes (20 minutes after a validation step; 30 minutes before the first window,
-    which follows the step-0 validation at 512).
-Writes what it saw and why it stopped to the given log.
+  - two consecutive training windows > 12 s / step (the window after the step-500 validation is not counted);
+  - a stall, timed from the start of the training even while no run id / cache exists yet: no new window for
+    30 minutes before the first one (the step-0 validation at 512 comes first), 20 minutes after a validation step,
+    10 minutes otherwise.
+A cache that cannot be read (being written) counts as "no new window" -- the stall clock keeps running, it is never
+read as progress. A TERM to the watch itself (the chain's deadline) is passed on to the training group the same way.
+Exit status: the training's own status, or 3 when the watch stopped it. What it saw and why it stopped: the log.
 
-    uv run python scripts/exp39/watch.py runs/exp39-h/stage1 "align_main.*exp39-h|configs/exp39-h.yaml" runs/exp39-watch.txt
+    uv run python scripts/exp39/watch.py runs/exp39-h/stage1 runs/exp39-watch.txt -- uv run devision-pipeline configs/exp39-h.yaml
 """
 import glob
 import json
 import os
+import signal
+import struct
 import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(__file__))
+LIMITS = {"first": 1800.0, "val": 1200.0, "other": 600.0}
 
 
-def series(path: str, key: str):
-    import struct
+def series(path: str, key: str) -> dict:
     b = open(path, "rb").read()
 
     def varint(i):
@@ -40,12 +44,12 @@ def series(path: str, key: str):
             return out
         step, j = varint(i + len(k))
         m = b.find(b"*\t\t", j, j + 60)
-        if m > 0:
+        if m > 0 and m + 11 <= len(b):
             out[step] = struct.unpack("<d", b[m + 3:m + 11])[0]
         i = j
 
 
-def decide(windows: dict, mps: dict, ram: dict, since_last: float, val_steps=(500,)) -> str:
+def decide(windows: dict, mps: dict, ram: dict, since_last: float, val_steps=(500,), limits=LIMITS) -> str:
     """'' to go on, else the reason to stop."""
     steps = sorted(windows)
     if 50 in windows:
@@ -58,56 +62,84 @@ def decide(windows: dict, mps: dict, ram: dict, since_last: float, val_steps=(50
         if b - a == 50 and windows[a] > 12 and windows[b] > 12:
             return "two windows > 12 s/step at %d / %d" % (a, b)
     last = steps[-1] if steps else 0
-    limit = 1800 if not steps else 1200 if any(v <= last < v + 50 for v in val_steps) else 600
+    limit = limits["first"] if not steps else limits["val"] if any(v <= last < v + 50 for v in val_steps) else limits["other"]
     if since_last > limit:
         return "no new window for %.0f s after step %d" % (since_last, last)
     return ""
 
 
-def training_pids(pattern: str):
-    """pids matching `pattern`, never this watcher itself."""
-    out = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True).stdout.split()
-    return [int(p) for p in out if int(p) != os.getpid()]
-
-
-def stop(pattern: str) -> None:
-    for sig in ("TERM", "KILL"):
-        for p in training_pids(pattern):
+def stop_group(child: subprocess.Popen, grace: float = 15.0) -> None:
+    """TERM the training's process group, KILL it `grace` seconds later if anything is left."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(child.pid, sig)
+        except ProcessLookupError:
+            return
+        if sig == signal.SIGTERM:
             try:
-                os.kill(p, getattr(__import__("signal"), "SIG" + sig))
-            except ProcessLookupError:
+                child.wait(grace)
+                os.killpg(child.pid, 0)       # the leader is gone; anything left in the group?
+            except subprocess.TimeoutExpired:
                 pass
-        if sig == "TERM":
-            time.sleep(15)
+            except ProcessLookupError:
+                return
+            time.sleep(0.5)
 
 
-def main(stage_dir: str, pattern: str, log: str):
-    run_id = None
-    while run_id is None:
-        f = os.path.join(stage_dir, "swanlab_run.json")
-        if os.path.exists(f):
-            run_id = json.load(open(f)).get("id") or json.load(open(f)).get("run_id")
-        time.sleep(10)
-    cache = None
-    seen, last_change = 0, time.time()
+def cache_of(stage_dir: str):
+    f = os.path.join(stage_dir, "swanlab_run.json")
+    try:
+        run_id = json.load(open(f)).get("id")
+    except (OSError, ValueError):
+        return None
+    return next(iter(glob.glob("swanlog/run-*-%s/run-%s.swanlab" % (run_id, run_id))), None) if run_id else None
+
+
+def main(argv=None, limits=LIMITS, poll: float = 30.0) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    stage_dir, log = argv[0], argv[1]
+    cmd = argv[argv.index("--") + 1:]
+    child = subprocess.Popen(cmd, start_new_session=True)       # its own process group: nothing else is touched
+    stopping = {"why": ""}
+
+    def on_term(signum, frame):
+        stopping["why"] = "the watch was told to stop (signal %d)" % signum
+    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGINT, on_term)
+    seen, last_change, unreadable = 0, time.time(), 0
+    w: dict = {}
+    mps: dict = {}
+    ram: dict = {}
     with open(log, "a") as out:
-        while training_pids(pattern):
-            cache = cache or next(iter(glob.glob("swanlog/run-*-%s/run-%s.swanlab" % (run_id, run_id))), None)
-            if cache:
-                w = series(cache, "perf/step_s")
-                if len(w) != seen:
+        out.write("%s started pid %d: %s\n" % (time.strftime("%T"), child.pid, " ".join(cmd)))
+        out.flush()
+        while child.poll() is None:
+            why = stopping["why"]
+            cache = cache_of(stage_dir)
+            if cache and not why:
+                try:
+                    nw, nm, nr = (series(cache, k) for k in ("perf/step_s", "sys/torch_mps_gb", "sys/ram_available_gb"))
+                    if len(nw) >= len(w):          # a half-written read never removes what was seen
+                        w, mps, ram = nw, nm, nr
+                except (OSError, IndexError, struct.error):
+                    unreadable += 1
+                if len(w) > seen:
                     seen, last_change = len(w), time.time()
                     out.write("%s windows %s\n" % (time.strftime("%T"), {k: round(v, 2) for k, v in sorted(w.items())[-3:]}))
                     out.flush()
-                why = decide(w, series(cache, "sys/torch_mps_gb"), series(cache, "sys/ram_available_gb"), time.time() - last_change)
-                if why:
-                    out.write("%s stop: %s\n" % (time.strftime("%T"), why))
-                    out.flush()
-                    stop(pattern)
-                    return 3
-            time.sleep(30)
-    return 0
+            if not why:
+                why = decide(w, mps, ram, time.time() - last_change, limits=limits)
+            if why:
+                out.write("%s stop: %s (unreadable cache reads %d)\n" % (time.strftime("%T"), why, unreadable))
+                out.flush()
+                stop_group(child)
+                return 3
+            deadline = time.time() + poll
+            while time.time() < deadline and child.poll() is None and not stopping["why"]:
+                time.sleep(min(1.0, poll))
+        out.write("%s training exited %s\n" % (time.strftime("%T"), child.returncode))
+    return int(child.returncode or 0)
 
 
 if __name__ == "__main__":
-    sys.exit(main(*sys.argv[1:4]))
+    sys.exit(main())
