@@ -98,6 +98,13 @@
   - 三个分项分别报告 v0.3 与候选的准确率、真图 − 固定错图的收益、候选 − v0.3 的差值，以及按图聚类的 95% 区间；
   - 另报选项倒序的敏感度；
   - 图解只有 2 张图，只作描述，不下结论。
+- 冻结（V04-CONF-01）：物体属性 75 题 / 75 图通过复核。confirm.jsonl `5e5c8e2d…`，confirm_mism.jsonl `d9e55e18…`。
+- 图表替代（V04-CONF-02）：ScienceQA test 的气候图都是 train / val 换色重绘，改用 ChartQA 官方仓库固定提交 `044eabfc…` 的 test_augmented，取直接读单个数值的题，改编成四选一，最多 80 题，正在准备（`scripts/data/v04_chartqa.py`，`data/v04_chartqa/`）。
+- 报告：`scripts/release/confirm_report.py`（测试 `tests/release/test_confirm_report.py`）。
+  - 物体属性、图表分项分别报告；
+  - 区间按原图做 bootstrap。错图文件里的 image_id 是展示的那张图，所以分组按 sample_id 从真图数据文件恢复原图；
+  - 输出各模型的准确率、看图收益（真图 − 固定错图）及其变化、候选 − v0.3 差值、选项倒序时选择改变的比例。
+  - 候选的输入先过 check。
 - 这项证据不替换 68 : 114 主指标，不增设事后的通过阈值，也不能单独证明通用 OCR。第一次的结果要保留；结果一旦用于下一轮开发，就失去盲测资格。
 
 ## 4. 概率质量（V04-REL-R1-03，`scripts/release/calibration.py`）
