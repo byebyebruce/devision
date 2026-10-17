@@ -3,7 +3,7 @@
 # A2. real-layout binding alignment from exp30's checkpoint (configs/exp32-align.yaml); exp24's gate on the
 #     real-layout tune captions is recorded, not a stop;
 # B.  decision training to the end (configs/exp32-fit.yaml; re-running the YAML resumes; at most 3 attempts, all
-#     within the 3.5 h budget);
+#     within one absolute 3.5 h deadline that survives restarts);
 # E.  devision-eval of the final checkpoint on exp27's 15 sets + the real-layout tune and confirm questions;
 #     scripts/exp32/report.py.
 #   EXP32_INIT_SHA256=<released sha> nohup bash scripts/exp32/chain.sh > runs/exp32.out 2>&1 &
@@ -20,18 +20,36 @@ case "$outcome" in "passes this protection screen"*) ;; *) log "exp30 did not pa
 sha=$(shasum -a 256 "$init" | cut -d' ' -f1)
 log "start checkpoint $init sha256 $sha"
 [ "${EXP32_INIT_SHA256:-}" = "$sha" ] || { log "EXP32_INIT_SHA256 does not match the released checkpoint"; exit 1; }
-BUDGET=$((210 * 60))                    # 3.5 hours for everything, retries included
+# One absolute deadline for everything (critic EXP32-N01-BUDGET): written once to runs/exp32.deadline (epoch
+# seconds, start + 3.5 h) and kept across restarts. Every model step runs under `capped`, which polls the deadline
+# and stops the step with its whole process tree when it passes; checkpoints and resume.pt stay for a decision.
+DEADLINE_FILE=runs/exp32.deadline
+[ -f "$DEADLINE_FILE" ] || echo $(( $(date +%s) + 210 * 60 )) > "$DEADLINE_FILE"
+DEADLINE=$(cat "$DEADLINE_FILE")
+log "deadline $(date -r "$DEADLINE" '+%F %T')"
+kill_tree() { local c; for c in $(pgrep -P "$1"); do kill_tree "$c"; done; kill -TERM "$1" 2>/dev/null; }
+capped() {
+  [ "$(date +%s)" -lt "$DEADLINE" ] || { log "past the deadline, not starting: $*"; exit 2; }
+  "$@" &
+  local pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+      log "deadline reached, stopping: $*"; kill_tree "$pid"; wait "$pid"; exit 2
+    fi
+    sleep "${CAPPED_POLL:-20}"
+  done
+  wait "$pid"
+}
 if [ ! -f runs/exp32-align/stage1/align_report.json ]; then
   log "A2: real-layout binding alignment"
-  uv run devision-pipeline configs/exp32-align.yaml || { log "A2 failed"; exit 1; }
+  capped uv run devision-pipeline configs/exp32-align.yaml || { log "A2 failed"; exit 1; }
 fi
 uv run python scripts/exp24/gate.py runs/exp32-align/stage1/align_report.json > runs/exp32-align/gate.txt 2>&1
 cat runs/exp32-align/gate.txt
 for attempt in 1 2 3; do
   [ -f runs/exp32-fit/stage2/model.safetensors ] && break
-  [ "$SECONDS" -lt "$BUDGET" ] || { log "over the 3.5 h budget, no more attempts"; break; }
   log "B attempt $attempt"
-  uv run devision-pipeline configs/exp32-fit.yaml || log "B exited non-zero"
+  capped uv run devision-pipeline configs/exp32-fit.yaml || log "B exited non-zero"
 done
 [ -f runs/exp32-fit/stage2/model.safetensors ] || { log "B failed 3 times"; exit 1; }
 run=runs/exp32-fit
@@ -49,7 +67,7 @@ for s in $SETS; do
   out=$run/eval/$set.json
   [ -f "${out%.json}.details.jsonl" ] && continue
   log "eval $set"
-  uv run devision-eval --checkpoint $run/stage2 --data "$data" --data-root data --out "$out" --role monitoring \
+  capped uv run devision-eval --checkpoint $run/stage2 --data "$data" --data-root data --out "$out" --role monitoring \
     > "${out%.json}.log" 2>&1 || { log "$set failed"; exit 1; }
 done
 # v0.3 on the real-layout and dev16 sets (the 15 exp27 sets are reused)
@@ -58,7 +76,7 @@ for s in rl_tune=data/real_layout/questions_tune.jsonl rl_confirm=data/real_layo
   set=${s%%=*}; data=${s#*=}; out=runs/exp32-fit/eval_v03/$set.json
   [ -f "${out%.json}.details.jsonl" ] && continue
   log "v03 $set"
-  uv run devision-eval --checkpoint runs/r15-vision/stage2 --data "$data" --data-root data --out "$out" --role monitoring \
+  capped uv run devision-eval --checkpoint runs/r15-vision/stage2 --data "$data" --data-root data --out "$out" --role monitoring \
     > "${out%.json}.log" 2>&1 || { log "v03 $set failed"; exit 1; }
 done
 uv run python scripts/exp32/report.py > "$run/report.txt" 2>&1

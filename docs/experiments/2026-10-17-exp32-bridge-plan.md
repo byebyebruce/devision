@@ -96,6 +96,6 @@
 
 合计约 3 小时，上限 3.5 小时。exp30 约 13:35 出结果；通过的话立即开跑，约 16:40 出结果。每小时检查一次，并挂上完成通知。
 
-**启动前检查**（EXP32-N01）：chain 先读 exp30 的 report.json，结局必须是"通过本轮保护筛查"；再算 exp30 checkpoint 的 sha256，必须等于评论家放行时写明的值（`EXP32_INIT_SHA256`）。B 最多 3 次尝试，全部算在 3.5 小时总预算内，超时不再重试。
+**启动前检查**（EXP32-N01）：chain 先读 exp30 的 report.json，结局必须是"通过本轮保护筛查"；再算 exp30 checkpoint 的 sha256，必须等于评论家放行时写明的值（`EXP32_INIT_SHA256`）。预算是一个绝对截止时间（EXP32-N01-BUDGET）：第一次通过检查时写入 `runs/exp32.deadline`（开始时间 + 3.5 小时），重启沿用、不清零。A2、B（最多 3 次尝试）和每个评测都在 `capped` 下运行：每 20 秒查一次截止时间，到点就终止该步骤的整个进程树，不再启动新步骤。已有的 checkpoint 和 resume.pt 保留，由我处置。
 
 命令：`EXP32_INIT_SHA256=<放行的 sha256> nohup bash scripts/exp32/chain.sh > runs/exp32.out 2>&1 &`
