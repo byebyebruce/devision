@@ -25,12 +25,12 @@ exp35 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(exp35)
 
 
-def run(checkpoint: str, data: str, out_dir: str, device: str = "mps", original: bool = True) -> dict:
+def run(checkpoint: str, data: str, out_dir: str, device: str = "mps", original: bool = True, micro: int = 0) -> dict:
     import torch
 
     from devision.infer import Decider
     from devision.model import text_encoder
-    from devision.train.align import AlignConfig, _masked_batch, _mlm_logits, _MLMHead
+    from devision.train.align import AlignConfig, _logits_in_parts, _masked_batch, _MLMHead
     from devision.train.rlcd import _Images
     from devision.train.samples import read_jsonl
 
@@ -57,6 +57,7 @@ def run(checkpoint: str, data: str, out_dir: str, device: str = "mps", original:
                        "vision_native_image_size": int(vc.image_size), "patch_size": int(vc.patch_size),
                        "visual_shuffle": decider.cfg.visual_shuffle, "visual_tokens": side * side,
                        "interpolate_pos_encoding": bool(decider.cfg.interpolate_pos_encoding)},
+             "forward_rows": micro or 16,
              "pictures_sha256": hashlib.sha256("".join(exp35._sha(os.path.join("data", s["image"])) for s in samples).encode()).hexdigest(),
              "sha256": {"model.safetensors": exp35._sha(os.path.join(checkpoint, "model.safetensors")), "data": exp35._sha(data)},
              "head": exp35.head_identity(), "order_and_wrong_pictures": pairs}
@@ -73,7 +74,7 @@ def run(checkpoint: str, data: str, out_dir: str, device: str = "mps", original:
                 caps = [rng.choice(s["captions"]) for s in chunk]
                 pix = chunk if mode == "real" else chunk[1:] + chunk[:1]
                 input_ids, attention, target = _masked_batch(tok, caps, c, rng)
-                logits = _mlm_logits(model, head, input_ids, attention, torch.stack([images(s["image"]) for s in pix]), dev)
+                logits = _logits_in_parts(model, head, input_ids, attention, torch.stack([images(s["image"]) for s in pix]), dev, micro)
                 y = target[:, 1:].to(dev)
                 logp = torch.log_softmax(logits, -1)
                 for i, cap in enumerate(caps):
@@ -116,7 +117,7 @@ def run(checkpoint: str, data: str, out_dir: str, device: str = "mps", original:
                 attention = torch.zeros((len(seqs), L), dtype=torch.long)
                 for i, sq in enumerate(seqs):
                     input_ids[i, :len(sq)], attention[i, :len(sq)] = torch.tensor(sq), 1
-                logits = _mlm_logits(model, head, input_ids, attention, torch.stack([images(s["image"]) for s in pix]), dev)
+                logits = _logits_in_parts(model, head, input_ids, attention, torch.stack([images(s["image"]) for s in pix]), dev, micro)
                 pred = logits.argmax(-1).cpu()
                 for i, (ids, spans, which) in enumerate(info):
                     s = chunk[i]
@@ -146,8 +147,10 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--device", default="mps")
     ap.add_argument("--full-numbers-only", action="store_true", help="skip the original random-mask condition (exp37)")
+    ap.add_argument("--micro", type=int, default=0, help="run each batch of 16 in forward passes of this many rows (exp39); "
+                    "captions, masks and wrong pictures are made per 16 rows as before")
     a = ap.parse_args(argv)
-    r = run(a.checkpoint, a.data, a.out, a.device, original=not a.full_numbers_only)
+    r = run(a.checkpoint, a.data, a.out, a.device, original=not a.full_numbers_only, micro=a.micro)
     if r["original"]:
         print("%s on %s: original real %.4f shuffled %.4f (numbers %.3f / %.3f); %d number records; %.0f s" % (
             a.checkpoint, a.data, r["original"]["real"]["all"]["accuracy"], r["original"]["shuffled"]["all"]["accuracy"],

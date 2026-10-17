@@ -119,3 +119,22 @@ def test_refused_combinations(tmp_path, data):
             align(tiny_decider(seed=1), caps, data_root=root, out_dir=tmp_path / "r",
                   config=AlignConfig(epochs=1, batch=4, mlm_head="", eval_every=0, seed=0, device="cpu",
                                      micro_batch=micro, decision_data=dec))
+
+
+def test_split_forward_equals_the_whole_batch():
+    """What the readout uses with --micro: the same rows and padding run in parts give the same logits."""
+    import random
+
+    from devision.train.align import _logits_in_parts, _masked_batch, _MLMHead
+    from devision.model import text_encoder
+    d = tiny_decider(seed=2)
+    head = _MLMHead(text_encoder(d.model.decision))
+    tok = d.tok
+    caps = ["the image is red", "a blue picture", "Pair 1: two large magnets, 0.75 in apart.", "the image is blue", "red"]
+    ids, att, _ = _masked_batch(tok, caps, AlignConfig(mask_prob=0.5), random.Random(0))
+    px = torch.randn(len(caps), 3, 256, 256)
+    d.model.eval()
+    with torch.no_grad():
+        whole = _logits_in_parts(d.model, head, ids, att, px, torch.device("cpu"), 0)
+        parts = _logits_in_parts(d.model, head, ids, att, px, torch.device("cpu"), 2)
+    assert torch.allclose(whole, parts, atol=1e-5)
