@@ -152,7 +152,7 @@ def _number_rows(tok, captions: Sequence[str], rows: Sequence[int], input_ids, t
 def _mlm_logits(model, head, input_ids, attention, pixels, device) -> torch.Tensor:
     """Vocabulary logits at text positions 1.. (they line up with labels[:, 1:])."""
     with torch.no_grad():
-        patches = model.vision(pixel_values=pixels.to(device)).last_hidden_state
+        patches = model.vision_patches(pixels.to(device))
     visual = model.projector(patches)
     h, _ = model.encode(input_ids.to(device), attention.to(device), visual)
     return head(h[:, visual.size(1) + 1:]).float()

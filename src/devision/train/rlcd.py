@@ -235,7 +235,7 @@ def _vision_params(vision, top: int) -> List[nn.Parameter]:
 def _forward(model, batch, pixels, device, return_hidden: bool = False):
     trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
     with torch.set_grad_enabled(trains_vision):
-        patches = model.vision(pixel_values=pixels.to(device)).last_hidden_state
+        patches = model.vision_patches(pixels.to(device))
     visual = model.projector(patches)
     return model(*(batch[k].to(device) for k in
                    ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),

@@ -30,6 +30,10 @@ class ModelConfig:
     # Round 13 screen S2: each question re-reads the SigLIP patches and adds what it finds to the visual tokens
     # (QuestionConditioning). False for every checkpoint before it; those load and answer exactly as before.
     question_conditioning: bool = False
+    # exp38: an input size other than the vision tower's own (e.g. 512 on a 256 SigLIP) uses SigLIP's interpolated
+    # position embeddings (transformers' SiglipVisionEmbeddings.interpolate_pos_encoding, bicubic over the native
+    # grid); the tower's own 256 position table is kept. False for every checkpoint before it: native size only.
+    interpolate_pos_encoding: bool = False
 
     def temperature_for(self, qtype: int, k: int) -> float:
         """The temperature `decide` divides a `qtype` question's `k` option logits by."""
@@ -112,6 +116,10 @@ class VisionDecisionModel(nn.Module):
         if hasattr(holder, "use_head"):
             setattr(holder, "use_head", False)
         self.decision = decision
+        native = int(getattr(vision.config, "image_size", cfg.image_size))
+        if cfg.image_size != native and not cfg.interpolate_pos_encoding:
+            raise ValueError("image_size %d is not the vision tower's %d: set interpolate_pos_encoding" % (cfg.image_size, native))
+        self.interpolate = bool(cfg.interpolate_pos_encoding)
         self.projector = Projector(vision.config.hidden_size, text_encoder(decision).config.hidden_size,
                                    cfg.visual_shuffle)
         self.condition: Optional[QuestionConditioning] = None
@@ -122,9 +130,17 @@ class VisionDecisionModel(nn.Module):
         self.condition = QuestionConditioning(self.vision.config.hidden_size,
                                               text_encoder(self.decision).config.hidden_size)
 
+    def vision_patches(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """SigLIP patch features [B, N, D_vision]; N = (image_size / 16)^2. The one place every path (decide,
+        alignment, decision training) runs the vision tower, so all of them see the same input size and
+        position-embedding interpolation."""
+        if self.interpolate:
+            return self.vision(pixel_values=pixel_values, interpolate_pos_encoding=True).last_hidden_state
+        return self.vision(pixel_values=pixel_values).last_hidden_state
+
     def image_features(self, pixel_values: torch.Tensor):
-        """[B, 3, H, W] -> (SigLIP patches [B, 256, D_vision], visual tokens [B, V, D_text])."""
-        patches = self.vision(pixel_values=pixel_values).last_hidden_state
+        """[B, 3, H, W] -> (SigLIP patches [B, N, D_vision], visual tokens [B, V, D_text])."""
+        patches = self.vision_patches(pixel_values)
         return patches, self.projector(patches)
 
     def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:
