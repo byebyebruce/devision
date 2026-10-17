@@ -20,7 +20,7 @@ sqa_text=data/exp21/sqa_text.jsonl sqa_blank=data/exp21/sqa_blank.jsonl
 exist=data/r13b/panel_exist.jsonl science=data/r13b/panel_science.jsonl ext=data/ext/dev_ext.jsonl
 count_wide=data/r13b/count_wide.jsonl count_narrow=data/v11/dev_count_transfer.jsonl flip=data/v6/dev_lr_pairs.jsonl
 vsr=data/v5/dev_vsr.jsonl"
-DIAG_SETS="fields=data/exp28/fields.jsonl force_rule=data/exp28/force_rule.jsonl equal_wording=data/exp28/equal_wording.jsonl"
+DIAG_SETS="fields=data/exp28/fields.jsonl fields_blank=data/exp28/fields_blank.jsonl force_rule=data/exp28/force_rule.jsonl equal_wording=data/exp28/equal_wording.jsonl"
 evaluate() {   # $1 model name, $2 checkpoint, $3 sets
   mkdir -p "$run/eval/$1"
   for s in $3; do

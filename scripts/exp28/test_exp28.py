@@ -40,18 +40,39 @@ def test_every_transcription_parses():
     assert build.parse_force(NOTES["v3-sqa-test:test-3898"])["1"]["distance"] == 42.8
 
 
-@pytest.mark.parametrize("field,right,other", [("mass", 44, 28), ("mass", 46, 46), ("speed", 1300, 1300),
-                                               ("distance", 0.25, 0.1), ("distance", 16.9, 16.9)])
-def test_field_options(field, right, other):
-    seen_slots = set()
-    for slot in range(3):
-        probs = build.options(right, other, field, slot, "u")
-        assert len(probs) == 3 and sum(probs.values()) == 1.0
-        keys = list(probs)
-        seen_slots.add(keys.index(next(k for k, v in probs.items() if v == 1.0)))
-        if other != right:
-            assert "%s u" % build.fmt_num(other) in probs
-    assert seen_slots == {0, 1, 2}
+@pytest.mark.parametrize("field,a,b", [("mass", 44, 28), ("mass", 46, 46), ("speed", 1300, 1300), ("speed", 1300, 1400),
+                                       ("mass", 16, 17), ("distance", 0.25, 0.1), ("distance", 16.9, 16.9)])
+def test_one_candidate_set_holds_both_values(field, a, b):
+    ranks = set()
+    for k in range(3):
+        cands = build.candidates(a, b, field, k)
+        assert len(cands) == 3 and a in cands and b in cands and all(x > 0 for x in cands)
+        ranks.add(sorted(cands).index(a))
+        for slot in range(3):
+            probs = build.options(cands, a, slot, "u")
+            assert list(probs.values()).index(1.0) == slot and len(probs) == 3
+    if a == b:
+        assert ranks == {0, 1, 2}          # the shared value is lowest, middle and highest across k
+
+
+def test_real_fields_have_no_rank_shortcut():
+    """The old set: always the middle number got 36/48 temperature questions and the highest never was right."""
+    rows = build.fields("data", NOTES) if os.path.exists("data/exp21/dev_sqa_temp.jsonl") else None
+    if rows is None:
+        pytest.skip("needs data/exp21")
+    base = build.rank_baseline(rows)
+    assert max(base["temp"]["lowest"], base["temp"]["middle"], base["temp"]["highest"]) <= 0.50
+    for kind in ("temp-mass", "temp-speed", "force-distance"):
+        assert min(base[kind]["lowest"], base[kind]["middle"], base[kind]["highest"]) > 0
+    # both objects of a field share their candidate set
+    by = {}
+    for r in rows:
+        sid, field, obj = r["id"].rsplit(":", 2)
+        by.setdefault((sid, field), []).append(set(r["questions"]["q"]["criteria"]))
+    assert all(len(v) == 2 and v[0] == v[1] for v in by.values())
+    blank = build.blank(rows)
+    assert all(b["image"] == "exp21/images/blank.png" and b["image_id"] == r["image_id"] and b["questions"] == r["questions"]
+               and b["gold"] == r["gold"] for r, b in zip(rows, blank))
 
 
 def test_wording_keeps_the_gold_with_its_option(tmp_path):
@@ -96,8 +117,9 @@ def test_control_rebuilds_temperature_one(tmp_path, monkeypatch):
     assert c["pass"] and c["disagreements"] == 0 and c["max_prob_diff_t1"] < 1e-9
 
 
-def outcome(control=True, temp=0.9, rule=(3, 3), wording=False, cost_stage="exp26B"):
-    return {"control": {"pass": control}, "fields": {"exp26B": {"temp_all": {"accuracy": temp}}},
+def outcome(control=True, temp=0.9, gain_lo=0.1, rule=(3, 3), wording=False, cost_stage="exp26B"):
+    return {"control": {"pass": control},
+            "fields": {"exp26B": {"temp_all": {"accuracy": temp, "picture_gain": {"value": gain_lo, "ci95": [gain_lo, gain_lo + 0.1]}}}},
             "rule": {"exp26B": {"plain": rule[0], "rule": rule[1], "n": 12}},
             "wording": {"exp26B": {"template_dependence": wording}}, "stages": {"first_cost_stage": cost_stage}}
 
@@ -108,10 +130,16 @@ def outcome(control=True, temp=0.9, rule=(3, 3), wording=False, cost_stage="exp2
     (dict(temp=0.7, rule=(3, 10)), "relation-rule"),
     (dict(temp=0.7, wording=True), "answer-wording"),
     (dict(temp=0.9), "field-to-decision"),
+    (dict(temp=0.9, gain_lo=-0.05), "uncertain"),     # high accuracy without a picture gain is not "read"
     (dict(temp=0.7), "uncertain"),
 ])
 def test_next_fix_priority(kw, start):
     assert report.decide(outcome(**kw))["next_fix"].startswith(start)
+
+
+def test_a_failed_control_leaves_everything_else_pending():
+    d = report.decide(outcome(control=False, cost_stage="exp24A", rule=(3, 2)))
+    assert d["replay"].startswith("pending") and d["force_note"].startswith("pending")
 
 
 @pytest.mark.parametrize("stage,start", [("exp24A", "replay real tasks in the alignment"),

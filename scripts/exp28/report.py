@@ -33,7 +33,7 @@ WORDING_DROP = 0.25
 
 
 def path(stage, name):
-    if name in ("fields", "force_rule", "equal_wording", "control30") or stage in ("exp24A", "exp26A"):
+    if name in ("fields", "fields_blank", "force_rule", "equal_wording", "control30") or stage in ("exp24A", "exp26A"):
         return os.path.join(RUN, "eval", stage, name + ".details.jsonl")
     return os.path.join(EXP27, "eval", {"v03": "v03", "exp26B": "exp26"}[stage], name + ".details.jsonl")
 
@@ -122,6 +122,17 @@ def fields(stage) -> dict:
                      "wrong_other_object": other}
     temp = [r for r in rs if r["source"].startswith("exp28-temp")]
     out["temp_all"] = {"n": len(temp), "accuracy": acc(temp)}
+    # the same questions on the blank picture: picture gain, paired by question, pictures resampled
+    # (critic EXP28-R1-01)
+    blank = {r["sample_id"].removesuffix(":blank"): r for r in recs(stage, "fields_blank")}
+    units = defaultdict(lambda: [(0.0, 0.0), (0.0, 0.0)])
+    for r in temp:
+        b = blank[r["sample_id"]]
+        c = units[r["image_id"]]
+        c[0] = (c[0][0] + float(b["correct"]), c[0][1] + 1)
+        c[1] = (c[1][0] + float(r["correct"]), c[1][1] + 1)
+    out["temp_all"]["blank_accuracy"] = acc([blank[r["sample_id"]] for r in temp])
+    out["temp_all"]["picture_gain"] = bootstrap(dict(units), lambda c: c[1][0] / c[1][1] - c[0][0] / c[0][1])
     return out
 
 
@@ -175,17 +186,20 @@ def wording(stage) -> dict:
 def decide(out: dict) -> dict:
     """The next fix, by the priority written before running: pipeline, temperature extraction, magnet rule,
     wording; old-ability replay placement always goes with it."""
-    f, r, w = out["fields"]["exp26B"]["temp_all"]["accuracy"], out["rule"]["exp26B"], out["wording"]["exp26B"]
+    t, r, w = out["fields"]["exp26B"]["temp_all"], out["rule"]["exp26B"], out["wording"]["exp26B"]
+    f = t["accuracy"]
+    reads = f >= FIELD_READS and t["picture_gain"]["ci95"][0] > 0   # read, and from the picture (EXP28-R1-01)
     if not out["control"]["pass"]:
-        nxt = "fix the export / inference path first: the positive control does not reproduce step 5000"
+        return {"next_fix": "fix the export / inference path first: the positive control does not reproduce step 5000",
+                "replay": "pending (positive control failed)", "force_note": "pending (positive control failed)"}
     elif f <= FIELD_FAILS:
         nxt = "real-layout reading / attribute-binding bridge (temperature fields not read from real pictures)"
     elif r["rule"] >= RULE_RECOVERS and r["plain"] <= RULE_PLAIN_MAX:
         nxt = "relation-rule and direction training for force (recovers with the general rule)"
     elif w["template_dependence"]:
         nxt = "answer-wording consistency (the 'same' option's wording changes the answers)"
-    elif f >= FIELD_READS:
-        nxt = "field-to-decision combination on real layouts (fields are read, the question is not answered)"
+    elif reads:
+        nxt = "field-to-decision combination on real layouts (fields are read from the picture, the question is not answered)"
     else:
         nxt = "uncertain: no branch is clearly indicated; report the evidence"
     stage = out["stages"]["first_cost_stage"]
@@ -227,7 +241,9 @@ def render(out: dict) -> str:
         fd = out["fields"][s]
         lines.append("fields %-6s " % s + " | ".join("%s %s (%d wrong, %d other object)" % (
             k, f(fd[k]["accuracy"]), fd[k]["wrong"], fd[k]["wrong_other_object"]) for k in ("temp-mass", "temp-speed", "force-distance"))
-            + " | temperature all %s" % f(fd["temp_all"]["accuracy"]))
+            + " | temperature all %s, blank %s, picture gain %+.3f [%+.3f, %+.3f]" % (
+                f(fd["temp_all"]["accuracy"]), f(fd["temp_all"]["blank_accuracy"]), fd["temp_all"]["picture_gain"]["value"],
+                *fd["temp_all"]["picture_gain"]["ci95"]))
         r = out["rule"][s]
         lines.append("force rule %-6s plain text %d / %d, with the rule %d / %d" % (s, r["plain"], r["n"], r["rule"], r["n"]))
         w = out["wording"][s]

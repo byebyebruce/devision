@@ -5,8 +5,9 @@
     the exported model against exp26's own step-5000 monitor records);
   - fields.jsonl: direct readings on the 24 transcribed ScienceQA pictures (scripts/exp21/sqa_transcribed.json):
     temperature -- mass and speed of sample A and B (4 per picture); force -- the distance in Pair 1 and Pair 2
-    (2 per picture); three options: the right value, the other object's value of the same field (when it differs)
-    and a near value; the original picture and hint, the right option's slot rotating;
+    (2 per picture); both objects of a field share one candidate set (both real values + a third above, below or
+    between them, rotating; critic EXP28-R1-01), the display order rotating; the original picture and hint;
+  - fields_blank.jsonl: the same 72 questions on the blank picture (only the image changes);
   - force_rule.jsonl: the 12 transcribed force questions as in exp21's sqa_text (blank picture, hint + transcribed
     values), plus one general rule sentence that names no value or answer;
   - equal_wording.jsonl: every temperature (41) and concentration (45) dev question in 2 wordings of the "same"
@@ -62,19 +63,54 @@ def parse_force(text: str) -> Dict[str, Dict]:
     return out
 
 
-def near(v: float, field: str) -> List[float]:
-    """Two near values of the same kind, never equal to v."""
+STEP = {"mass": 4.0, "speed": 100.0}   # distances scale instead (x0.5 / x1.5 / x2)
+
+
+def _up(v: float, field: str, n: int = 1) -> float:
+    return v + n * STEP[field] if field in STEP else v * (1.5 if n == 1 else 2.0)
+
+
+def _down(v: float, field: str, n: int = 1) -> float:
+    return v - n * STEP[field] if field in STEP else v * (0.5 if n == 1 else 0.25)
+
+
+def _between(lo: float, hi: float, field: str):
+    """A value strictly between lo and hi in the field's precision (integers for mass, tens for speed, up to 3
+    decimals for distance), or None when there is none."""
     if field == "mass":
-        return [v + 2, v - 2]
-    if field == "speed":
-        return [v + 100, v - 100]
-    return [v * 2, v / 2]
+        m = round((lo + hi) / 2)
+    elif field == "speed":
+        m = round((lo + hi) / 20) * 10
+    else:
+        m = round((lo + hi) / 2, 3)
+    return m if lo < m < hi else None
 
 
-def options(right: float, other: float, field: str, slot: int, unit: str) -> Dict[str, float]:
-    cands = [right] + ([other] if other != right else []) + [x for x in near(right, field) if x != other]
-    cands = cands[:3]
-    order = cands[1:]
+def candidates(a: float, b: float, field: str, k: int) -> List[float]:
+    """One candidate set for both objects of a field (critic EXP28-R1-01): the two real values plus a third
+    placed above both, below both or between them as k rotates; with equal values, two distractors putting the
+    shared value lowest / in the middle / highest. Falls back to the next placement when one does not exist."""
+    if a == b:
+        v = a
+        plans = [[_up(v, field), _up(v, field, 2)], [_down(v, field), _up(v, field)], [_down(v, field), _down(v, field, 2)]]
+        for j in range(3):
+            d = plans[(k + j) % 3]
+            if all(x > 0 for x in d):
+                return sorted({v, *d})
+        raise ValueError("no distractors for %s" % v)
+    lo, hi = min(a, b), max(a, b)
+    for j in range(3):
+        place = (k + j) % 3
+        third = _up(hi, field) if place == 0 else _down(lo, field) if place == 1 else _between(lo, hi, field)
+        if third is not None and third > 0 and third not in (a, b):
+            return sorted({a, b, third})
+    raise ValueError("no third value for %s / %s" % (a, b))
+
+
+def options(cands: List[float], right: float, slot: int, unit: str) -> Dict[str, float]:
+    """The shared candidate set shown in a rotating order: the right value at display slot `slot % 3`."""
+    others = [x for x in cands if x != right]
+    order = list(others)
     order.insert(slot % 3, right)
     return {"%s %s" % (fmt_num(x), unit): float(x == right) for x in order}
 
@@ -82,28 +118,52 @@ def options(right: float, other: float, field: str, slot: int, unit: str) -> Dic
 def fields(root: str, notes: Dict[str, str]) -> List[Dict]:
     temp = {r["id"]: r for r in read(os.path.join(root, "exp21", "dev_sqa_temp.jsonl"))}
     force = {r["id"]: r for r in read(os.path.join(root, "exp21", "dev_sqa_force.jsonl"))}
-    rows, slot = [], 0
-    for sid in sorted(k for k in notes if k != "_note"):
+    rows, slot, k = [], 0, 0
+    for sid in sorted(x for x in notes if x != "_note"):
         if sid in temp:
             src, vals = temp[sid], parse_temp(notes[sid])
             asks = [("mass", "u", "What is the mass of each particle in sample %s?"),
                     ("speed", "m/s", "What is the average particle speed in sample %s?")]
             for field, unit, q in asks:
-                for s, o in (("A", "B"), ("B", "A")):
-                    probs = options(vals[s][field], vals[o][field], field, slot, unit)
+                cands = candidates(vals["A"][field], vals["B"][field], field, k)
+                k += 1
+                for s in ("A", "B"):
+                    rows.append(row(src, "%s:%s:%s" % (sid, field, s), q % s,
+                                    options(cands, vals[s][field], slot, unit), "temp-" + field))
                     slot += 1
-                    rows.append(row(src, "%s:%s:%s" % (sid, field, s), q % s, probs, "temp-" + field))
         elif sid in force:
             src, vals = force[sid], parse_force(notes[sid])
-            for p, o in (("1", "2"), ("2", "1")):
-                unit = vals[p]["unit"]
-                probs = options(vals[p]["distance"], vals[o]["distance"], "distance", slot, unit)
+            cands = candidates(vals["1"]["distance"], vals["2"]["distance"], "distance", k)
+            k += 1
+            for p in ("1", "2"):
+                rows.append(row(src, "%s:distance:%s" % (sid, p), "What is the distance between the magnets in Pair %s?" % p,
+                                options(cands, vals[p]["distance"], slot, vals[p]["unit"]), "force-distance"))
                 slot += 1
-                rows.append(row(src, "%s:distance:%s" % (sid, p),
-                                "What is the distance between the magnets in Pair %s?" % p, probs, "force-distance"))
         else:
             raise ValueError("%s is in neither temperature nor force" % sid)
     return rows
+
+
+def blank(rows: List[Dict]) -> List[Dict]:
+    """The same field questions on the blank picture: only the image changes; image_id stays the original
+    picture so the two conditions pair by picture."""
+    return [dict(r, id=r["id"] + ":blank", image="exp21/images/blank.png", source=r["source"] + "-blank") for r in rows]
+
+
+def rank_baseline(rows: List[Dict]) -> Dict:
+    """Accuracy of always choosing the lowest / middle / highest number, overall and per kind."""
+    def value(opt):
+        return float(opt.split()[0].replace(",", ""))
+    out = {}
+    for kind in ("all", "temp", "temp-mass", "temp-speed", "force-distance"):
+        sel = [r for r in rows if kind == "all" or r["kind"].startswith(kind)]
+        hits = [0, 0, 0]
+        for r in sel:
+            g = r["gold"]["q"]["probabilities"]
+            order = sorted(g, key=value)
+            hits[order.index(next(o for o, p in g.items() if p == 1.0))] += 1
+        out[kind] = {"n": len(sel), "lowest": hits[0] / len(sel), "middle": hits[1] / len(sel), "highest": hits[2] / len(sel)}
+    return out
 
 
 def row(src: Dict, sid: str, question: str, probs: Dict[str, float], kind: str) -> Dict:
@@ -150,7 +210,8 @@ def build(root: str) -> Dict:
     out = os.path.join(root, "exp28")
     os.makedirs(out, exist_ok=True)
     notes = json.load(open(os.path.join(HERE, "..", "exp21", "sqa_transcribed.json")))
-    files = {"control30": control30(root), "fields": fields(root, notes), "force_rule": force_rule(root),
+    f = fields(root, notes)
+    files = {"control30": control30(root), "fields": f, "fields_blank": blank(f), "force_rule": force_rule(root),
              "equal_wording": equal_wording(root)}
     manifest = {}
     for name, rows in files.items():
@@ -160,6 +221,7 @@ def build(root: str) -> Dict:
                 fh.write(json.dumps(r) + "\n")
         manifest[name] = {"rows": len(rows), "questions": sum(len(r["questions"]) for r in rows),
                           "sha256": hashlib.sha256(open(path, "rb").read()).hexdigest()}
+    manifest["fields_rank_baseline"] = rank_baseline(f)
     json.dump(manifest, open(os.path.join(out, "MANIFEST.json"), "w"), indent=1)
     return manifest
 
