@@ -32,6 +32,8 @@ import sys
 from collections import defaultdict
 from typing import Dict, List
 
+from devision.train.compare import _require_same
+
 HERE = os.path.dirname(__file__)
 INIT = "runs/exp37-l/stage1"
 INIT_SHA = {"model.safetensors": "f9fc93c25b4bd96c55d41fd7c974c43408ea31034eac2c3a1ade2bcf5950da31",
@@ -70,11 +72,33 @@ def identity(arm: str, run: str, manifest: Dict) -> str:
     if s.get("init") != INIT or s.get("init_sha256") != INIT_SHA:
         return "wrong start: %s %s" % (s.get("init"), s.get("init_sha256"))
     rj = os.path.join(run, "run.json")
-    if os.path.exists(rj):
-        st = json.load(open(rj))["config"]["stages"][0]
-        if st.get("data") != data or st.get("init") != INIT:
-            return "wrong arm: run.json trained on %s from %s" % (st.get("data"), st.get("init"))
+    if not os.path.exists(rj):          # the actual training's identity is required (critic EXP40-R1-01)
+        return "no run.json"
+    st = json.load(open(rj))["config"]["stages"][0]
+    if st.get("data") != data or st.get("init") != INIT:
+        return "wrong arm: run.json trained on %s from %s" % (st.get("data"), st.get("init"))
     return ""
+
+
+def tune_records(arm: str, run: str, manifest: Dict, status: Dict) -> List[Dict]:
+    """The arm's rl_tune records for the main comparison (critic EXP40-R1-02), needing only: the arm's identity,
+    train and rl_tune completed, rl_tune recorded under the frozen weights / config and evaluated on this
+    checkpoint with its fitted temperatures, and every tune question exactly once with the data's gold and picture
+    (no missing or repeated question, also within a family). Other screening sets may be missing."""
+    why = identity(arm, run, manifest)
+    if why:
+        raise ValueError("%s: %s" % (arm, why))
+    if status.get("train") != "completed" or status.get("eval:rl_tune") != "completed":
+        raise ValueError("%s: train / rl_tune not completed" % arm)
+    v04b.frozen.check(run, ["rl_tune"])
+    info = json.load(open(os.path.join(run, "eval", "rl_tune.json")))["run"]
+    if info.get("checkpoint") != os.path.join(run, "stage2") or info.get("temperature") != "fitted":
+        raise ValueError("%s: rl_tune was not evaluated on %s/stage2 with its fitted temperatures" % (arm, run))
+    details = os.path.join(run, "eval", "rl_tune.details.jsonl")
+    ref = [{"sample_id": d["id"], "qid": q, "gold": d["gold"][q]["probabilities"], "image_id": d["image_id"]}
+           for d in map(json.loads, open(TUNE)) for q in d["questions"]]
+    _require_same(ref, [json.loads(x) for x in open(details) if x.strip()])
+    return numbers(details, TUNE)
 
 
 def numbers(details: str, data_path: str) -> List[Dict]:
@@ -150,8 +174,8 @@ def compare(m_recs: List[Dict], o_recs: List[Dict]) -> Dict:
 def arm_screen(arm: str, run: str, manifest: Dict) -> Dict:
     why = identity(arm, run, manifest)
     if why:
-        if why == "no START.json":
-            return {"outcome": "incomplete: not started", "identity_check": why}
+        if why in ("no START.json", "no run.json"):     # no actual training identity: never a pass (EXP40-R1-01)
+            return {"outcome": "incomplete: %s" % why, "identity_check": why}
         raise SystemExit("%s: %s" % (arm, why))
     out = v04b.build(run, INIT_SHA["model.safetensors"], os.path.join(os.path.dirname(run), "%s-status.txt" % os.path.basename(run)))
     out["identity"]["start_config_sha256"] = INIT_SHA["config.json"]
@@ -169,12 +193,11 @@ def build(runs: Dict[str, str] = RUNS, manifest_path: str = "data/exp40/MANIFEST
     manifest = json.load(open(manifest_path))
     out: Dict = {"arms": {arm: arm_screen(arm, run, manifest) for arm, run in runs.items()}}
     passed = {arm: a["outcome"] == "candidate screen passed" for arm, a in out["arms"].items()}
-    complete = {arm: "checks" in a for arm, a in out["arms"].items()}
-    if all(complete.values()):
-        recs = {arm: numbers(os.path.join(runs[arm], "eval", "rl_tune.details.jsonl"), TUNE) for arm in runs}
+    try:        # the main comparison needs only both arms' rl_tune, not their whole screens (critic EXP40-R1-02)
+        recs = {arm: tune_records(arm, run, manifest, out["arms"][arm].get("status", {})) for arm, run in runs.items()}
         out["comparison"] = compare(recs["M"], recs["O"])
-    else:
-        out["comparison"] = "incomplete: %s" % ", ".join(a for a, c in complete.items() if not c)
+    except ValueError as e:
+        out["comparison"] = "incomplete: %s" % e
     out["candidate"] = "M" if passed["M"] else "O (not a large-digit bridge)" if passed["O"] else "none"
     return out
 

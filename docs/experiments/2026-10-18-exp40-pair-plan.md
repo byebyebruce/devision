@@ -116,7 +116,7 @@
 
 - **身份**：
   - 每臂 `START.json` 要写明 exp37-L 的 sha、本臂自己的数据文件和 sha；
-  - 阶段的 `run.json` 要在本臂的数据上、从 exp37-L 训练；
+  - 阶段的 `run.json` 要在本臂的数据上、从 exp37-L 训练；缺 run.json 记为 incomplete，不能通过（评论家 EXP40-R1-01）；
   - 否则报告拒绝（"wrong arm"）。没有 START 记为 incomplete。
   - 每个筛查文件都要绑定本臂冻结的权重 / config，核对未变（`scripts/v04b/freeze.py`）。
 - **每臂的五条筛查**，沿用 `scripts/v04b/report.build`，不改：
@@ -124,8 +124,8 @@
   - 7 个保护面板没有预写代价；
   - dev16 读数和比较各自通过；
   - 擦除控制有效。
-  - 任何一项没完成就是 incomplete，不给通过。只有完整通过时，才写顶层 `model_sha256`（`runs/exp40-{m,o}-screen.json`）。
-- **主科学比较**（两臂的 rl_tune 都完成时才算）：
+  - 任何一项没完成就是 incomplete，不给通过。必需筛查全部完成、且冻结身份核验通过后，才写顶层 `model_sha256`（`runs/exp40-{m,o}-screen.json`）。它只代表身份，是否达标看 checks / outcome，带 SHA 不等于通过；任一必需项缺失时不输出可用的顶层身份。
+- **主科学比较**（不要求整套筛查完整；评论家 EXP40-R1-02）：需要两臂的训练身份都核验通过，train 和 rl_tune 都完成，rl_tune 在冻结身份下记录，且是在本臂 checkpoint 上用拟合温度评的。tune 的每道题恰好出现一次，gold 和图片与数据一致；同族内漏题或重复题都拒绝（复用 `compare._require_same`）。其他筛查缺失只影响该臂的候选筛查（incomplete），不影响这项比较。
   - 主指标：原图 rl_tune 决策题上，M − O 的"异值两对象同时对"宏平均（质量 / 速度 / 距离等权）。
     - 按 canonical case 聚类做配对 bootstrap：共享 canonical case 的族连成一个簇，300 族共 165 簇；seed 0，重抽 2,000 次。
   - 同时报告每臂的：
@@ -146,12 +146,14 @@
 
 ## CPU 验证
 
-- `scripts/exp40/test_exp40.py`，5 项：
+- `scripts/exp40/test_exp40.py`，7 项：
   1. 两臂数据如实映射 B 的行：其他块原样保留；real_layout 每题的题面、选项、gold 和 state_text 等于 B 的源行；M 第二次曝光用 L 图，O 两次都用原图；两臂除图片外逐行相同。
   2. L 图上的数字与 gold 不符时拒绝。
-  3. 报告拒绝错臂（START 写的是另一臂的数据，或 run.json 在另一臂的数据上训练），没启动或缺筛查时记为 incomplete，且不写 model_sha256。
-  4. 只有配对下界 > 0 才判为桥接；两臂题目不同时拒绝。
-  5. 256 的 watch 阈值。
+  3. 报告拒绝错臂（START 写的是另一臂的数据，或 run.json 在另一臂的数据上训练）；没启动或缺筛查时记为 incomplete，且不写 model_sha256。
+  4. START、冻结和必需筛查都齐但缺 run.json：记为 incomplete，不写 model_sha256，也不能用于主比较。
+  5. 主比较只需两臂的 rl_tune：其他筛查缺失时，两臂都是 incomplete，但比较照常产生（165 簇、300 族，分母 138 / 191 / 85）；某一臂同族内漏一题或多一道重复题时拒绝。
+  6. 只有配对下界 > 0 才判为桥接；两臂题目不同时拒绝。
+  7. 256 的 watch 阈值。
 - `scripts/v04b` 的已有测试照常通过（watch 加参数后行为不变）。
 - **chain 流程演练**：在临时目录里用假的 `uv` 走完整个 chain，不跑模型，exp37-L 与 data 是指向真实文件的链接。
   - 启动检查通过；

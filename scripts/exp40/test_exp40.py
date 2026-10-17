@@ -123,3 +123,66 @@ def test_watch_limits_at_256():
     assert w.decide({}, {}, {}, 1700) == "" and w.decide({}, {}, {}, 1900).startswith("no new window")
     assert w.decide(wins(s100=1.5, s3200=1.5), {}, {}, 2300) == ""
     assert w.decide(wins(s100=1.5, s200=1.5), {}, {}, 700).startswith("no new window")
+
+
+def test_missing_run_json_is_never_a_pass(tmp_path):
+    """START, frozen weights and every required set present, but no run.json: no actual training identity."""
+    run, man = fake_run(tmp_path, "M")
+    os.remove(os.path.join(run, "run.json"))
+    st = os.path.join(run, "stage2")
+    os.makedirs(os.path.join(run, "eval"))
+    os.makedirs(st)
+    open(os.path.join(st, "model.safetensors"), "wb").write(b"w")
+    open(os.path.join(st, "config.json"), "w").write("{}")
+    rep.v04b.frozen.freeze(run)
+    for n in rep.v04b.REQUIRED:
+        json.dump({"run": {"checkpoint": st, "temperature": "fitted"}}, open(os.path.join(run, "eval", n + ".json"), "w"))
+        open(os.path.join(run, "eval", n + ".details.jsonl"), "w").write("{}\n")
+        rep.v04b.frozen.record(run, n)
+    (tmp_path / "exp40-m-status.txt").write_text("train completed\n" + "".join("eval:%s completed\n" % n for n in rep.v04b.REQUIRED))
+    out = rep.arm_screen("M", run, man)
+    assert out["outcome"] == "incomplete: no run.json" and "model_sha256" not in out
+    with pytest.raises(ValueError):
+        rep.tune_records("M", run, man, {"train": "completed", "eval:rl_tune": "completed"})
+
+
+def tune_arm(base, arm, man, mutate=None):
+    """An arm with only train and rl_tune done (frozen, recorded); its rl_tune details from the real tune file."""
+    run, _ = fake_run(base, arm)
+    st = os.path.join(run, "stage2")
+    os.makedirs(st)
+    os.makedirs(os.path.join(run, "eval"))
+    open(os.path.join(st, "model.safetensors"), "wb").write(arm.encode())
+    open(os.path.join(st, "config.json"), "w").write("{}")
+    recs = []
+    for d in rows(os.path.join(DATA, "real_layout", "questions_tune.jsonl")):
+        for q, g in d["gold"].items():
+            gold = next(o for o, p in g["probabilities"].items() if p == 1.0)
+            right = arm == "M" or q == "q0"
+            recs.append({"sample_id": d["id"], "qid": q, "image_id": d["image_id"], "gold": g["probabilities"],
+                         "gold_answer": gold, "prediction": gold if right else "x", "correct": right})
+    recs = mutate(recs) if mutate else recs
+    with open(os.path.join(run, "eval", "rl_tune.details.jsonl"), "w") as f:
+        f.writelines(json.dumps(r) + "\n" for r in recs)
+    json.dump({"run": {"checkpoint": st, "temperature": "fitted"}}, open(os.path.join(run, "eval", "rl_tune.json"), "w"))
+    rep.v04b.frozen.freeze(run)
+    rep.v04b.frozen.record(run, "rl_tune")
+    (base / ("exp40-%s-status.txt" % arm.lower())).write_text("train completed\neval:rl_tune completed\n")
+    return run
+
+
+def test_comparison_needs_only_rl_tune_and_every_question(tmp_path):
+    man = json.load(open(os.path.join(DATA, "exp40", "MANIFEST.json")))
+    runs = {a: tune_arm(tmp_path / "ok", a, man) for a in ("M", "O")}
+    out = rep.build(runs)
+    assert all(a["outcome"].startswith("incomplete") for a in out["arms"].values()) and out["candidate"] == "none"
+    c = out["comparison"]
+    assert c["n_clusters"] == 165 and c["n_families"] == 300 and c["bridge"]
+    assert c["M"]["denominators"]["both:mass"] == 138 and c["M"]["denominators"]["both:speed"] == 191 and c["M"]["denominators"]["both:distance"] == 85
+    drop = lambda rs: [r for r in rs if not (r["sample_id"].endswith(":v1") and r["qid"] == "q2" and r["sample_id"] == rs[-1]["sample_id"])]  # noqa: E731
+    dup = lambda rs: rs + [rs[5]]  # noqa: E731
+    for name, mut in (("drop", drop), ("dup", dup)):
+        base = tmp_path / name
+        runs = {"M": tune_arm(base, "M", man), "O": tune_arm(base, "O", man, mut)}
+        c = rep.build(runs)["comparison"]
+        assert isinstance(c, str) and c.startswith("incomplete") and ("differ in questions" in c or "duplicate" in c), c
