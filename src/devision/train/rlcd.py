@@ -17,6 +17,7 @@ import json
 import math
 import os
 import random
+import re
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
@@ -93,6 +94,13 @@ class TrainConfig:
     # exp42 (docs/experiments/2026-10-18-exp42-objective-plan.md): "rlcd" = the RLCD policy term + gold CE (every run
     # before it); "ce" = gold CE only. The RLCD noise is drawn either way, so both use the same random stream.
     objective: str = "rlcd"
+    # exp44 (docs/experiments/2026-10-18-exp44-number-plan.md): aux_weight > 0 adds aux_weight x a per-question
+    # number reconstruction loss -- the same picture, state text and question, no options, aux_slots [MASK] slots
+    # read by ModernBERT's frozen MLM head (aux_head, a training device only) into the gold number's tokens and an
+    # end token. 0: off, nothing loaded, the run is exactly the one before it.
+    aux_weight: float = 0.0
+    aux_slots: int = 8
+    aux_head: str = "answerdotai/ModernBERT-large"
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -263,6 +271,93 @@ def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = 
     logp = -(((z - logits.unsqueeze(0)) ** 2) * mask).sum(-1) / (2 * sigma ** 2)
     ce = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
     return -(adv * logp).mean() + ce, ce
+
+AUX_NUMBER = re.compile(r"^(\d[\d,]*(?:\.\d+)?) ")
+
+
+def aux_number(option: str) -> str:
+    """The number of a reading answer ("1,200 m/s" -> "1,200"); anything else is refused."""
+    m = AUX_NUMBER.match(option + " ")
+    if not m:
+        raise ValueError("aux: %r is not a number answer" % option)
+    return m.group(1)
+
+
+def aux_example(tok, state_text: str, instructions: str, gold: str, slots: int) -> Tuple[List[int], List[int]]:
+    """(input ids, slot targets): [CLS] state text [SEP] question [SEP] [MASK] x slots [SEP] -- no option, no number;
+    the input never depends on the answer. Targets: the number's tokens (as after a space) and [SEP], then -100."""
+    ids = ([tok.cls_token_id] + tok(state_text or "", add_special_tokens=False)["input_ids"] + [tok.sep_token_id]
+           + tok(instructions, add_special_tokens=False)["input_ids"] + [tok.sep_token_id]
+           + [tok.mask_token_id] * slots + [tok.sep_token_id])
+    target = tok(" " + aux_number(gold), add_special_tokens=False)["input_ids"] + [tok.sep_token_id]
+    if len(target) > slots:
+        raise ValueError("aux: %r needs %d slots, only %d" % (gold, len(target), slots))
+    if len(ids) > 512:
+        raise ValueError("aux: input of %d tokens" % len(ids))
+    return ids, target + [-100] * (slots - len(target))
+
+
+def aux_table(tok, samples: Sequence[Sample], slots: int) -> Dict[Tuple[str, str], Tuple[List[int], List[int]]]:
+    """(sample id, qid) -> aux_example, for every question; a gold that is not exactly one option is refused."""
+    out = {}
+    for s in samples:
+        for qid, q in s["questions"].items():
+            probs = s["gold"][qid]["probabilities"]
+            ones = [o for o, p in probs.items() if p == 1.0]
+            if len(ones) != 1 or sum(probs.values()) != 1.0:
+                raise ValueError("aux: %s %s has no single gold option" % (s.get("id"), qid))
+            out[(s.get("id", ""), qid)] = aux_example(tok, s.get("state_text", ""), q["instructions"], ones[0], slots)
+    return out
+
+
+def aux_head(encoder, repo: str):
+    """ModernBERT's MLM head (align._MLMHead, tied to the encoder's frozen word embeddings), frozen; and its identity:
+    the file and the sha256 of its three tensors."""
+    import hashlib
+    from huggingface_hub import hf_hub_download
+    from safetensors import safe_open
+    from .align import _MLMHead
+    head = _MLMHead(encoder)
+    ident: Dict[str, Any] = {"repo": repo}
+    if repo:                               # "" -> a random frozen head (tiny test models only)
+        path = hf_hub_download(repo, "model.safetensors")
+        head.load_pretrained(repo)
+        ident["file"] = os.path.realpath(path)
+        with safe_open(path, "pt") as f:
+            for k in ("head.dense.weight", "head.norm.weight", "decoder.bias"):
+                ident[k] = hashlib.sha256(f.get_tensor(k).float().numpy().tobytes()).hexdigest()
+    for p in head.head.parameters():
+        p.requires_grad_(False)
+    head.bias.requires_grad_(False)
+    return head, ident
+
+
+def aux_logits(model, head, ids: Sequence[List[int]], pixels, device, slots: int, pad_id: int) -> torch.Tensor:
+    """Vocabulary logits [B, slots, vocab] at the [MASK] slots (only there: no full-sequence vocabulary output)."""
+    n, L = len(ids), max(map(len, ids))
+    input_ids = torch.full((n, L), pad_id, dtype=torch.long)
+    attention = torch.zeros((n, L), dtype=torch.long)
+    for i, x in enumerate(ids):
+        input_ids[i, :len(x)], attention[i, :len(x)] = torch.tensor(x), 1
+    trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
+    with torch.set_grad_enabled(trains_vision):
+        patches = model.vision_patches(pixels.to(device))
+    visual = model.projector(patches)
+    h, _ = model.encode(input_ids.to(device), attention.to(device), visual)
+    start = torch.tensor([len(x) - 1 - slots for x in ids], device=device) + visual.size(1)
+    pos = start[:, None] + torch.arange(slots, device=device)[None]
+    hs = h.gather(1, pos[..., None].expand(-1, -1, h.size(-1)))
+    return head(hs).float()
+
+
+def aux_loss(logits: torch.Tensor, target: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """(loss: per question the mean CE over its number tokens and end token, then the mean over questions;
+    whole-number accuracy: every target slot right)."""
+    valid = target != -100
+    ce = nn.functional.cross_entropy(logits.transpose(1, 2), target.clamp(min=0), reduction="none") * valid
+    loss = (ce.sum(1) / valid.sum(1)).mean()
+    right = ((logits.argmax(-1) == target) | ~valid).all(1).float().mean()
+    return loss, right
 
 
 def _distill_kl(student_logits, teacher_logits, mask):
@@ -456,7 +551,8 @@ RESUME = "resume.pt"
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
-                "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective")
+                "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
+                "aux_head")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -514,6 +610,12 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             raise ValueError("distill_weight > 0 needs distill_teacher and distill_blocks")
         # loaded before the seeds below, so the batch order, LoRA init and RLCD noise are those of a run without it
         teacher = Decider.load(c.distill_teacher, device="cpu").model.to(device).eval().requires_grad_(False)
+    aux, aux_ident, aux_inputs = None, None, {}
+    if c.aux_weight > 0:   # built and loaded before the seeds below: the LoRA init, batch order and noise are unchanged
+        if c.aux_slots < 1:
+            raise ValueError("aux_slots must be >= 1")
+        aux_inputs = aux_table(decider.tok, samples, c.aux_slots)
+        aux, aux_ident = aux_head(text_encoder(decider.model.decision), c.aux_head)
     random.seed(c.seed)
     torch.manual_seed(c.seed)
     model, tok = decider.model, decider.tok
@@ -537,6 +639,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         p.requires_grad_(True)
     model.to(device).train()
     model.vision.eval()
+    if aux is not None:
+        aux.to(device).eval()
 
     images = _Images(data_root, decider)
     items = _items(decider, samples)
@@ -694,6 +798,16 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                                    "stopping with the last good resume state kept" % (len(losses), loss.item(), nll.item()))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            aux_stats = None
+            if aux is not None:   # second forward / backward on the same, not yet updated weights; one step below
+                ids, tgt = zip(*(aux_inputs[(it["sample_id"], it["qid"])] for it in chunk))
+                with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
+                    a_logits = aux_logits(model, aux, ids, pixels, device, c.aux_slots, tok.pad_token_id)
+                a_loss, a_right = aux_loss(a_logits, torch.tensor(tgt, device=device))
+                if not math.isfinite(a_loss.item()):
+                    raise RuntimeError("step %d: number loss is %r; no update made" % (len(losses), a_loss.item()))
+                (c.aux_weight * a_loss).backward()
+                aux_stats = (a_loss.item(), a_right.item())
             grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
             optimizer.step()
             scheduler.step()
@@ -702,14 +816,17 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     batch_tokens=float(batch["input_ids"].shape[1]),   # padded length; long batches drive memory
                     grad_norm=grad_norm.item(), sigma=sigma,
                     **({"grounding_kl": ground.item()} if ground is not None else {}),
-                    **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}))
+                    **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}),
+                    **({"number_loss": aux_stats[0], "number_accuracy": aux_stats[1]} if aux_stats is not None else {}))
             means = log.flush(len(losses), epoch + 1, {name: g["lr"] for name, g in zip(group_names, optimizer.param_groups)})
             if means:
                 print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f%s" % (
                     epoch + 1, len(losses), steps, means["train/loss"], means["train/nll"],
                     means["train/accuracy"], means["perf/step_s"],
                     " distill_kl %.4f teacher_acc %.3f" % (means["train/distill_kl"], means["train/teacher_accuracy"])
-                    if "train/distill_kl" in means else ""), flush=True)
+                    if "train/distill_kl" in means else
+                    " number_loss %.4f number_acc %.3f" % (means["train/number_loss"], means["train/number_accuracy"])
+                    if "train/number_loss" in means else ""), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:
@@ -754,4 +871,5 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             "temperature": temperature, "temperature_by_options": by_options,
             "calibration": {"per_type": bucket_metrics(set_logits["val"], calib, temperature),
                             "by_options": bucket_metrics(set_logits["val"], calib, temperature, by_options)},
-            "train_items": len(train_items), "calib_items": len(calib), "objective": c.objective}
+            "train_items": len(train_items), "calib_items": len(calib), "objective": c.objective,
+            **({"aux": {"weight": c.aux_weight, "slots": c.aux_slots, "head": aux_ident}} if aux is not None else {})}

@@ -1,0 +1,32 @@
+# exp44 arm J (docs/experiments/2026-10-18-exp44-number-plan.md; critic EXP44-PREP-01): exp42-C's settings (gold CE,
+# from exp40-M's frozen end, data/exp42/train.jsonl, 576 updates) plus 1.0 x the per-question number reconstruction
+# loss (8 [MASK] slots, no options, ModernBERT's frozen MLM head). The only differences from configs/exp42-c.yaml:
+# name, aux_weight, aux_slots.
+name: exp44-j
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp40-m/stage2
+  data: data/exp42/train.jsonl
+  val: data/exp42/val_sub.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    aux_weight: 1.0
+    aux_slots: 8
+    micro_batch: 8
+    eval_batch: 8
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 500
+    amp: 'off'
+    seed: 1
+    monitor_details: true
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06
