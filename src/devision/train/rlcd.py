@@ -116,6 +116,13 @@ class TrainConfig:
     # "" = off: nothing loaded, the run is the one before it.
     interaction_file: str = ""
     interaction_weight: float = 0.0
+    # exp50 (docs/experiments/2026-10-18-exp50-local-views-plan.md): local_views > 0 gives the model that many fixed
+    # local views (ModelConfig.local_views / local_overlap / local_source, saved with the checkpoint, so decide reads
+    # them the same way) read through the question conditioning, whose zero-initialised geometry layer joins the cond
+    # group; needs question_conditioning. Each micro batch's pictures are encoded once. 0: off, the run is the one before it.
+    local_views: int = 0
+    local_overlap: float = 0.0
+    local_source: str = ""
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -259,14 +266,18 @@ def _vision_params(vision, top: int) -> List[nn.Parameter]:
     return [p for name, p in vision.named_parameters() if any(k in name for k in keys)]
 
 
-def _forward(model, batch, pixels, device, return_hidden: bool = False):
+def _forward(model, batch, pixels, device, return_hidden: bool = False, index: Optional[torch.Tensor] = None):
+    """Option logits of `batch`; `pixels` one per question, or (exp50) one per distinct picture with `index` giving
+    each question's picture."""
     trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
-    with torch.set_grad_enabled(trains_vision):
-        patches = model.vision_patches(pixels.to(device))
-    visual = model.projector(patches)
+    patches, visual, geom = model.visual_inputs(pixels.to(device), grad_vision=trains_vision)
+    if index is not None:
+        index = index.to(device)
+        patches, visual = patches.index_select(0, index), visual.index_select(0, index)
+        geom = None if geom is None else geom.index_select(0, index)
     return model(*(batch[k].to(device) for k in
                    ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
-                 visual=visual, patches=patches, return_hidden=return_hidden)
+                 visual=visual, patches=patches, return_hidden=return_hidden, patch_geom=geom)
 
 
 def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = "rlcd"):
@@ -434,9 +445,7 @@ def aux_logits(model, head, ids: Sequence[List[int]], pixels, device, slots: int
     for i, x in enumerate(ids):
         input_ids[i, :len(x)], attention[i, :len(x)] = torch.tensor(x), 1
     trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
-    with torch.set_grad_enabled(trains_vision):
-        patches = model.vision_patches(pixels.to(device))
-    visual = model.projector(patches)
+    visual = model.visual_inputs(pixels.to(device), grad_vision=trains_vision)[1]
     h, _ = model.encode(input_ids.to(device), attention.to(device), visual)
     start = torch.tensor([len(x) - 1 - slots for x in ids], device=device) + visual.size(1)
     pos = start[:, None] + torch.arange(slots, device=device)[None]
@@ -646,7 +655,8 @@ _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
                 "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
-                "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight")
+                "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
+                "local_overlap", "local_source")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -706,6 +716,21 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         teacher = Decider.load(c.distill_teacher, device="cpu").model.to(device).eval().requires_grad_(False)
     if c.region_file and not c.question_conditioning:
         raise ValueError("region_file supervises the question conditioning attention: it needs question_conditioning")
+    if c.local_views:   # exp50: before the seeds below, so the LoRA init, batch order and noise are unchanged
+        if not c.question_conditioning or c.region_file or c.grounding_weight > 0 or c.vision_unfreeze_top \
+                or c.distill_weight > 0 or c.aux_weight > 0:
+            raise ValueError("local_views needs question_conditioning, a frozen vision tower and none of the region / "
+                             "grounding / distillation / number losses")
+        if c.local_source not in ("T", "C") or not 0 <= c.local_overlap < 1:
+            raise ValueError("local_source must be T or C and local_overlap in [0, 1)")
+        cfg = decider.cfg
+        if cfg.local_views and (cfg.local_views, cfg.local_overlap, cfg.local_source) != (c.local_views, c.local_overlap, c.local_source):
+            raise ValueError("the checkpoint already reads other local views")
+        if decider.model.condition is None:
+            decider.model.add_question_conditioning()
+            cfg.question_conditioning = True
+        decider.model.enable_local_views(c.local_views)
+        cfg.local_views, cfg.local_overlap, cfg.local_source = c.local_views, c.local_overlap, c.local_source
     aux, aux_ident, aux_inputs = None, None, {}
     if c.aux_weight > 0:   # built and loaded before the seeds below: the LoRA init, batch order and noise are unchanged
         if c.aux_slots < 1:
@@ -861,13 +886,19 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             chunk = [train_items[i] for i in order[b]]
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
-            pixels = torch.stack([images(it["image"]) for it in chunk])
+            index = None
+            if c.local_views:   # exp50: each distinct picture of the micro batch encoded once
+                names = sorted({it["image"] for it in chunk})
+                pixels = torch.stack([images(n) for n in names])
+                index = torch.tensor([names.index(it["image"]) for it in chunk])
+            else:
+                pixels = torch.stack([images(it["image"]) for it in chunk])
             grounded = [i for i, it in enumerate(chunk) if "grid" in it] if c.grounding_weight > 0 else []
             with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
                 if grounded:
                     logits, hidden = _forward(model, batch, pixels, device, return_hidden=True)
                 else:
-                    logits = _forward(model, batch, pixels, device)
+                    logits = _forward(model, batch, pixels, device, index=index)
                 logits = logits.float()
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
                               batch["qtype"].to(device), sigma, c.group_size, c.objective)
@@ -1004,4 +1035,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                if regions else {}),
             **({"interaction": {"weight": c.interaction_weight, "file": c.interaction_file, "formula": INTERACTION_FORMULA,
                                 "file_sha256": __import__("hashlib").sha256(open(c.interaction_file, "rb").read()).hexdigest()}}
-               if inter else {})}
+               if inter else {}),
+            **({"local": {"views": c.local_views, "overlap": c.local_overlap, "source": c.local_source,
+                          "vision_trainable": sum(p.numel() for p in model.vision.parameters() if p.requires_grad),
+                          "groups": {n: sum(p.numel() for p in g["params"]) for n, g in zip(group_names, groups)}}}
+               if c.local_views else {})}

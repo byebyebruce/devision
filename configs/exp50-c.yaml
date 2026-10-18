@@ -1,0 +1,36 @@
+# exp50 arm C (docs/experiments/2026-10-18-exp50-local-views-plan.md; critic EXP50-PREP-01..03): from EXP48-X's frozen end
+# (a8b92cb9 / c017a469), exp42's 576 updates of two whole quads, gold CE + interaction weight 1.0 (EXP48's recipe); 16
+# fixed local views (overlap 0.5) read through the question conditioning with a zero-initialised geometry layer; the
+# vision tower wholly frozen (X trained its top 4 layers: not here). Local pixels: T = the original picture, C = the
+# picture reduced to its full 256 letterbox detail. T and C differ only in name and local_source.
+name: exp50-c
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp48-x/stage2
+  data: data/exp42/train.jsonl
+  val: data/exp50/val_quarter.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    question_conditioning: true
+    lr_cond: 1.0e-04
+    interaction_file: data/exp48/quads.jsonl
+    interaction_weight: 1.0
+    local_views: 16
+    local_overlap: 0.5
+    local_source: C
+    micro_batch: 8
+    eval_batch: 8
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 500
+    amp: 'off'
+    seed: 1
+    monitor_details: true

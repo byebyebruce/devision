@@ -16,7 +16,7 @@ from PIL import Image
 from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoTokenizer, SiglipVisionConfig
 
-from .image import to_pixel_values
+from .image import local_pixels, to_pixel_values
 from .model import ModelConfig, VisionDecisionModel, build_model, text_encoder
 
 CONFIG_FILE = "config.json"                       # the model config save() writes (the Hub's standard name)
@@ -196,6 +196,8 @@ def question_item(tok, cfg: ModelConfig, text_state: Any, q: Dict[str, Any]) -> 
 
 
 def image_tensor(img: Image.Image, cfg: ModelConfig) -> torch.Tensor:
+    if cfg.local_views:   # exp50: the full picture, its fixed local views and their rectangles, packed
+        return local_pixels(img, cfg.image_size, cfg.local_views, cfg.local_overlap, cfg.local_source)
     return to_pixel_values(img, cfg.image_size)
 
 
@@ -282,14 +284,15 @@ class Decider:
         batch = collate_items([items], self.tok.pad_token_id)
         assert batch is not None
         dev = next(self.model.parameters()).device
-        visual = patches = None
+        visual = patches = geom = None
         if image is not None:   # the picture is encoded once and shared by every question
             pixels = image_tensor(image, self.cfg)[None].to(dev)
-            patches, visual = self.model.image_features(pixels)
+            patches, visual, geom = self.model.visual_inputs(pixels)
             patches, visual = patches.expand(len(items), -1, -1), visual.expand(len(items), -1, -1)
+            geom = None if geom is None else geom.expand(len(items), -1, -1)
         logits = self.model(*(batch[k].to(dev) for k in
                               ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
-                            visual=visual, patches=patches).cpu()
+                            visual=visual, patches=patches, patch_geom=geom).cpu()
         n_visual = 0 if visual is None else visual.size(1)
         answers = {}
         for i, qid in enumerate(qids):
