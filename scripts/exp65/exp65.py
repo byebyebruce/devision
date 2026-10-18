@@ -271,6 +271,28 @@ def decision(pc: Any, pw: Any, attribution: Any) -> str:
     return "neither arm meets the practical condition: stop this budget (no more epochs, no weight sweep)"
 
 
+def start_diag_state(out: str) -> str:
+    """The start point's diagnostic (critic EXP65-R1-01): "missing" when its details file is absent, "completed" when
+    present and registered (read_set then checks identity / completeness; a failure there makes it "invalid")."""
+    f = os.path.join(out, "details_exp63_diag.jsonl")
+    if not os.path.exists(f):
+        return "missing"
+    try:
+        if e54.check_registered(out, "decide_exp63_diag").get("details_exp63_diag.jsonl") != sha(f):
+            return "invalid: not the registered file"
+    except (SystemExit, OSError, ValueError, KeyError) as e:
+        return "invalid: %s" % e
+    return "completed"
+
+
+def route(start_state: str, pc: Any, pw: Any, attribution: Any) -> str:
+    """No route while EXP63's own diagnostic is missing / invalid: the arms' metrics stay reported, the decision waits."""
+    if start_state != "completed":
+        kind = "incomplete" if start_state == "missing" else "invalid"
+        return "%s: EXP63's start-point diagnostic is %s -- no route decision (the arms' results are reported as they are)" % (kind, start_state)
+    return decision(pc, pw, attribution)
+
+
 def report(out: str = OUT, finalize: str = "") -> Dict:
     res: Dict[str, Any] = {"states": {}, "arms": {}, "candidate_eligible": False}
     if finalize:
@@ -290,11 +312,13 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
     e63_new = {c: e57.read_set(E63, c, base[c][0], E63_SHA, e63.set_inputs(c)[1]) for c in CONDS}
     drows, dinp = inputs_of("diag")
     diag_recs: Dict[str, List[Dict]] = {}
-    try:
-        diag_recs["exp63"] = e57.read_set(out, "exp63_diag", drows, E63_SHA, dinp)
-        res["exp63_diag"] = diag_summary(diag_recs["exp63"], drows)
-    except (SystemExit, OSError, ValueError, KeyError) as e:
-        res["states"]["exp63_diag"] = "missing / invalid: %s" % e
+    res["states"]["exp63_diag"] = start_diag_state(out)
+    if res["states"]["exp63_diag"] == "completed":
+        try:
+            diag_recs["exp63"] = e57.read_set(out, "exp63_diag", drows, E63_SHA, dinp)
+            res["exp63_diag"] = diag_summary(diag_recs["exp63"], drows)
+        except (SystemExit, OSError, ValueError, KeyError) as e:
+            res["states"]["exp63_diag"] = "invalid: %s" % e
     qs53 = {q["key"]: q for q in jsonl(e54.QUESTIONS) if q["set"] == "rl_tune"}
     pin = e54.load_inputs(e54.OUT, "P")
     tune = {r["id"]: r for r in jsonl(e54.TUNE)}
@@ -350,7 +374,8 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
         res["w_minus_c_conflict"] = d
         attribution = bool(d["ci95"][0] > 0) if d["ci95"][0] == d["ci95"][0] else "incomplete"
     res["attribution"] = attribution
-    res["decision"] = decision(res["arms"].get("c", {}).get("practical", "incomplete"), res["arms"].get("w", {}).get("practical", "incomplete"), attribution)
+    res["decision"] = route(res["states"]["exp63_diag"], res["arms"].get("c", {}).get("practical", "incomplete"),
+                            res["arms"].get("w", {}).get("practical", "incomplete"), attribution)
     res["exp63_outcome"] = "EXP63 stays 'fit not learned (fit_temp)'; this run does not rewrite it"
     return write_report(out, res)
 

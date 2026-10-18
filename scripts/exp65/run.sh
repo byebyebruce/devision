@@ -4,7 +4,7 @@
 # start (model-free) -> train_c -> freeze_c -> train_w -> freeze_w (training under scripts/exp53/watch.py, freeze tensors
 # only) -> decide (MPS: EXP63 diag, then each arm fit / G / P / diag) -> exist / science per arm (devision-eval, recorded)
 # -> report (model-free; --finalize when a stage failed or was stopped). watch: own process group, no progress 5 / 3 min,
-# memory 1.5 GiB for 30 s, ETA, its deadline 35 s before the outer bound, TERM then KILL 10 s later. Hard limit start + 90
+# memory 1.5 GiB for 30 s, ETA, its deadline 35 s before the outer bound, TERM then KILL 10 s later. Hard limit start + 100
 # minutes (EXP65_LIMIT for CPU fixtures only), the last 120 s for the report. One start ever (runs/exp65.started, never
 # removed), no resume, no retry, nothing chained after it.
 #   nohup bash scripts/exp65/run.sh > runs/exp65.out 2>&1 &
@@ -19,7 +19,7 @@ others=$(model_processes | grep -v "scripts/exp65/run.sh")
 [ -z "$others" ] || { log "other model processes are running:"; echo "$others"; exit 1; }
 for d in runs/exp65 runs/exp65-c runs/exp65-w; do [ ! -e "$d" ] || { log "$d exists"; exit 1; }; done
 mkdir -p runs
-DEADLINE=$(( $(date +%s) + ${EXP65_LIMIT:-5400} ))
+DEADLINE=$(( $(date +%s) + ${EXP65_LIMIT:-6000} ))
 { echo "deadline $DEADLINE"; echo "started $(date '+%F %T')"; echo "head $(git rev-parse HEAD 2>/dev/null)"; } > "$MARK" \
   || { log "cannot write $MARK"; exit 1; }
 STATUS=runs/exp65-status.txt

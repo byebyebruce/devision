@@ -152,3 +152,71 @@ def test_run_order_and_failed_stage(tmp_path):
     p, calls = chain(tmp_path / "b", {"FAIL_W": "1"})
     joined = "\n".join(calls)
     assert p.returncode == 7 and "exp65.py decide" not in joined and "report --finalize" in joined
+
+
+def fake_run(tmp_path, monkeypatch, start: str):
+    """report() with both arms faked to pass every condition and EXP63's start-point diagnostic written for real
+    (write_set, registry, identity) and then broken per `start` (critic EXP65-R1-01)."""
+    out = tmp_path / "exp65"
+    out.mkdir()
+    (out / "START.json").write_text("{}")
+    rows = {}
+    for cl in b.CLASSES:
+        for k in range(2):
+            rid = "%s:%d" % (cl, k)
+            rows[rid] = {"id": rid, "axis": cl, "family": rid, "image_id": rid, "state_text": "s",
+                         "questions": {"q0": {"criteria": {"sample A": None, "sample B": None}}},
+                         "gold": {"q0": {"probabilities": {"sample A": 1.0, "sample B": 0.0}}}}
+    inputs = {rid: {"state": "s"} for rid in rows}
+    recs = [{"sample_id": rid, "qid": "q0", "image_id": rid, "gold": r["gold"]["q0"]["probabilities"], "options": ["sample A", "sample B"],
+             "probabilities": {"sample A": 0.9, "sample B": 0.1}, "prediction": "sample A", "gold_answer": "sample A", "correct": True,
+             "nll": 0.1} for rid, r in rows.items()]
+    ident = {"set": "exp63_diag", "start_sha256": m.sha(str(out / "START.json")), "inputs_sha256": m.e57.hash_inputs(inputs),
+             "model": dict(m.E63_SHA), "temperature": "none (raw)", "image": None}
+    if start == "identity":
+        ident["model"] = {"model.safetensors": "0" * 64}
+    if start != "missing":
+        m.e57.write_set(str(out), "exp63_diag", recs, ident)
+    if start == "unregistered":
+        reg = json.load(open(out / "registry.json"))
+        reg.pop("decide_exp63_diag")
+        json.dump(reg, open(out / "registry.json", "w"))
+    if start == "changed":
+        with open(out / "details_exp63_diag.jsonl", "a") as fh:
+            fh.write(json.dumps(recs[0]) + "\n")
+    real = m.e57.read_set
+    monkeypatch.setattr(m, "check_start", lambda o, code=False: {"exp57_screens": {}})
+    monkeypatch.setattr(m.e63, "set_inputs", lambda c: ({}, {}))
+    monkeypatch.setattr(m, "inputs_of", lambda c: (rows, inputs))
+    monkeypatch.setattr(m.e57, "read_set", lambda o, name, *a: real(o, name, *a) if name == "exp63_diag" else recs if name.endswith("_diag") else [])
+    monkeypatch.setattr(m.fz, "check", lambda run, evals: {"weights": {"model.safetensors": run}})
+    monkeypatch.setattr(m.e57, "SCREENS", {})
+    monkeypatch.setattr(m.e54, "QUESTIONS", str(tmp_path / "none.jsonl"))
+    monkeypatch.setattr(m.e54, "TUNE", str(tmp_path / "none.jsonl"))
+    (tmp_path / "none.jsonl").write_text("")
+    monkeypatch.setattr(m.e54, "load_inputs", lambda *a: {})
+    monkeypatch.setattr(m.e57, "reading_summary", lambda *a: {})
+    monkeypatch.setattr(m, "arm_gates", lambda a: {"fit_temp": True})
+    monkeypatch.setattr(m, "practical", lambda g, diag, vs: True)
+    return m.report(str(out))
+
+
+@pytest.mark.parametrize("start", ["missing", "unregistered", "changed", "identity"])
+def test_no_route_without_a_valid_start_diagnostic(tmp_path, monkeypatch, start):
+    res = fake_run(tmp_path, monkeypatch, start)
+    assert res["arms"]["c"]["practical"] is True and res["arms"]["w"]["practical"] is True     # the arms stay reported
+    assert "diag" in res["arms"]["c"] and "w_minus_c_conflict" in res
+    want = "missing" if start == "missing" else "invalid"
+    assert res["states"]["exp63_diag"].startswith(want) and "exp63_diag" not in res
+    assert res["decision"].startswith("incomplete" if start == "missing" else "invalid") and "no route decision" in res["decision"]
+
+
+def test_a_complete_start_diagnostic_restores_the_decision(tmp_path, monkeypatch):
+    res = fake_run(tmp_path, monkeypatch, "complete")
+    assert res["states"]["exp63_diag"] == "completed" and res["exp63_diag"]["conflict_macro"] == 1.0
+    assert res["decision"] == m.decision(True, True, res["attribution"]) and res["decision"].startswith("both arms meet")
+
+
+def test_run_limit_default_is_100_minutes():
+    s = open("scripts/exp65/run.sh").read()
+    assert "${EXP65_LIMIT:-6000}" in s and "start + 100" in s and "120 s for the report" in s
