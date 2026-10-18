@@ -109,6 +109,13 @@ class TrainConfig:
     # "" = off: nothing loaded, the run is the one before it; decide never uses the boxes.
     region_file: str = ""
     region_weight: float = 0.0
+    # exp48 (docs/experiments/2026-10-18-exp48-interaction-plan.md): interaction_file (a sidecar JSONL: per training
+    # row id, its four-corner quad, view 0 / 1, object 0 / 1 and the a / b option indices) adds interaction_weight x
+    # mean over the batch's quads of softplus(1 - J), J = (m[0,A] - m[0,B] - m[1,A] + m[1,B]) / 4 with
+    # m[v,o] = z[v,o,a] - z[v,o,b] on the ordinary option logits. Computed (for monitoring) whatever the weight;
+    # "" = off: nothing loaded, the run is the one before it.
+    interaction_file: str = ""
+    interaction_weight: float = 0.0
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -279,6 +286,54 @@ def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = 
     logp = -(((z - logits.unsqueeze(0)) ** 2) * mask).sum(-1) / (2 * sigma ** 2)
     ce = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
     return -(adv * logp).mean() + ce, ce
+
+INTERACTION_FORMULA = "J4/softplus(1-J)/v1"
+
+
+def interaction_table(path: str, samples: Sequence[Sample]) -> Dict[Tuple[str, str], Tuple[str, int, int, int, int]]:
+    """(sample id, qid) -> (quad, view, object, a index, b index) for every training question; every question needs a
+    row and every quad its four distinct corners."""
+    rows = {}
+    for line in open(path):
+        if line.strip():
+            r = json.loads(line)
+            k = (r["id"], r["qid"])
+            if k in rows:
+                raise ValueError("interaction: %s repeated in %s" % (k, path))
+            rows[k] = (r["quad"], int(r["view"]), int(r["object"]), int(r["a_index"]), int(r["b_index"]))
+    out, corners = {}, defaultdict(set)
+    for s in samples:
+        for qid, q in s["questions"].items():
+            k = (s.get("id", ""), qid)
+            if k not in rows:
+                raise ValueError("interaction: no quad for %s" % (k,))
+            quad, v, o, a, b = rows[k]
+            n = len(q.get("criteria") or {})
+            if not (0 <= a < n and 0 <= b < n and a != b):
+                raise ValueError("interaction: %s a / b indices %d / %d do not fit %d options" % (k, a, b, n))
+            if (v, o) in corners[quad]:
+                raise ValueError("interaction: quad %s corner %s twice" % (quad, (v, o)))
+            corners[quad].add((v, o))
+            out[k] = rows[k]
+    bad = [q for q, c in corners.items() if c != {(0, 0), (0, 1), (1, 0), (1, 1)}]
+    if bad:
+        raise ValueError("interaction: %d quads without their four corners, e.g. %s" % (len(bad), bad[0]))
+    return out
+
+
+def interaction_loss(logits: torch.Tensor, corners: Sequence[Tuple[str, int, int, int, int]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    """(mean softplus(1 - J) over the quads of a batch, mean J): `corners[i]` is row i's (quad, view, object, a, b)."""
+    by: Dict[str, Dict[Tuple[int, int], torch.Tensor]] = defaultdict(dict)
+    for i, (quad, v, o, a, b) in enumerate(corners):
+        by[quad][(v, o)] = logits[i, a] - logits[i, b]
+    js = []
+    for quad, m in by.items():
+        if set(m) != {(0, 0), (0, 1), (1, 0), (1, 1)}:
+            raise ValueError("interaction: quad %s split across batches" % quad)
+        js.append((m[(0, 0)] - m[(0, 1)] - m[(1, 0)] + m[(1, 1)]) / 4)
+    j = torch.stack(js)
+    return nn.functional.softplus(1 - j).mean(), j.mean()
+
 
 REGION_SMOOTH = 0.1     # exp45: the target is 0.9 x the box's patch shares + 0.1 x uniform, fixed before the run
 
@@ -591,7 +646,7 @@ _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
                 "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
-                "aux_head", "region_file", "region_weight")
+                "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -668,6 +723,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if c.question_conditioning and model.condition is None:   # S2: new module, zero output layer
         model.add_question_conditioning()
         decider.cfg.question_conditioning = True
+    inter: Dict[Tuple[str, str], Tuple[str, int, int, int, int]] = {}
+    if c.interaction_file:   # exp48: no model change, nothing random
+        inter = interaction_table(c.interaction_file, samples)
     regions: Dict[str, List[float]] = {}
     if c.region_file:   # exp45: the attention is kept during training (both arms), never in decide
         side = decider.cfg.image_size // int(cast(int, model.vision.config.patch_size))
@@ -813,6 +871,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 logits = logits.float()
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
                               batch["qtype"].to(device), sigma, c.group_size, c.objective)
+            interaction = None
+            if inter:   # the same forward's option logits; joins the loss checked finite below, one backward / step
+                i_loss, i_j = interaction_loss(logits, [inter[(it["sample_id"], it["qid"])] for it in chunk])
+                loss = loss + c.interaction_weight * i_loss
+                interaction = (i_loss.item(), i_j.item())
             region = None
             if regions:   # the same forward's attention; checked finite with the loss below, one backward / step
                 att = cast(Any, model.condition).last_weights
@@ -873,7 +936,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     **({"grounding_kl": ground.item()} if ground is not None else {}),
                     **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}),
                     **({"number_loss": aux_stats[0], "number_accuracy": aux_stats[1]} if aux_stats is not None else {}),
-                    **({"region_kl": region[0], "region_mass": region[1]} if region is not None else {}))
+                    **({"region_kl": region[0], "region_mass": region[1]} if region is not None else {}),
+                    **({"interaction_loss": interaction[0], "interaction_j": interaction[1]} if interaction is not None else {}))
             means = log.flush(len(losses), epoch + 1, {name: g["lr"] for name, g in zip(group_names, optimizer.param_groups)})
             if means:
                 print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f%s" % (
@@ -884,7 +948,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     " number_loss %.4f number_acc %.3f" % (means["train/number_loss"], means["train/number_accuracy"])
                     if "train/number_loss" in means else
                     " region_kl %.4f region_mass %.3f" % (means["train/region_kl"], means["train/region_mass"])
-                    if "train/region_kl" in means else ""), flush=True)
+                    if "train/region_kl" in means else
+                    " interaction_loss %.4f interaction_j %.3f" % (means["train/interaction_loss"], means["train/interaction_j"])
+                    if "train/interaction_loss" in means else ""), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:
@@ -935,4 +1001,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             **({"aux": {"weight": c.aux_weight, "slots": c.aux_slots, "head": aux_ident}} if aux is not None else {}),
             **({"region": {"weight": c.region_weight, "file": c.region_file, "smooth": REGION_SMOOTH,
                            "file_sha256": __import__("hashlib").sha256(open(c.region_file, "rb").read()).hexdigest()}}
-               if regions else {})}
+               if regions else {}),
+            **({"interaction": {"weight": c.interaction_weight, "file": c.interaction_file, "formula": INTERACTION_FORMULA,
+                                "file_sha256": __import__("hashlib").sha256(open(c.interaction_file, "rb").read()).hexdigest()}}
+               if inter else {})}
