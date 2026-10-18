@@ -246,3 +246,40 @@ def test_bad_settings_are_refused(tmp_path):
         train(d, samples[:16], data_root=tmp_path / "data", out_dir=tmp_path / "x", val_samples=samples[16:],
               config=TrainConfig(**{**CONFIG, "question_conditioning": True, "local_views": N, "local_overlap": OVERLAP,
                                     "local_source": "T"}))
+
+
+def _old_rects(w, h, n, overlap):
+    """view_rects before the small-picture guard (exp50's run used it)."""
+    import math
+    pairs = [(c, n // c) for c in range(1, n + 1) if n % c == 0]
+    cols, rows = min(pairs, key=lambda p: (abs(math.log((w / p[0]) / (h / p[1]))), p[0]))
+    vw, vh = min(w, w / cols * (1 + overlap)), min(h, h / rows * (1 + overlap))
+    xs = [(w - vw) * i / (cols - 1) if cols > 1 else (w - vw) / 2 for i in range(cols)]
+    ys = [(h - vh) * j / (rows - 1) if rows > 1 else (h - vh) / 2 for j in range(rows)]
+    return [(round(x), round(y), round(x + vw), round(y + vh)) for y in ys for x in xs]
+
+
+def test_small_and_thin_pictures_get_croppable_views_and_ordinary_sizes_are_unchanged():
+    """critic EXP50-NOTE-01: 1 x 1, 1-pixel-wide and very thin pictures give views of at least one pixel inside the
+    picture; for every size whose views were already non-empty (all of exp50's) the rectangles are exactly as before."""
+    for w, h in [(1, 1), (1, 300), (300, 1), (2, 3), (5, 1000), (1000, 4), (11, 7)]:
+        for n, o in [(12, 0.25), (16, 0.5), (4, 0.5)]:
+            rects = view_rects(w, h, n, o)
+            assert len(rects) == n and all(0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h for x0, y0, x1, y1 in rects)
+            px = local_pixels(Image.new("RGB", (w, h), "red"), 256, n, o, "C")
+            assert px.shape == (3 + 3 * n + 1, 256, 256) and torch.isfinite(px).all()
+    changed = 0
+    for w in list(range(20, 1400, 37)) + [522, 560, 580, 600, 650, 700]:
+        for h in list(range(20, 900, 41)) + [100, 140, 180, 405, 409, 486, 577]:
+            for n, o in [(12, 0.25), (16, 0.5)]:
+                old = _old_rects(w, h, n, o)
+                if all(x1 > x0 and y1 > y0 for x0, y0, x1, y1 in old):
+                    changed += view_rects(w, h, n, o) != old
+    assert changed == 0
+
+
+def test_small_pictures_through_ordinary_decide():
+    d = local_decider("T")
+    for size in [(1, 1), (1, 300), (400, 2)]:
+        got = d.decide({}, QS, image=Image.new("RGB", size, (200, 30, 30)))["answers"]
+        assert set(got) == {"q", "y"} and abs(sum(got["q"]["probabilities"].values()) - 1) < 1e-4

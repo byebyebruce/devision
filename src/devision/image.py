@@ -38,7 +38,21 @@ def view_rects(w: int, h: int, n: int, overlap: float):
     vw, vh = min(w, w / cols * (1 + overlap)), min(h, h / rows * (1 + overlap))
     xs = [(w - vw) * i / (cols - 1) if cols > 1 else (w - vw) / 2 for i in range(cols)]
     ys = [(h - vh) * j / (rows - 1) if rows > 1 else (h - vh) / 2 for j in range(rows)]
-    return [(round(x), round(y), round(x + vw), round(y + vh)) for y in ys for x in xs]
+    out = []
+    for y in ys:
+        for x in xs:
+            (x0, x1), (y0, y1) = _span(round(x), round(x + vw), w), _span(round(y), round(y + vh), h)
+            out.append((x0, y0, x1, y1))
+    return out
+
+
+def _span(a: int, b: int, size: int):
+    """(a, b) as rounded, or -- only when rounding left it empty (pictures a few pixels across) -- the 1-pixel span at
+    a inside [0, size), so every view can be cropped. Spans of at least one pixel are returned unchanged."""
+    if b - a >= 1:
+        return a, b
+    a = min(max(a, 0), size - 1)
+    return a, a + 1
 
 
 def degraded(img: Image.Image, size: int) -> Image.Image:

@@ -25,8 +25,11 @@ datasets:
 - ryokamoi/VisOnlyQA_Train
 - RyanWW/Super-CLEVR
 - allenai/pixmo-count
-# min_package_version: set when a 512-input candidate is locked (the inference package that reads it, e.g. 0.3.0;
-# devision 0.2.1 ignores interpolate_pos_encoding). The card then installs "devision>=X" on HF and ModelScope.
+# min_package_version: set when the locked candidate needs a newer inference package than PyPI's 0.2.1 -- a 512-input
+# candidate (interpolate_pos_encoding) or a local-view candidate (local_views / local_overlap / local_source and the
+# conditioning's geometry layer; both read by 0.3.0, unreleased build 0.3.0.dev1, docs/experiments/2026-10-18-v04-local-
+# release-prep.md). 0.2.1 cannot read either. Verify the version is free before release. The card then installs
+# "devision>=X" on HF and ModelScope. Not set for a candidate with v0.3's structure.
 cpu_latency: release/v0.4/cpu_latency.json
 modelscope_repo: baibaibai000/devision
 evidence:
