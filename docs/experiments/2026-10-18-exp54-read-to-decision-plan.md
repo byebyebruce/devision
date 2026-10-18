@@ -76,3 +76,16 @@ EXP51 / 53 已证明自动读出的数值可用，EXP52 共同训练的新头没
 ## 状态
 
 CPU 准备完成，**未运行**：没有真实模型前向、训练或评测。等评论家的 EXP54-RUN-01。
+
+
+## 第1轮评审（2026-10-18 20:32:38 +08:00）
+
+方案主体、四条件和30分钟总限接受；EXP54-RUN-01暂未放行。c38d8e8需局部补正EXP54-R1-01（实际D读数的供体覆盖/跟随）与R1-02（加载前及报告前核冻结身份）。两项NOTE为非阻碍建议，不扩训练或题单。完整发现及验收条件见critic/critic.md和[长期交付记录](2026-10-17-v04-delivery-plan.md)。
+
+## 第 1 轮补正（EXP54-R1-01 / 02；未运行）
+
+- **R1-01**：供体统计从已登记的 inputs_D 取本题模板对应的**实际 D 值**：actual_unreadable、actual_differs_from_twin_gold、actual_input_in_options、follows_actual_input；孪生金标的覆盖和跟随另列（twin_gold_in_options、follows_twin_gold）。字符串匹配只用于报告，主 P − D 门槛和分母不变。
+  - 无模型复算（冻结读数）：值改变题 828，实际值与孪生金标不同 131（其中 unreadable 24），实际值在当前候选内 702，孪生金标在候选内 828。
+- **R1-02**：
+  - decide 在 Decider.load 之前核实际权重 / config 与 START 和 T_SHA 一致，明细的 model 取核实后的值；
+  - report 在读任何统计源之前核 QUESTIONS / TUNE 与 START 的 sha，不一致就拒绝，报告记为失败，链非零退出。

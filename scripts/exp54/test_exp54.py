@@ -221,3 +221,74 @@ def test_run_stops_at_the_watch_deadline_and_finalizes(tmp_path):
         assert False, "child left"
     except ProcessLookupError:
         pass
+
+
+# ---- critic EXP54-R1-01 / 02
+
+
+def test_donor_counts_from_the_actual_d_inputs(data):
+    """Model-free, on the frozen readings: 828 changed questions, the D value differs from the twin's gold on 131
+    (24 unreadable), and is among the current options on 702."""
+    qs, preds, rows = data
+    inp = e.build_inputs(rows, qs, preds)
+    qs53 = {q["key"]: q for q in qs if q["set"] == "rl_tune"}
+    reading = [{"key": k, "prediction": None} for k in qs53]                 # no decision needed for the coverage counts
+    st = e.donor_stats(reading, rows, qs53, inp["D"])
+    assert (st["changed"], st["actual_differs_from_twin_gold"], st["actual_unreadable"], st["actual_input_in_options"],
+            st["twin_gold_in_options"]) == (828, 131, 24, 702, 828)
+
+
+def test_donor_following_cases():
+    rows = {"r": {"questions": {"q": {"instructions": "What is the mass of each particle in sample A?",
+                                      "criteria": {"9 u": None, "12 u": None, "14 u": None}}}}}
+    qs53 = {"k": {"id": "r", "qid": "q", "twin_changed": True, "twin": "t"}, "t": {"target": "12"}}
+    for actual, pred, want in (("9", "9 u", (1, 1, 0)),          # not the twin's gold, but a legal option, followed
+                               ("7", "9 u", (0, 0, 0)),          # not among the options
+                               (e.UNREADABLE, "12 u", (0, 0, 1))):  # unreadable: kept, the twin-gold follow apart
+        inputs = {"r": {"table": [["Sample A", "mass of each particle", actual]]}}
+        s = e.donor_stats([{"key": "k", "prediction": pred}], rows, qs53, inputs)
+        assert (s["actual_input_in_options"], s["follows_actual_input"], s["follows_twin_gold"]) == want
+        assert s["actual_unreadable"] == (actual == e.UNREADABLE) and s["twin_gold_in_options"] == 1
+
+
+def test_weights_checked_before_loading(tmp_path, monkeypatch):
+    import shutil
+    run = tmp_path / "exp50-t"
+    (run / "stage2").mkdir(parents=True)
+    for f in e.T_SHA:
+        os.symlink(os.path.join(ROOT, e.RUN, "stage2", f), run / "stage2" / f)
+    st = {"model": dict(e.T_SHA)}
+    assert e.verified_model(st, str(run)) == e.T_SHA                           # the real files pass
+    (run / "stage2" / "config.json").unlink()
+    shutil.copy(os.path.join(ROOT, e.RUN, "stage2", "config.json"), run / "stage2" / "config.json")
+    with open(run / "stage2" / "config.json", "a") as fh:
+        fh.write(" ")                                                      # config replaced after START
+    with pytest.raises(SystemExit, match="refused before loading"):
+        e.verified_model(st, str(run))
+    out = tmp_path / "out"
+    out.mkdir()
+    json.dump({"model": dict(e.T_SHA), "tune_sha256": "x"}, open(out / "START.json", "w"))
+    import devision.infer as inf
+    monkeypatch.setattr(e, "RUN", str(run))
+    monkeypatch.setattr(inf.Decider, "load", classmethod(lambda cls, *a, **k: (_ for _ in ()).throw(AssertionError("loaded"))))
+    with pytest.raises(SystemExit, match="refused before loading"):
+        e.stage_decide(str(out))
+
+
+@pytest.mark.parametrize("field", ["target", "twin_changed"])
+def test_report_refuses_changed_statistics_sources(tmp_path, monkeypatch, field):
+    out = str(tmp_path / "exp54")
+    os.makedirs(out)
+    json.dump({"questions_sha256": e.sha(os.path.join(ROOT, e.QUESTIONS)), "tune_sha256": e.sha(os.path.join(ROOT, e.TUNE))},
+              open(os.path.join(out, "START.json"), "w"))
+    lines = open(os.path.join(ROOT, e.QUESTIONS)).read().splitlines()
+    k = next(i for i, x in enumerate(lines) if '"rl_tune"' in x)
+    q = json.loads(lines[k])
+    q[field] = "999" if field == "target" else (not q["twin_changed"])
+    lines[k] = json.dumps(q)
+    changed = tmp_path / "questions.jsonl"
+    changed.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(e, "QUESTIONS", str(changed))
+    monkeypatch.setattr(e, "TUNE", os.path.join(ROOT, e.TUNE))
+    with pytest.raises(SystemExit, match="differ from START"):
+        e.report(out)

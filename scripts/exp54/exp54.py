@@ -260,11 +260,22 @@ def decide_condition(decider, rows: Dict[str, Dict], inputs: Dict[str, Dict], on
     return score_records(recs)
 
 
+def verified_model(st: Dict, run: Optional[str] = None) -> Dict[str, str]:
+    """The checkpoint's actual weights / config sha256, which must equal START's and the fixed T_SHA."""
+    ck = os.path.join(run or RUN, "stage2")
+    actual = {f: sha(os.path.join(ck, f)) for f in T_SHA}
+    if actual != T_SHA or {f: st["model"].get(f) for f in T_SHA} != T_SHA:
+        raise SystemExit("the checkpoint's weights / config are not START's 1a8e5439 / 99c6246e: refused before loading")
+    return actual
+
+
 def stage_decide(out: str = OUT, device: str = "auto") -> Dict:
     from devision.infer import Decider, best_device
     s_sha = started(out)
+    st = json.load(open(os.path.join(out, "START.json")))
+    model = verified_model(st)                     # before any load (critic R1-02)
     rows = {r["id"]: r for r in map(json.loads, open(TUNE))}
-    if sha(TUNE) != json.load(open(os.path.join(out, "START.json")))["tune_sha256"]:
+    if sha(TUNE) != st["tune_sha256"]:
         raise SystemExit("rl_tune differs from START")
     dev = best_device() if device == "auto" else device
     d = Decider.load(os.path.join(RUN, "stage2"), device=dev)
@@ -276,7 +287,7 @@ def stage_decide(out: str = OUT, device: str = "auto") -> Dict:
         recs = decide_condition(d, rows, inputs, on_request=lambda n, k=k: progress(out, "decide", k * len(rows) + n, total))
         f = "details_%s.jsonl" % c
         ident = {"condition": c, "start_sha256": s_sha, "inputs_sha256": sha(os.path.join(out, "inputs_%s.jsonl" % c)),
-                 "model": T_SHA, "temperature": "none (raw)", "image": None, "device": dev}
+                 "model": model, "temperature": "none (raw)", "image": None, "device": dev}
         with open(os.path.join(out, f), "w") as fh:
             fh.write(json.dumps({"identity": ident}) + "\n")
             fh.write("".join(json.dumps(r) + "\n" for r in recs))
@@ -350,6 +361,9 @@ def summary(fam) -> Dict:
 
 
 def report(out: str = OUT, finalize: str = "") -> Dict:
+    st = json.load(open(os.path.join(out, "START.json"))) if os.path.exists(os.path.join(out, "START.json")) else None
+    if st is not None and (sha(QUESTIONS) != st["questions_sha256"] or sha(TUNE) != st["tune_sha256"]):
+        raise SystemExit("questions / rl_tune differ from START (targets / twins / gold may have changed): no report")
     rows = {r["id"]: r for r in map(json.loads, open(TUNE))}
     qs53 = {q["key"]: q for q in map(json.loads, open(QUESTIONS)) if q["set"] == "rl_tune"}
     res: Dict = {"states": {}, "conditions": {}, "differences": {}}
@@ -385,19 +399,8 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
                 cmp_["%s|%s" % (row.get("kind", ""), row.get("axis", ""))][1] += 1
         s["comparison"] = {k: {"right": v[0], "of": v[1]} for k, v in sorted(cmp_.items())}
         res["conditions"][c] = s
-    if "D" in reading and "P" in reading:     # donor following: D's answer is the option carrying the twin's value
-        follow, inside = [0, 0], 0
-        for r in reading["D"]:
-            q = qs53[r["key"]]
-            if not q["twin_changed"]:
-                continue
-            tv = qs53[q["twin"]]["target"]
-            opts = rows[q["id"]]["questions"][q["qid"]]["criteria"]
-            carrying = [o for o in opts if o.split(" ")[0].replace(",", "") == tv]
-            inside += bool(carrying)
-            follow[0] += bool(carrying) and r["prediction"] in carrying
-            follow[1] += 1
-        res["donor"] = {"changed": follow[1], "twin_value_among_options": inside, "follows_twin_value": follow[0]}
+    if "D" in reading and os.path.exists(os.path.join(out, "inputs_D.jsonl")):
+        res["donor"] = donor_stats(reading["D"], rows, qs53, load_inputs(out, "D"))
     clusters = None
     for a, b, stats in (("P", "E", ("both", "different", "all")), ("P", "D", ("changed", "all")), ("G", "P", ("all", "both"))):
         if a in reading and b in reading:
@@ -428,6 +431,38 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
     open(os.path.join(out, "report.txt"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
     return res
+
+
+def number_of(option: str) -> str:
+    """An option's leading number without thousands commas ("1,360 m/s" -> "1360"); for reporting only."""
+    return option.split(" ")[0].replace(",", "")
+
+
+def donor_stats(reading_d: List[Dict], rows: Dict[str, Dict], qs53: Dict, inputs_d: Dict[str, Dict]) -> Dict:
+    """On the value-changed questions (critic R1-01): the ACTUAL value the D table gave for this question's template
+    (from the registered inputs_D) -- unreadable, among the current options or not -- and whether D's answer is the
+    option carrying it; the twin's gold value is reported apart. String matching here is a report, never an input."""
+    n = {"changed": 0, "actual_unreadable": 0, "actual_differs_from_twin_gold": 0, "actual_input_in_options": 0,
+         "follows_actual_input": 0, "twin_gold_in_options": 0, "follows_twin_gold": 0}
+    for r in reading_d:
+        q = qs53[r["key"]]
+        if not q["twin_changed"]:
+            continue
+        n["changed"] += 1
+        row = rows[q["id"]]
+        opts = list(row["questions"][q["qid"]]["criteria"])
+        tab = {(o, qn): v for o, qn, v in inputs_d[q["id"]]["table"]}
+        actual = tab[TEMPLATES[row["questions"][q["qid"]]["instructions"]]]
+        twin_gold = qs53[q["twin"]]["target"]
+        n["actual_unreadable"] += actual == UNREADABLE
+        n["actual_differs_from_twin_gold"] += actual != twin_gold
+        carrying = [o for o in opts if number_of(o) == actual]
+        n["actual_input_in_options"] += bool(carrying)
+        n["follows_actual_input"] += bool(carrying) and r["prediction"] in carrying
+        gold_carrying = [o for o in opts if number_of(o) == twin_gold]
+        n["twin_gold_in_options"] += bool(gold_carrying)
+        n["follows_twin_gold"] += bool(gold_carrying) and r["prediction"] in gold_carrying
+    return n
 
 
 def gates(res: Dict) -> Dict:
