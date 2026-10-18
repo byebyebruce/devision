@@ -17,7 +17,7 @@ from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoTokenizer, SiglipVisionConfig
 
 from .image import local_pixels, to_pixel_values
-from .model import ModelConfig, VisionDecisionModel, build_model, text_encoder
+from .model import NUMBER_SLOTS, ModelConfig, VisionDecisionModel, build_model, text_encoder
 
 CONFIG_FILE = "config.json"                       # the model config save() writes (the Hub's standard name)
 LEGACY_CONFIG_FILE = "devision_config.json"       # its name in checkpoints saved before 2026-10-07
@@ -293,7 +293,7 @@ class Decider:
         logits = self.model(*(batch[k].to(dev) for k in
                               ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
                             visual=visual, patches=patches, patch_geom=geom).cpu()
-        n_visual = 0 if visual is None else visual.size(1)
+        n_visual = 0 if visual is None else visual.size(1) + (NUMBER_SLOTS if self.model.reader is not None else 0)
         answers = {}
         for i, qid in enumerate(qids):
             q, it = questions[qid], items[i]

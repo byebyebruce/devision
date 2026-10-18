@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from laya.common import QTYPES, clamp_temperature, collate_items, ece_score, proper_reward
 from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
@@ -123,6 +124,16 @@ class TrainConfig:
     local_views: int = 0
     local_overlap: float = 0.0
     local_source: str = ""
+    # exp52 (docs/experiments/2026-10-18-exp52-number-reader-plan.md): number_reader adds model.NumberReader (seeded from
+    # seed + 52, before the batch seeds, so both arms start from the same tensors); its content tokens join ModernBERT's
+    # input in every forward. number_file (a sidecar JSONL: per training row id and qid, the number answer's target
+    # string, e.g. "1360") gives number_weight x the strict character CE of the reader's character head (digits, ".",
+    # EOS; per question the mean over its valid slots, then the mean over the batch's questions that have a target),
+    # computed for monitoring whatever the weight. lr_reader: the reader's learning rate.
+    number_reader: bool = False
+    number_file: str = ""
+    number_weight: float = 0.0
+    lr_reader: float = 5e-4
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -330,6 +341,49 @@ def interaction_table(path: str, samples: Sequence[Sample]) -> Dict[Tuple[str, s
     if bad:
         raise ValueError("interaction: %d quads without their four corners, e.g. %s" % (len(bad), bad[0]))
     return out
+
+
+def number_labels(target: str, slots: int = 5) -> List[int]:
+    """The character targets of a number string: its characters among model.NUMBER_CHARS, then EOS, padded with -100."""
+    from ..model import NUMBER_CHARS
+    eos = len(NUMBER_CHARS)
+    if not target or len(target) + 1 > slots or any(ch not in NUMBER_CHARS for ch in target):
+        raise ValueError("number target %r does not fit %d slots of %r + EOS" % (target, slots, NUMBER_CHARS))
+    ids = [NUMBER_CHARS.index(ch) for ch in target] + [eos]
+    return ids + [-100] * (slots - len(ids))
+
+
+def number_table(path: str, samples: Sequence[Sample]) -> Dict[Tuple[str, str], List[int]]:
+    """(sample id, qid) -> character targets, for the training questions the sidecar lists (each at most once; every
+    listed question must be a training question)."""
+    keys = {(s.get("id", ""), qid) for s in samples for qid in s["questions"]}
+    out: Dict[Tuple[str, str], List[int]] = {}
+    for line in open(path):
+        if line.strip():
+            r = json.loads(line)
+            k = (r["id"], r["qid"])
+            if k in out:
+                raise ValueError("number: %s repeated in %s" % (k, path))
+            if k not in keys:
+                raise ValueError("number: %s is not a training question" % (k,))
+            out[k] = number_labels(r["target"])
+    return out
+
+
+def number_loss(chars: torch.Tensor, labels: Sequence[Optional[List[int]]]) -> Tuple[Optional[torch.Tensor], float, int]:
+    """(loss or None, share of whole strings right, questions with a target): strict character CE of the reader's
+    character head [B, slots, classes] -- per question the mean over its valid slots (characters and EOS), then the mean
+    over the questions that have a target; a string is right when every valid slot is."""
+    rows = [i for i, y in enumerate(labels) if y is not None]
+    if not rows:
+        return None, 0.0, 0
+    y = torch.tensor([labels[i] for i in rows], device=chars.device)
+    lg = chars[rows].float()
+    valid = y != -100
+    ce = F.cross_entropy(lg.transpose(1, 2), y.clamp(min=0), reduction="none") * valid
+    loss = (ce.sum(1) / valid.sum(1)).mean()
+    right = ((lg.argmax(-1) == y) | ~valid).all(1).float().mean().item()
+    return loss, right, len(rows)
 
 
 def interaction_loss(logits: torch.Tensor, corners: Sequence[Tuple[str, int, int, int, int]]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -656,7 +710,7 @@ _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
                 "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
                 "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
-                "local_overlap", "local_source")
+                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -716,6 +770,16 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         teacher = Decider.load(c.distill_teacher, device="cpu").model.to(device).eval().requires_grad_(False)
     if c.region_file and not c.question_conditioning:
         raise ValueError("region_file supervises the question conditioning attention: it needs question_conditioning")
+    if c.number_file and not c.number_reader:
+        raise ValueError("number_file supervises the number reader: it needs number_reader")
+    if c.number_reader:   # exp52: before the seeds below; its own seed, so every arm starts from the same tensors
+        if c.grounding_weight > 0 or c.aux_weight > 0 or c.distill_weight > 0:
+            raise ValueError("number_reader does not combine with the grounding / MLM number / distillation losses")
+        if decider.model.reader is None:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(c.seed + 52)
+                decider.model.add_number_reader()
+            decider.cfg.number_reader = True
     if c.local_views:   # exp50: before the seeds below, so the LoRA init, batch order and noise are unchanged
         if not c.question_conditioning or c.region_file or c.grounding_weight > 0 or c.vision_unfreeze_top \
                 or c.distill_weight > 0 or c.aux_weight > 0:
@@ -748,6 +812,10 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if c.question_conditioning and model.condition is None:   # S2: new module, zero output layer
         model.add_question_conditioning()
         decider.cfg.question_conditioning = True
+    numbers: Dict[Tuple[str, str], List[int]] = {}
+    if c.number_file:   # exp52: training targets only, never an input
+        numbers = number_table(c.number_file, samples)
+        cast(Any, model.reader).keep_chars = True
     inter: Dict[Tuple[str, str], Tuple[str, int, int, int, int]] = {}
     if c.interaction_file:   # exp48: no model change, nothing random
         inter = interaction_table(c.interaction_file, samples)
@@ -796,8 +864,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
              for p in getattr(model, name).parameters()]
     if extra:
         groups.append({"params": extra, "lr": c.lr_cond})
+    reader_params = list(cast(Any, model.reader).parameters()) if getattr(model, "reader", None) is not None else []
+    if reader_params:
+        groups.append({"params": reader_params, "lr": c.lr_reader})
     group_names = ["projector", "head", "lora"] + (["encoder"] if unfrozen else []) \
-        + (["vision"] if vision_params else []) + (["cond"] if extra else [])
+        + (["vision"] if vision_params else []) + (["cond"] if extra else []) + (["reader"] if reader_params else [])
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
     grouped = any("group" in it for it in train_items)
     first_plan = plan_batches(train_items, c.micro_batch) if grouped else []
@@ -907,6 +978,13 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 i_loss, i_j = interaction_loss(logits, [inter[(it["sample_id"], it["qid"])] for it in chunk])
                 loss = loss + c.interaction_weight * i_loss
                 interaction = (i_loss.item(), i_j.item())
+            number = None
+            if numbers:   # exp52: the same forward's character head; joins the loss checked finite below
+                n_loss, n_right, n_q = number_loss(cast(Any, model.reader).last_chars,
+                                                   [numbers.get((it["sample_id"], it["qid"])) for it in chunk])
+                if n_loss is not None:
+                    loss = loss + c.number_weight * n_loss
+                    number = (n_loss.item(), n_right)
             region = None
             if regions:   # the same forward's attention; checked finite with the loss below, one backward / step
                 att = cast(Any, model.condition).last_weights
@@ -968,7 +1046,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}),
                     **({"number_loss": aux_stats[0], "number_accuracy": aux_stats[1]} if aux_stats is not None else {}),
                     **({"region_kl": region[0], "region_mass": region[1]} if region is not None else {}),
-                    **({"interaction_loss": interaction[0], "interaction_j": interaction[1]} if interaction is not None else {}))
+                    **({"interaction_loss": interaction[0], "interaction_j": interaction[1]} if interaction is not None else {}),
+                    **({"reader_loss": number[0], "reader_exact": number[1]} if number is not None else {}))
             means = log.flush(len(losses), epoch + 1, {name: g["lr"] for name, g in zip(group_names, optimizer.param_groups)})
             if means:
                 print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f%s" % (
@@ -981,7 +1060,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     " region_kl %.4f region_mass %.3f" % (means["train/region_kl"], means["train/region_mass"])
                     if "train/region_kl" in means else
                     " interaction_loss %.4f interaction_j %.3f" % (means["train/interaction_loss"], means["train/interaction_j"])
-                    if "train/interaction_loss" in means else ""), flush=True)
+                    if "train/interaction_loss" in means else "") + (
+                    " reader_loss %.4f reader_exact %.3f" % (means["train/reader_loss"], means["train/reader_exact"])
+                    if "train/reader_loss" in means else ""), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:
@@ -1036,6 +1117,10 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             **({"interaction": {"weight": c.interaction_weight, "file": c.interaction_file, "formula": INTERACTION_FORMULA,
                                 "file_sha256": __import__("hashlib").sha256(open(c.interaction_file, "rb").read()).hexdigest()}}
                if inter else {}),
+            **({"number": {"reader": True, "weight": c.number_weight, "file": c.number_file, "lr_reader": c.lr_reader,
+                           "init_seed": c.seed + 52, "reader_params": sum(p.numel() for p in reader_params),
+                           "file_sha256": __import__("hashlib").sha256(open(c.number_file, "rb").read()).hexdigest()
+                           if c.number_file else None}} if c.number_reader else {}),
             **({"local": {"views": c.local_views, "overlap": c.local_overlap, "source": c.local_source,
                           "vision_trainable": sum(p.numel() for p in model.vision.parameters() if p.requires_grad),
                           "groups": {n: sum(p.numel() for p in g["params"]) for n, g in zip(group_names, groups)}}}

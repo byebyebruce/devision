@@ -42,6 +42,10 @@ class ModelConfig:
     local_views: int = 0
     local_overlap: float = 0.0
     local_source: str = ""
+    # exp52: a number reader (NumberReader) turns the question's own tokens and the SigLIP keys / values (with their
+    # geometry) into NUMBER_SLOTS content tokens, appended after the visual tokens for ModernBERT's option scoring; its
+    # character head is a training / diagnostic output only. False for every checkpoint before it.
+    number_reader: bool = False
 
     def temperature_for(self, qtype: int, k: int) -> float:
         """The temperature `decide` divides a `qtype` question's `k` option logits by."""
@@ -84,6 +88,45 @@ class Projector(nn.Module):
 
 
 VIEW_CHUNK = 64   # exp50: local views per vision-tower call
+NUMBER_CHARS = "0123456789."   # exp52: the character head's classes are these, then EOS
+NUMBER_SLOTS, NUMBER_WIDTH = 5, 256
+
+
+class NumberReader(nn.Module):
+    """exp52: question-conditioned number content from the picture. NUMBER_SLOTS learned slots first attend over the
+    question's own token embeddings (each token, not their mean; the options are not part of the question span), then
+    over the vision keys / values -- the SigLIP patches of the full picture and the local views, each with its place in
+    the whole picture. The resulting content tokens go two ways from the same tensor: `chars` (per slot one of the
+    digits, "." or EOS; read by the training loss and diagnostics) and `to_text` (into ModernBERT's input, after the
+    visual tokens, where the ordinary option scoring reads them). Nothing else -- no box, field, object, question id,
+    gold or option -- is an input."""
+
+    def __init__(self, vision_dim: int, text_dim: int, width: int = NUMBER_WIDTH, slots: int = NUMBER_SLOTS, heads: int = 4):
+        super().__init__()
+        self.kv = nn.Linear(vision_dim, width)
+        self.geom = nn.Linear(4, width)
+        self.question = nn.Linear(text_dim, width)
+        self.slots = nn.Parameter(torch.randn(slots, width) * 0.02)
+        self.ask = nn.MultiheadAttention(width, heads, batch_first=True)
+        self.look = nn.MultiheadAttention(width, heads, batch_first=True)
+        self.chars = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, width), nn.GELU(),
+                                   nn.Linear(width, len(NUMBER_CHARS) + 1))
+        self.to_text = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, text_dim))
+        # training / diagnostics: when `keep_chars`, forward also keeps the character logits [B, slots, classes] in
+        # `last_chars`; `off` (diagnostics only) leaves the content tokens out of ModernBERT's input
+        self.keep_chars, self.off = False, False
+        self.last_chars: Optional[torch.Tensor] = None
+
+    def forward(self, patches, patch_geom, word_embeds, question_mask):
+        """(content tokens for ModernBERT [B, slots, D_text], character logits [B, slots, classes])."""
+        q = self.question(word_embeds.to(self.slots.dtype))
+        s = self.slots.unsqueeze(0).expand(q.size(0), -1, -1)
+        s = s + self.ask(s, q, q, key_padding_mask=~question_mask, need_weights=False)[0]
+        kv = self.kv(patches.to(s.dtype))
+        if patch_geom is not None:
+            kv = kv + self.geom(patch_geom.to(s.dtype))
+        c = s + self.look(s, kv, kv, need_weights=False)[0]
+        return self.to_text(c), self.chars(c)
 
 
 class QuestionConditioning(nn.Module):
@@ -165,10 +208,17 @@ class VisionDecisionModel(nn.Module):
             self.add_question_conditioning()
         if cfg.local_views:
             self.enable_local_views(cfg.local_views)
+        self.reader: Optional[NumberReader] = None
+        if cfg.number_reader:
+            self.add_number_reader()
 
     def add_question_conditioning(self) -> None:
         self.condition = QuestionConditioning(self.vision.config.hidden_size,
                                               text_encoder(self.decision).config.hidden_size)
+
+    def add_number_reader(self) -> None:
+        """exp52: the number reader (initialised from torch's current random state; set the seed before calling)."""
+        self.reader = NumberReader(self.vision.config.hidden_size, text_encoder(self.decision).config.hidden_size)
 
     def enable_local_views(self, n: int) -> None:
         """exp50: read `n` local views (packed by image.local_pixels) through the question conditioning, whose
@@ -242,11 +292,20 @@ class VisionDecisionModel(nn.Module):
         `return_hidden` also returns the encoder's last-layer states [B, L+V, D] (before the decision head).
         `patch_geom` is the patches' geometry from visual_inputs (models with local views only)."""
         dm = self.decision
-        if self.condition is not None and visual is not None:
+        if (self.condition is not None or self.reader is not None) and visual is not None:
             if patches is None:
                 raise ValueError("this model conditions the visual tokens on the question: pass patches")
             embeds = text_encoder(dm).get_input_embeddings()(input_ids)
-            visual = self.condition(visual, patches, embeds, question_mask(input_ids, marker_pos), patch_geom)
+            qmask = question_mask(input_ids, marker_pos)
+            content = None
+            if self.reader is not None:          # exp52: read from the patches before the conditioning changes visual
+                content, chars = self.reader(patches, patch_geom, embeds, qmask)
+                self.reader.last_chars = chars if self.reader.keep_chars else None
+            if self.condition is not None:
+                visual = self.condition(visual, patches, embeds, qmask, patch_geom)
+            if content is not None and self.reader is not None and not self.reader.off:
+                assert visual is not None
+                visual = torch.cat([visual, content.to(visual.dtype)], 1)
         h, attention_mask = self.encode(input_ids, attention_mask, visual)
         encoded = h
         if visual is not None:
