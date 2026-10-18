@@ -100,7 +100,7 @@ EXP48-RUN-01通过：按6e185eb唯一一次C→X链，各576步，90分钟硬上
 **运行**
 - 放行 EXP48-RUN-01，代码 6e185eb；fresh 启动，没有 resume。截止 14:17:13，链提前约 41 分钟结束，final report exit 0。
 - C、X 各 7 项（训练 + 6 个评测集）全部 completed，报告 missing 为空。
-- 训练：C 12:47:15–13:04:01、X 13:11:27–约 13:28，都 exit 0；每次更新 1.41–1.44 秒；MPS ≤ 8.64 GB，可用内存 ≥ 4.56 GB；watch 没有触发。
+- 训练：C 12:47:15–13:04:01、X 13:11:27–13:28:20，都 exit 0；每次更新 1.41–1.44 秒；MPS ≤ 8.64 GB，可用内存 ≥ 4.56 GB；watch 没有触发。
 - 冻结身份：C model `7d6326a8…` / config `ce7077a1…`；X model `a8b92cb9…` / config `c017a469…`；起点 G `c34b43dd…` / `2a5dfa64…`。
 - 报告 sha256：report.json `53097b84…`、report.txt `9f33d680…`。
 - **NOTE-03 只读核对**（两臂各 6 套：4 个主集 + exist / science）：checkpoint 是本臂 stage2，temperature 为 `none (raw)`，control 为 none，data_sha256 等于实际文件，device mps:0；逐题无漏无重，options 顺序和 image_id 与原题一致；摘要和明细都记录在本臂的 FROZEN.json 下。12 套全部通过。
