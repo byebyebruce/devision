@@ -453,7 +453,10 @@ def stats(qrecs: List[Dict]) -> Dict:
     cl = _clusters(qrecs)
     keys = sorted(cl)
     expand = lambda ks: [f for k in ks for f in sorted(cl[k])]  # noqa: E731
-    res["real_minus_donor_ci"] = r41.interval(lambda fs: _macro(fam, fs, "real_minus_donor") or float("nan"), keys, expand)["ci95"] \
+    def rmd(fs):                                 # only a missing value (None) is dropped; 0 and negatives are values
+        v = _macro(fam, fs, "real_minus_donor")
+        return float("nan") if v is None else v
+    res["real_minus_donor_ci"] = r41.interval(rmd, keys, expand)["ci95"] \
         if res["real_minus_donor"] is not None else None
     res["clusters"] = len(keys)
     return res

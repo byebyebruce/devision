@@ -129,6 +129,28 @@ def test_clusters_link_families_sharing_a_case():
     assert d["value"] == 1.0 and d["clusters"] == 4
 
 
+def test_zero_real_minus_donor_is_kept():
+    allzero = []
+    for k in range(3):                                                 # every question right, every donor read = own target
+        for view, t in (("v0", "1"), ("v1", "1")):
+            allzero.append(rec("z%d" % k, "cz%d" % k, view, "mass", "A", t, t, t))
+            allzero[-1]["twin_changed"] = True
+    s = m.stats(allzero)
+    assert s["real_minus_donor"] == 0.0 and s["real_minus_donor_ci"] == [0.0, 0.0]
+    mixed = []                                                         # two clusters: real - donor 0 (f0) and 1 (f1)
+    for k, zero in enumerate([True, False]):
+        for view, t, o in (("v0", "1", "2"), ("v1", "2", "1")):
+            mixed.append(rec("f%d" % k, "c%d" % k, view, "mass", "A", t, t, o))
+            if zero:
+                mixed[-1]["read"], mixed[-1]["right"] = t, True
+    for r in mixed:                                                    # family f0: the twin picture reads this target too
+        if r["family"] == "f0":
+            r["read"] = "x"
+            r["right"] = False
+    s = m.stats(mixed)
+    assert s["real_minus_donor"] == pytest.approx(0.5) and s["real_minus_donor_ci"][0] == 0.0 and s["real_minus_donor_ci"][1] == 1.0
+
+
 @pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, "runs/exp53/report.json")), reason="runs/exp53 not here")
 def test_reproduces_exp53_on_the_registered_old_reads():
     old = m.stats(m.old_rl_tune(m.question_sets()["rl_tune"]))
