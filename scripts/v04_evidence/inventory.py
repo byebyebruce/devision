@@ -21,7 +21,7 @@ import json
 import os
 import sys
 from collections import Counter, defaultdict
-from typing import Dict, List
+from typing import Any, Dict, List
 
 ORDINARY_S, ROUTED_S = 0.334, 0.43
 RAW = "data/raw/hf/datasets--derek-thomas--ScienceQA/snapshots/f18b0a70359ebfb41f658fd564208d0355b013f4/data"
@@ -82,7 +82,7 @@ def part_a() -> Dict:
 SPLIT_OF = {"train": "train", "test": "test", "val": "validation"}
 
 
-def exposures() -> Dict[str, Dict]:
+def exposures() -> Dict[Any, Dict]:
     """(ScienceQA split, row index) -> the uses of that question (data files holding it as a reading-domain row): the
     data files keep re-encoded pictures, so they are matched by their ScienceQA ids ("v3-scienceqa:train-N",
     "v3-sqa-test:test-N", "lv-scienceqa:val-N"), each checked against the raw question text in part_b."""
@@ -103,7 +103,8 @@ def exposures() -> Dict[str, Dict]:
             if not isinstance(qs, dict):
                 continue
             texts = [q.get("instructions", "") for q in qs.values() if isinstance(q, dict) and domain_of(q.get("instructions", "") or "")]
-            rid = r.get("id") if isinstance(r.get("id"), str) else ""
+            rid = r.get("id")
+            rid = rid if isinstance(rid, str) else ""
             tail = rid.split(":")[1] if rid.count(":") >= 1 else ""
             sp, _, idx = tail.rpartition("-")
             if not texts or sp not in SPLIT_OF or not idx.isdigit():

@@ -10,8 +10,8 @@
 
 | 范围 | 题数 | 走新读取链的题 | 粗估用时 |
 |---|---|---|---|
-| 29 个集合（含对照） | 55,900 | 222（science 20、dev_mix 20、bench_lv_scienceqa 182） | 约 503 分钟 |
-| extras | 12,468 | 504（sqa_temp / force 及错图 322、lv_scienceqa_raw 182） | 约 37 分钟 |
+| 29 个集合（含对照） | 55,900 | 222（science 20、dev_mix 20、bench_lv_scienceqa 182） | 约 492 分钟 |
+| extras | 12,468 | 504（sqa_temp / force 及错图 322、lv_scienceqa_raw 182） | 约 48 分钟 |
 | **合计** | | | **约 9.0 小时**（与交付计划此前的 7.7–9.0 小时一致） |
 
 - **独立确认项全部走普通路径**：confirm_property 75 题（及错图、倒序）、confirm_chartqa 80 题（及错图、倒序），新读取链 0 题。它们保留为旧能力和一般图表的证据，但**不能独立确认温度 / 磁力读取的新能力**。
