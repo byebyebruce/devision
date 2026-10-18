@@ -90,7 +90,13 @@ def test_effects_and_explanation():
     hs = {"AA": mk(lambda i: False), "AO": mk(lambda i: False), "OA": mk(lambda i: True), "OO": mk(lambda i: True)}
     assert m.explain(m.effects(hs, "speed")).startswith("S package")
     hs = {"AA": mk(lambda i: False), "AO": mk(lambda i: False), "OA": mk(lambda i: False), "OO": mk(lambda i: True)}
-    assert m.explain(m.effects(hs, "speed")).startswith("interaction")
+    assert m.explain(m.effects(hs, "speed")).startswith("positive interaction")
+    hs = {"AA": mk(lambda i: False), "AO": mk(lambda i: i in (0, 1)), "OA": mk(lambda i: i in (2, 3)), "OO": mk(lambda i: True)}
+    e = m.effects(hs, "speed")                                          # single factors positive in point, not stable
+    assert e["geom_AO_minus_AA"]["value"] > 0 and e["geom_AO_minus_AA"]["ci95"][0] <= 0 and e["S_OA_minus_AA"]["ci95"][0] <= 0
+    assert e["interaction"]["ci95"][0] > 0 and e["OO_minus_AA"]["ci95"][0] > 0
+    x = m.explain(e)
+    assert x.startswith("positive interaction") and "uncertain" in x and "only" not in x
     hs = {c: mk(lambda i: i % 2 == 0) for c in m.CONDS}
     assert m.explain(m.effects(hs, "speed")).startswith("not located")
     tr = m.transitions(mk(lambda i: i < 3), mk(lambda i: i < 6), "speed")
@@ -123,10 +129,18 @@ def test_start_binds_boxes(started, tmp_path, monkeypatch):
         m.boxes()
 
 
-def fake_conditions(out, drop=None, edit=None, status="completed"):
+def logits_for(decoded, valid):
+    """One-hot logits whose argmax + strict decode give exactly (decoded, valid)."""
+    from devision.reading import CHARS, CLASSES, EOS, SLOTS
+    ids = [CHARS.index(ch) for ch in decoded]
+    if not (len(ids) == SLOTS and not valid):                       # a read without EOS fills every slot
+        ids = ids + [EOS] * (SLOTS - len(ids))
+    return [[5.0 if k == i else 0.0 for k in range(CLASSES)] for i in ids]
+
+
+def fake_conditions(out, drop=None, edit=None, status="completed", broken=None):
     """Condition files without a model: AA / AO = EXP64's c92 reads, OA / OO = its oracle reads (so AA / OO reproduce),
     with input summaries and zero logits; written and registered by the runner's own writer."""
-    from devision.reading import CLASSES, SLOTS
     src = {"AA": m.reference("AA"), "OO": m.reference("OO")}
     src["AO"], src["OA"] = src["AA"], src["OO"]
     res = {}
@@ -137,11 +151,23 @@ def fake_conditions(out, drop=None, edit=None, status="completed"):
             for q, r in src[c][rid].items():
                 rs.append({"question": q, "box": r["box"], "decoded": r["decoded"], "valid": r["valid"], "value": r["value"], "geom_box": r["box"],
                            "inputs": {"tokens": 1, "finite": True, "centres_outside_box": 0, "geom_min": [0, 0, 0, 0], "geom_max": [1, 1, 1, 1]},
-                           "logits": [[0.0] * CLASSES for _ in range(SLOTS)]})
+                           "logits": logits_for(r["decoded"], r["valid"])})
             items.append({"id": rid, "reads": rs})
         if c == edit:
             r = items[0]["reads"][0]
             r["decoded"], r["valid"], r["value"] = "unreadable", False, "unreadable"
+            r["logits"] = logits_for("", False)
+        if broken and c == broken[0]:
+            r = items[0]["reads"][0]
+            if broken[1] == "nan":
+                r["logits"][0][0] = float("nan")
+            elif broken[1] == "inf":
+                r["logits"][1][2] = float("inf")
+            elif broken[1] == "shape":
+                r["logits"] = r["logits"][:-1]
+            else:                                                       # a legal read that is not its logits' decoding
+                r["decoded"], r["valid"], r["value"] = "7", True, "7"
+                r["logits"] = logits_for("8", True)
         res[c] = items
     m.write_conditions(out, res, m.sha(os.path.join(out, "START.json")), status)
     if drop:
@@ -157,6 +183,53 @@ def test_report_valid_and_effects(started):
     assert res["correct"]["AO"] == res["correct"]["AA"] and res["effects"]["speed"]["geom_AO_minus_AA"]["value"] == 0
     assert res["explanation"]["speed"].startswith("S package") and res["candidate_eligible"] is False
     assert all(math.isfinite(v) for c in m.CONDS for v in res["gold_logprob"][c].values())
+
+
+@data
+@pytest.mark.parametrize("cond,kind", [("AO", "nan"), ("OA", "inf"), ("AO", "shape"), ("OA", "decode")])
+def test_report_refuses_bad_logits(started, cond, kind):
+    fake_conditions(started, broken=(cond, kind))
+    res = m.report(started)
+    assert res["states"]["repro_AA"] == "reproduced" and res["states"]["repro_OO"] == "reproduced"      # AA / OO fine ...
+    assert res["validity"] == "invalid" and res["states"][cond].startswith("invalid") and "effects" not in res   # ... still no verdict
+
+
+def swapped_gold(tmp_path):
+    """data/exp28/fields.jsonl with one gold moved to another option whose number is also in the transcription."""
+    tr = json.load(open(m.e59.TRANSCRIBED))
+    lines = open(m.e59.FIELDS).read().splitlines()
+    for i, x in enumerate(lines):
+        f = json.loads(x)
+        rid = f["id"].split(":", 1)[1].rsplit(":", 2)[0]
+        p = f["gold"]["q"]["probabilities"]
+        g = max(p, key=p.get)
+        other = [o for o in p if o != g and o in tr.get(rid, "")]
+        if other:
+            p[g], p[other[0]] = p[other[0]], p[g]
+            lines[i] = json.dumps(f)
+            out = tmp_path / "fields.jsonl"
+            out.write_text("\n".join(lines) + "\n")
+            return str(out)
+    raise AssertionError("no swappable gold")
+
+
+@data
+@pytest.mark.parametrize("which", ["fields", "transcribed"])
+def test_gold_sources_bound(started, tmp_path, monkeypatch, which):
+    fake_conditions(started)
+    assert m.bound_gold() == json.load(open(os.path.join(started, "START.json")))["gold"]
+    if which == "fields":
+        path = swapped_gold(tmp_path)
+        monkeypatch.setattr(m.e59, "FIELDS", path)
+        m.e59.gold_numbers(m.e59.items())                               # the swap passes exp59's own check ...
+    else:
+        p = tmp_path / "tr.json"
+        p.write_text(open(m.e59.TRANSCRIBED).read().replace("1,300", "1,330", 1))
+        monkeypatch.setattr(m.e59, "TRANSCRIBED", str(p))
+    with pytest.raises(SystemExit, match="gold source"):
+        m.bound_gold()
+    res = m.report(started)                                             # ... but not the run's identity
+    assert res["branch"].startswith("invalid") and "correct" not in res
 
 
 @data

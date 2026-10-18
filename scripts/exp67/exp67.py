@@ -144,6 +144,18 @@ def bound_e64() -> Dict[str, str]:
     return dict(E64_SHA)
 
 
+def bound_gold() -> Dict[str, str]:
+    """The gold sources the report scores with (exp59's TRANSCRIBED / FIELDS): their actual sha256 must equal the sources
+    EXP60's START froze (critic EXP67-R1-02); EXP60's START itself is bound by e61.bound_e60."""
+    e61.bound_e60()
+    frozen = json.load(open(os.path.join(e60.OUT, "START.json")))["sources"]
+    now = {"transcribed": sha(e59.TRANSCRIBED), "fields": sha(e59.FIELDS)}
+    bad = [k for k, v in now.items() if frozen.get(k) != v]
+    if bad:
+        raise SystemExit("gold source %s differs from EXP60's START" % bad)
+    return now
+
+
 def reference(c: str) -> Dict[str, Dict[str, Dict]]:
     """EXP64's registered dev24 reads with this head (AA: c92 auto boxes; OO: EXP60's oracle boxes)."""
     name = REF[c]
@@ -182,7 +194,7 @@ def stage_start(deadline: int, out: str = OUT, data_root: str = "data") -> Dict:
     its = e59.items()
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
-         "files": {f: sha(f) for f in FILES}, "exp64": bound_e64(), "exp60": e61.bound_e60(), "model": st58["model"], "bundle": st58["bundle"],
+         "files": {f: sha(f) for f in FILES}, "exp64": bound_e64(), "exp60": e61.bound_e60(), "gold": bound_gold(), "model": st58["model"], "bundle": st58["bundle"],
          "pictures": {it["row"]["image"]: sha(os.path.join(data_root, it["row"]["image"])) for it in its},
          "boxes": {"A": digest(bx["A"]), "O": digest(bx["O"]), "A_source": "runs/exp64/dev24_auto_new.jsonl " + sha(os.path.join(E64, "dev24_auto_new.jsonl")),
                    "O_source": "%s %s" % (e60.BOXES, sha(e60.BOXES))},
@@ -202,6 +214,8 @@ def check_start(out: str, data_root: str = "data", code: bool = True) -> Dict:
             raise SystemExit("code differs from START: %s" % bad)
     if bound_e64() != st["exp64"] or e61.bound_e60() != st["exp60"]:
         raise SystemExit("EXP64 / EXP60 differ from START")
+    if bound_gold() != st["gold"]:
+        raise SystemExit("the gold sources differ from START")
     bx = boxes()
     if digest(bx["A"]) != st["boxes"]["A"] or digest(bx["O"]) != st["boxes"]["O"]:
         raise SystemExit("the box sets differ from START")
@@ -236,7 +250,7 @@ def write_conditions(out: str, results: Dict[str, List[Dict]], st_sha: str, stat
 def stage_run(out: str = OUT, data_root: str = "data") -> Dict:
     import torch
 
-    from devision.reading import reads_for, region
+    from devision.reading import CLASSES, SLOTS, reads_for, region
     st = check_start(out, data_root)
     if sha(os.path.join(E64, "head.pt")) != HEAD_SHA:
         raise SystemExit("EXP64's head changed")
@@ -266,6 +280,10 @@ def stage_run(out: str = OUT, data_root: str = "data") -> Dict:
         for c in CONDS:
             conds = [x[0] for x in per[c]]
             lg = head_logits(head, kv, conds)
+            if tuple(lg.shape) != (len(ts), SLOTS, CLASSES) or not bool(torch.isfinite(lg).all()):
+                results[c].append({"id": row["id"], "reads": [], "error": "logits shape %s, finite %s" % (list(lg.shape), bool(torch.isfinite(lg).all()))})
+                write_conditions(out, results, st_sha, "stopped: non-finite or misshaped logits in %s %s" % (c, row["id"]))
+                raise SystemExit("%s %s: logits shape %s / non-finite -- stopped (not a wrong answer)" % (c, row["id"], list(lg.shape)))
             rd = reads_of(lg, ts, [x[1] for x in per[c]])
             for r, x, lgi in zip(rd, per[c], lg.float().cpu().tolist()):
                 r.update({"geom_box": x[2], "inputs": summary(x[0]), "logits": lgi})
@@ -308,10 +326,27 @@ def load_condition(out: str, c: str) -> Dict[str, Dict[str, Dict]]:
         e64.check_reads_list(x["reads"], want_t[x["id"]])
         if not all(r["inputs"]["finite"] for r in x["reads"]):
             raise SystemExit("cond_%s: non-finite geometry" % c)
+        for r in x["reads"]:
+            check_logits(r, "cond_%s %s" % (c, x["id"]))
         got[x["id"]] = {r["question"]: r for r in x["reads"]}
     if set(got) != set(want_t):
         raise SystemExit("cond_%s: pictures missing" % c)
     return got
+
+
+def check_logits(r: Dict, where: str) -> None:
+    """A read's stored logits: SLOTS x CLASSES, all finite, and its decoded / valid / value exactly what argmax + strict
+    decode + fmt give on them (critic EXP67-R1-01)."""
+    from devision.reading import CLASSES, SLOTS, UNREADABLE, decode, fmt
+    lg = r.get("logits")
+    if not isinstance(lg, list) or len(lg) != SLOTS or any(not isinstance(row, list) or len(row) != CLASSES for row in lg):
+        raise SystemExit("%s %s: logits are not %d x %d" % (where, r.get("question"), SLOTS, CLASSES))
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for row in lg for v in row):
+        raise SystemExit("%s %s: non-finite logits" % (where, r.get("question")))
+    d = decode([max(range(CLASSES), key=row.__getitem__) for row in lg])
+    want = (d["text"], d["valid"], fmt(d["text"]) if d["valid"] else UNREADABLE)
+    if (r["decoded"], r["valid"], r["value"]) != want:
+        raise SystemExit("%s %s: the read is not the decoding of its logits" % (where, r.get("question")))
 
 
 def hits(reads: Dict[str, Dict[str, Dict]]) -> Dict[str, Dict[str, bool]]:
@@ -384,7 +419,8 @@ def explain(e: Dict) -> str:
     if s:
         return "S package: prioritise localisation / selection"
     if lo("OO_minus_AA") > 0 and lo("interaction") > 0:
-        return "interaction: only the two together help"
+        return ("positive interaction: the gain depends on the other factor's setting; each single factor's effect stays "
+                "uncertain / setting-dependent (not shown to be ineffective; simple effects reported in full)")
     return "not located: the mixed conditions do not separate the effect (mixed inputs may be out of distribution; no part excluded)"
 
 
