@@ -112,3 +112,17 @@
   - 夹具（临时文件，正式题单不动）：保持 key 和模板不变，分别改一道 rl_tune 速度题的 target（换成另一个合法数）、改聚簇字段（family / case）、把 dev24 一道金标换成转录里另一个已有数字（能通过 exp59 自己的检查）、改转录。四种情况下，新的首次启动都被拒绝；已有 START 的报告给 invalid，没有门槛和路线。未改数据的原报告夹具照常成立。
 - **NOTE-03**：dev24 不新增第三条路径；oracle 对照改为引用已冻结的 EXP64 / EXP67 外部证据（见上面「评测与预写门槛」）。
 - 数据、校正器结构、训练配方和门槛都不变；没有加载模型。
+
+## EXP69-RUN-01（05:32:31–05:35:16）：features 阶段失败，incomplete，没有结果
+
+- **运行**：HEAD b2eae8c，START 31d2efcc，report 143a04eb；start 退出码 0，features 退出码 1，随后按原编排收尾；没有重试。
+- **原因**：stage_features 把 Reading._words 的词向量转成 numpy 时出错（RuntimeError: Can't call numpy() on Tensor that requires grad）。_words 不在 no_grad 里运行冻结 ModernBERT 的输入嵌入，返回的张量带梯度。
+  - 496 张训练图已全部编码，union_tokens.npy 已写出；但 samples.npz 没写成，features 也没有登记，所以没有进入 train / reads。
+  - 报告：8 份读数全部缺失 → incomplete，没有结论。
+- **夹具为什么没发现**：原夹具里的假 _words 返回的是普通张量。
+- **修正**（CPU，未运行）：
+  - 新增 template_words：在 no_grad 下调用 _words，再 detach 转成 numpy；
+  - 新增夹具：假 _words 用一个真实的 nn.Embedding，返回的张量带梯度；夹具先确认原来的写法会报同样的错，再确认 template_words 返回 float32 / bool 数组。
+  - 检查了其他阶段：reads 里校正器的前向在 no_grad 下，编码也在 no_grad 下，没有同类问题。
+  - pytest scripts/exp69：16 项通过；pyright 0 错误。
+- **是否再运行由评审决定**。runs/exp69 与一次性标记都保留不动；如果再运行，需要新的运行目录和标记，以及新的许可。

@@ -119,6 +119,24 @@ def test_batches_and_training_steps(tmp_path, monkeypatch):
     assert any(not torch.equal(p, init[k]) for k, p in m1.state_dict().items()) and set(m1.state_dict()) == set(init)
 
 
+def test_template_words_from_a_grad_tracking_embedding():
+    """EXP69-RUN-01 failed here: Reading._words runs a trainable-looking embedding outside no_grad. A fake with a real
+    nn.Embedding (requires_grad) reproduces that path; template_words must still return plain arrays."""
+    import torch
+    emb = torch.nn.Embedding(50, 1024)
+
+    class R:
+        def _words(self, texts):
+            ids = torch.arange(len(texts) * 6).view(len(texts), 6) % 50
+            return emb(ids).half(), torch.ones(len(texts), 6, dtype=torch.bool)
+    raw, _ = R()._words(list(m.SPEED))
+    assert raw.requires_grad or not torch.is_grad_enabled()
+    with pytest.raises(RuntimeError, match="requires grad"):
+        raw.float().cpu().numpy()                                                    # the original failure
+    w, wm = m.template_words(R())
+    assert isinstance(w, np.ndarray) and w.shape == (2, 6, 1024) and w.dtype == np.float32 and wm.dtype == bool and wm.all()
+
+
 def test_only_speed_is_corrected():
     import torch
 

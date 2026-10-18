@@ -252,13 +252,22 @@ def stage_features(out: str = OUT, data_root: str = "data") -> Dict:
         geom += wins[i]["geom"]
         soff.append(len(pos))
         srec.append(k)
-    words, wmask = reading._words(list(SPEED))
+    words, wmask = template_words(reading)
     np.savez(os.path.join(out, "samples.npz"), rec_off=off, pos=np.asarray(pos, np.int64), geom=np.asarray(geom, np.float32),
-             sample_off=np.asarray(soff, np.int64), sample_rec=np.asarray(srec, np.int64), words=words.float().cpu().numpy(),
-             wmask=wmask.cpu().numpy(), label=np.asarray([s["label"] for s in tr], np.float32),
+             sample_off=np.asarray(soff, np.int64), sample_rec=np.asarray(srec, np.int64), words=words,
+             wmask=wmask, label=np.asarray([s["label"] for s in tr], np.float32),
              template=np.asarray([SPEED.index(s["template"]) for s in tr], np.int64))
     register(out, "features", {f: sha(os.path.join(out, f)) for f in ("union_tokens.npy", "samples.npz")})
     return {"pictures": len(rec_of_pic), "records": len(recs), "samples": len(tr), "union_tokens": int(off[-1])}
+
+
+def template_words(reading):
+    """The two speed templates' words as numpy arrays: Reading._words runs the frozen input embedding outside any
+    no_grad, so it is called under no_grad and detached (the EXP69-RUN-01 failure: numpy() on a tensor requiring grad)."""
+    import torch
+    with torch.no_grad():
+        words, wmask = reading._words(list(SPEED))
+    return words.detach().float().cpu().numpy(), wmask.detach().cpu().numpy()
 
 
 class Samples:
