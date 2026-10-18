@@ -147,19 +147,210 @@ def test_incomplete_run_reports_missing_and_no_automatic_result(tmp_path):
     assert res["branch"].startswith("incomplete") and "INCOMPLETE" in open(os.path.join(out, "report.txt")).read()
 
 
+def fake_run(out, qs, auto_pred=None, oracle_from_exp51=True, paths=("oracle", "auto")):
+    """A run directory as the stages leave it: START (with the bound sources), registered local / selector products and
+    per-path registered details. The oracle path reuses EXP51-T's registered details (so it reproduces); the automatic
+    path is perfect unless `auto_pred` is given."""
+    os.makedirs(out, exist_ok=True)
+    start = {"started": "x", "questions_sha256": st.sha(os.path.join(ROOT, st.QUESTIONS)),
+             "oracle_regions_sha256": st.sha(os.path.join(ROOT, st.ORACLE_REGIONS)),
+             "exp51_details_sha256": st.sha(os.path.join(ROOT, st.EXP51_DETAILS))}
+    json.dump(start, open(os.path.join(out, "START.json"), "w"))
+    for f in ("oracle.npz", "auto.npz", "selector.pt", "train.json", "auto_regions.json.gz"):
+        open(os.path.join(out, f), "wb").write(f.encode())
+    with open(os.path.join(out, "boxes.jsonl"), "w") as fh:
+        for q in qs:
+            fh.write(json.dumps({"key": q["key"], "frac": sel.target_of(q["box"], q["width"], q["height"]), "box": q["box"], "degenerate": False}) + "\n")
+    st.register(out, "selector", {f: st.sha(os.path.join(out, f)) for f in ("selector.pt", "boxes.jsonl", "train.json")})
+    st.register(out, "local", {f: st.sha(os.path.join(out, f)) for f in ("oracle.npz", "auto.npz", "auto_regions.json.gz")})
+    perfect = [st.p49.labels(q["target"]) for q in qs]
+    key_i = {q["key"]: i for i, q in enumerate(qs)}
+    twin = [key_i[q["twin"]] if q["twin"] else i for i, q in enumerate(qs)]
+    e51_pred, e51_donor, _ = st.p49.read_details(os.path.join(ROOT, st.EXP51_DETAILS), qs)
+    for name in paths:
+        pred = (e51_pred if oracle_from_exp51 else perfect) if name == "oracle" else (auto_pred or perfect)
+        donor = (e51_donor if oracle_from_exp51 else [perfect[j] for j in twin]) if name == "oracle" else [pred[j] for j in twin]
+        ident = {"path": name, "start_sha256": st.sha(os.path.join(out, "START.json")), "head_sha256": st.HEAD_SHA,
+                 "questions_sha256": start["questions_sha256"], "features_sha256": st.sha(os.path.join(out, name + ".npz")), "model": st.T_SHA,
+                 "regions_sha256": start["oracle_regions_sha256"] if name == "oracle" else st.sha(os.path.join(out, "auto_regions.json.gz")),
+                 "boxes_sha256": st.sha(os.path.join(out, "boxes.jsonl")) if name == "auto" else None}
+        dsha = st.p49.write_details(os.path.join(out, "details_%s.jsonl" % name), qs, pred, donor, twin, ident)
+        st.register(out, "readout_" + name, {"details_%s.jsonl" % name: dsha})
+    return out
+
+
+def run_report(out):
+    cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        return st.report(out)
+    finally:
+        os.chdir(cwd)
+
+
+def test_branch_needs_reproduction_and_fit_validity_first(tmp_path, qs):
+    """critic R1-01: an automatic pass is a continuation only with a reproducing oracle and a valid fit."""
+    ok = run_report(fake_run(str(tmp_path / "ok"), qs))
+    assert ok["oracle_reproduction"]["reproduced"] and ok["paths"]["auto"]["conditions"]["invest_original"]
+    assert ok["branch"].startswith("automatic path readable")
+    perfect_oracle = run_report(fake_run(str(tmp_path / "po"), qs, oracle_from_exp51=False))   # oracle 1.0 != 0.827
+    assert not perfect_oracle["oracle_reproduction"]["reproduced"] and perfect_oracle["branch"].startswith("not located: the oracle")
+    no_oracle = run_report(fake_run(str(tmp_path / "no"), qs, paths=("auto",)))
+    assert no_oracle["states"]["oracle"]["state"] == "missing" and no_oracle["branch"].startswith("incomplete")
+    assert no_oracle["paths"]["auto"]["conditions"]["invest_original"]                          # raw score kept
+    wrong = [[st.p49.EOS] + [-100] * 4 if q["set"] == "fit_O" else st.p49.labels(q["target"]) for q in qs]
+    fit_bad = run_report(fake_run(str(tmp_path / "fb"), qs, auto_pred=wrong))
+    assert fit_bad["paths"]["auto"]["conditions"]["invest_original"] and fit_bad["branch"].startswith("not located: the automatic")
+
+
+def test_paths_are_registered_and_checked_separately(tmp_path, qs):
+    """critic R1-02: a complete oracle path survives a missing or damaged automatic path; edits / swaps are refused."""
+    only = run_report(fake_run(str(tmp_path / "only"), qs, paths=("oracle",)))
+    assert only["states"]["oracle"]["state"] == "completed" and only["states"]["auto"]["state"] == "missing"
+    bad = fake_run(str(tmp_path / "edited"), qs)
+    p = os.path.join(bad, "details_auto.jsonl")
+    lines = open(p).read().splitlines()
+    row = json.loads(lines[1])
+    row["pred"] = st.p49.labels("9" if row["target"] != "9" else "8")
+    lines[1] = json.dumps(row)
+    open(p, "w").write("\n".join(lines) + "\n")
+    r2 = run_report(bad)
+    assert r2["states"]["auto"]["state"] == "invalid" and r2["states"]["oracle"]["state"] == "completed"
+    assert r2["branch"].startswith("incomplete")
+    sw = fake_run(str(tmp_path / "swapped"), qs)
+    a, o = os.path.join(sw, "details_auto.jsonl"), os.path.join(sw, "details_oracle.jsonl")
+    os.rename(a, a + ".x")
+    os.rename(o, a)
+    os.rename(a + ".x", o)
+    st.register(sw, "readout_oracle", {"details_oracle.jsonl": st.sha(o)})
+    st.register(sw, "readout_auto", {"details_auto.jsonl": st.sha(a)})
+    r3 = run_report(sw)
+    assert r3["states"]["auto"]["state"] == r3["states"]["oracle"]["state"] == "invalid"
+
+
+def test_inputs_and_the_reproduction_record_are_bound(tmp_path, qs, monkeypatch):
+    """critic R1-03: a changed picture or question source is refused before any forward; a changed EXP51 record before
+    the reproduction check."""
+    out = str(tmp_path / "bound")
+    os.makedirs(out)
+    json.dump({"pictures_sha256": "0" * 64, "sources": {n: "0" * 64 for n in st.SOURCES}}, open(os.path.join(out, "START.json"), "w"))
+    cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        sub = qs[:3]
+        with pytest.raises(SystemExit, match="pictures differ"):
+            st.check_pictures(sub, out)
+        with pytest.raises(SystemExit, match="question sources differ"):
+            st.load_texts(sub, st.start_record(out)["sources"])
+        ok = st.pictures_digest(sub)
+        json.dump({"pictures_sha256": ok, "sources": {n: st.sha(p) for n, p in st.SOURCES.items()}}, open(os.path.join(out, "START.json"), "w"))
+        st.check_pictures(sub, out)
+        st.load_texts(sub, st.start_record(out)["sources"])
+    finally:
+        os.chdir(cwd)
+    run = fake_run(str(tmp_path / "e51"), qs)
+    changed = tmp_path / "details_T.jsonl"                                  # EXP51's record altered after START bound it
+    lines = open(os.path.join(ROOT, st.EXP51_DETAILS)).read().splitlines()
+    row = json.loads(lines[1])
+    row["pred"] = st.p49.labels("9" if row["target"] != "9" else "8")
+    lines[1] = json.dumps(row)
+    changed.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(st, "EXP51_DETAILS", str(changed))
+    with pytest.raises(SystemExit, match="EXP51's details_T changed"):
+        run_report(run)
+
+
+def test_region_budget_refuses_before_any_allocation(tmp_path, qs, monkeypatch):
+    """critic R1-04: whole-picture predicted boxes would exceed the limit; local stops before loading the model."""
+    out = str(tmp_path / "budget")
+    os.makedirs(out)
+    json.dump({"started": "x"}, open(os.path.join(out, "START.json"), "w"))
+    with open(os.path.join(out, "boxes.jsonl"), "w") as fh:
+        for q in qs:
+            fh.write(json.dumps({"key": q["key"], "frac": [0.5, 0.5, 1, 1], "box": [0, 0, q["width"], q["height"]], "degenerate": False}) + "\n")
+    for f in ("selector.pt", "train.json"):
+        open(os.path.join(out, f), "wb").write(b"x")
+    st.register(out, "selector", {f: st.sha(os.path.join(out, f)) for f in ("selector.pt", "boxes.jsonl", "train.json")})
+    import devision.infer as inf
+    monkeypatch.setattr(inf.Decider, "load", classmethod(lambda cls, *a, **k: (_ for _ in ()).throw(AssertionError("model loaded"))))
+    cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        with pytest.raises(SystemExit, match="resource incomplete"):
+            st.stage_local(out)
+    finally:
+        os.chdir(cwd)
+    b = json.load(open(os.path.join(out, "local_budget.json")))
+    assert not b["within"] and b["tokens"]["auto"] > 4752 * 1000 and not os.path.exists(os.path.join(out, "auto.npz"))
+    ok = st.region_budget([{"index": [1] * 10}], [{"index": [1] * 10}], limit=10 ** 6)
+    assert ok["within"] and ok["bytes"] == 20 * 768 * 2
+
+
+def test_sha_is_chunked(tmp_path):
+    import hashlib
+    p = tmp_path / "big.bin"
+    p.write_bytes(os.urandom(3 * (1 << 20) + 17))
+    assert st.sha(str(p)) == hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+wt = load("exp53_watch", "watch.py")
+CHILD = """import os, signal, sys, time
+prog = sys.argv[1]
+if sys.argv[2] == 'ignore':
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+open(prog, 'a').write('%.3f 1 100\\n' % time.time())
+if sys.argv[2] == 'slow':
+    for i in range(2, 100):
+        time.sleep(0.5); open(prog, 'a').write('%.3f %d 100\\n' % (time.time(), i))
+time.sleep(300)
+"""
+
+
+@pytest.mark.parametrize("mode", ["stall", "ignore", "memory", "late"])
+def test_watch_stops_only_its_group(tmp_path, mode):
+    import subprocess
+    import time
+    child = tmp_path / "child.py"
+    child.write_text(CHILD)
+    bystander = subprocess.Popen(["sleep", "60"])
+    prog, log = str(tmp_path / "p.txt"), str(tmp_path / "w.txt")
+    arg = {"stall": "stall", "ignore": "ignore", "memory": "stall", "late": "slow"}[mode]
+    t = time.time()
+    rc = wt.watch([sys.executable, str(child), prog, arg], deadline=time.time() + (30 if mode == "late" else 60), progress=prog,
+                  logpath=log, first=5, stall=2 if mode in ("stall", "ignore") else 30, grace=1.5, mem_floor=1.5, mem_seconds=1,
+                  check=1, poll=0.2, mem=(lambda: 0.1) if mode == "memory" else (lambda: 99.0))
+    took = time.time() - t
+    assert rc == 124, open(log).read()
+    text = open(log).read()
+    reason = {"stall": "no progress for", "ignore": "no progress for", "memory": "available memory", "late": "two checks"}[mode]
+    assert reason in text and took < 15
+    if mode == "ignore":
+        assert "KILL" in text
+    if mode == "late":
+        assert "first window" in text
+    assert bystander.poll() is None                                          # outside the group: untouched
+    bystander.kill()
+    left = subprocess.run(["/usr/bin/pgrep", "-f", str(child)], capture_output=True, text=True).stdout.split()
+    assert not left
+
+
 STUB = """#!/bin/bash
 echo "uv $*" >> "${MARK}"
 case "$*" in
   *"stages.py start"*) exit 0;;
+  *"watch.py"*) while [ "$1" != "--" ]; do shift; done; shift; exec "$@";;
   *"stages.py global"*) exit 0;;
-  *"stages.py train"*) exec sleep 300;;
+  *"stages.py train"*) [ "${HANG}" = train ] && exec sleep 300; exit 0;;
+  *"stages.py local"*) exit 0;;
+  *"stages.py readout"*) exit 0;;
   *"stages.py report --finalize"*) mkdir -p runs/exp53; echo final > runs/exp53/report.txt; exit 0;;
+  *"stages.py report"*) exit "${REPORT_RC:-0}";;
 esac
 exit 9
 """
 
 
-def test_run_finalizes_within_the_limit(tmp_path):
+def run_stub(tmp_path, **env):
     import shutil
     import stat
     import subprocess
@@ -173,10 +364,16 @@ def test_run_finalizes_within_the_limit(tmp_path):
     for name, body in {"uv": STUB, "pgrep": '#!/bin/bash\n[ "$1" = "-fl" ] && exit 1\nexec /usr/bin/pgrep "$@"\n'}.items():
         (b / name).write_text(body)
         (b / name).chmod((b / name).stat().st_mode | stat.S_IEXEC)
-    env = {**os.environ, "PATH": "%s:%s" % (b, os.environ["PATH"]), "MARK": str(tmp_path / "calls"), "EXP53_LIMIT": "24", "EXP53_RESERVE": "4"}
+    e = {**os.environ, "PATH": "%s:%s" % (b, os.environ["PATH"]), "MARK": str(tmp_path / "calls"), "EXP53_LIMIT": "24", "EXP53_RESERVE": "4", **env}
     t = time.time()
-    p = subprocess.run(["bash", str(root / "scripts/exp53/run.sh")], env=env, capture_output=True, text=True, timeout=60)
-    assert p.returncode == 124 and time.time() - t < 24 + 3, p.stdout + p.stderr
+    p = subprocess.run(["bash", str(root / "scripts/exp53/run.sh")], env=e, capture_output=True, text=True, timeout=60)
+    return p, time.time() - t, root
+
+
+def test_run_finalizes_within_the_limit(tmp_path):
+    import subprocess
+    p, took, root = run_stub(tmp_path, HANG="train")
+    assert p.returncode == 124 and took < 24 + 3, p.stdout + p.stderr
     calls = (tmp_path / "calls").read_text()
     assert "report --finalize" in calls and "stages.py local" not in calls
     assert "train interrupted" in (root / "runs/exp53-status.txt").read_text()
@@ -184,59 +381,6 @@ def test_run_finalizes_within_the_limit(tmp_path):
     assert not [x for x in left if subprocess.run(["ps", "-o", "ppid=", "-p", x], capture_output=True, text=True).stdout.strip() == "1"]
 
 
-def fake_run(out, qs):
-    """A run directory as the stages leave it, with perfect automatic and oracle readouts (registered)."""
-    os.makedirs(out, exist_ok=True)
-    json.dump({"started": "x"}, open(os.path.join(out, "START.json"), "w"))
-    for f in ("oracle.npz", "auto.npz", "selector.pt", "train.json"):
-        open(os.path.join(out, f), "wb").write(f.encode())
-    with open(os.path.join(out, "boxes.jsonl"), "w") as fh:
-        for q in qs:
-            fh.write(json.dumps({"key": q["key"], "frac": sel.target_of(q["box"], q["width"], q["height"]), "box": q["box"], "degenerate": False}) + "\n")
-    st.register(out, "selector", {f: st.sha(os.path.join(out, f)) for f in ("selector.pt", "boxes.jsonl", "train.json")})
-    perfect = [st.p49.labels(q["target"]) for q in qs]
-    key_i = {q["key"]: i for i, q in enumerate(qs)}
-    twin = [key_i[q["twin"]] if q["twin"] else i for i, q in enumerate(qs)]
-    reg = {}
-    for name in ("oracle", "auto"):
-        ident = {"path": name, "start_sha256": st.sha(os.path.join(out, "START.json")), "head_sha256": st.HEAD_SHA,
-                 "features_sha256": st.sha(os.path.join(out, name + ".npz")),
-                 "boxes_sha256": st.sha(os.path.join(out, "boxes.jsonl")) if name == "auto" else None}
-        reg["details_%s.jsonl" % name] = st.p49.write_details(os.path.join(out, "details_%s.jsonl" % name), qs, perfect,
-                                                               [perfect[j] for j in twin], twin, ident)
-    st.register(out, "readout", reg)
-    return out
-
-
-def run_report(out):
-    cwd = os.getcwd()
-    os.chdir(ROOT)
-    try:
-        return st.report(out)
-    finally:
-        os.chdir(cwd)
-
-
-def test_registered_paths_and_refusals(tmp_path, qs):
-    out = fake_run(str(tmp_path / "ok"), qs)
-    res = run_report(out)
-    assert res["states"] == {"oracle": {"state": "completed"}, "auto": {"state": "completed"}}
-    assert res["paths"]["auto"]["conditions"]["invest_original"] and res["branch"].startswith("automatic path readable")
-    assert res["boxes"]["rl_tune"]["iou_mean"] == pytest.approx(1.0)
-    bad = fake_run(str(tmp_path / "edited"), qs)                     # one prediction edited after registration
-    p = os.path.join(bad, "details_auto.jsonl")
-    lines = open(p).read().splitlines()
-    row = json.loads(lines[1])
-    row["pred"] = st.p49.labels("9" if row["target"] != "9" else "8")
-    lines[1] = json.dumps(row)
-    open(p, "w").write("\n".join(lines) + "\n")
-    r2 = run_report(bad)
-    assert r2["states"]["auto"]["state"] == "invalid" and r2["branch"].startswith("incomplete")
-    sw = fake_run(str(tmp_path / "swapped"), qs)                     # oracle and automatic details exchanged
-    a, o = os.path.join(sw, "details_auto.jsonl"), os.path.join(sw, "details_oracle.jsonl")
-    os.rename(a, a + ".x")
-    os.rename(o, a)
-    os.rename(a + ".x", o)
-    st.register(sw, "readout", {"details_oracle.jsonl": st.sha(o), "details_auto.jsonl": st.sha(a)})
-    r3 = run_report(sw)
-    assert r3["states"]["auto"]["state"] == r3["states"]["oracle"]["state"] == "invalid"
+def test_a_failed_report_fails_the_run(tmp_path):
+    p, _, _ = run_stub(tmp_path, REPORT_RC="1", EXP53_LIMIT="90")
+    assert p.returncode == 1, p.stdout + p.stderr                           # all stages 0, report 1 -> not exit 0

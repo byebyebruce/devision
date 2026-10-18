@@ -116,7 +116,7 @@ class Inputs:
 
 
 def train(inp: Inputs, train_idx: List[int], targets: torch.Tensor, steps: int = STEPS, seed: int = SEED,
-          device: str = "cpu", log=None) -> Tuple[Selector, Dict]:
+          device: str = "cpu", log=None, on_step=None) -> Tuple[Selector, Dict]:
     torch.manual_seed(seed)
     sel = Selector(inp.patches.shape[-1], inp.words.shape[-1]).to(device)
     opt = torch.optim.AdamW(sel.parameters(), lr=LR, weight_decay=WD)
@@ -137,6 +137,8 @@ def train(inp: Inputs, train_idx: List[int], targets: torch.Tensor, steps: int =
         opt.step()
         sched.step()
         losses.append(loss.item())
+        if on_step and (step + 1) % 50 == 0:
+            on_step(step + 1)
         if log and (step + 1) % 250 == 0:
             log("selector step %d loss %.4f" % (step + 1, sum(losses[-250:]) / 250))
     return sel.eval(), {"steps": steps, "batch": BATCH, "exposures": steps * BATCH, "final_loss_250": sum(losses[-250:]) / min(250, len(losses))}

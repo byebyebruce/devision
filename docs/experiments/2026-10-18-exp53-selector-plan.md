@@ -84,6 +84,34 @@ EXP51 表明：给定字段框时，EXP50-T 的原始局部 token 可以被小�
 - 不完整运行：只有 START 时，两条路径都是 missing，分支为 incomplete，写出 INCOMPLETE 报告。
 - 假进程：train 卡住时整体在上限内以 124 结束，finalize 已执行，local 没有执行，没有残留子树。
 
+## 第 1 轮补正（EXP53-R1-01–04）
+
+- **R1-01 分支先看前提**：两条路径都完成且身份通过 → oracle 复现 EXP51 → 自动路径 fit_O / fit_L 都有效，然后才用原图投资线。任何前提不满足都不给继续：缺项或 invalid 记 incomplete；oracle 没复现或 fit 无效记未定位；自动路径的原始分数照常报告。
+  - 夹具：前提全过（oracle 用 EXP51 登记的明细，tune_O 0.827）时继续；oracle 全对（1.0，不等于 0.827）、oracle 缺失、fit_O 无效时，即使自动路径过线也不继续。
+- **R1-02 逐路径登记**：每条路径的明细写完立即原子写入 registry 的 readout_oracle / readout_auto 项，复算时各自核自己的项，一条损坏或缺失不连带另一条。
+  - 报告失败（异常）时写出 "REPORT FAILED" 的报告并返回非零；run.sh 的退出码是第一个失败阶段的码，阶段都成功时就是报告的码，所以报告失败不会是 exit 0。
+- **R1-03 输入绑定**：START 记录并在写入前核对：
+  - data/exp49/MANIFEST.json 的四份问题源；
+  - EXP51 features.json 的 pictures_sha256（按同一方法重算 1,760 张图）；
+  - EXP51 registry 中 T 的 details sha。
+  - global 和 local 在任何前向之前重算图片摘要、核问题源；报告在复现检查之前核 EXP51 的 details_T。
+  - 每条路径的 identity 逐项对照 START 和 local / selector 的登记：题单、区域、模型、特征、预测框。
+- **R1-04 资源边界**：
+  - local 先按 token 数预检：oracle + 自动区域的 float16 特征合计上限 3 GiB（oracle 是 713,844 个 token，1.02 GiB）。超出就在加载模型和分配大数组之前停止，记为 resource incomplete（local_budget.json），保留已完成的证据。
+  - 大文件 sha 改为 1 MiB 分块读取。
+  - local.json 记录实际 token 总数、每题最大 token 数、首批耗时、MPS 驱动和可用内存。
+  - global / train / local / readout 都向 progress-<阶段>.txt 写进度并 flush。
+  - 每个模型阶段在 `scripts/exp53/watch.py` 之下运行：独立进程组（start_new_session）；首个进度 5 分钟内必须出现，之后连续 3 分钟没有新进度就停；可用内存连续 30 秒低于 1.5 GiB 就停；到截止（减去报告预留）就停；首个窗口记录速度和 ETA；连续两次检查（每 60 秒一次）预计本阶段完成时间超过截止就停（incomplete）；停止时 TERM 本组，15 秒后 KILL，组外进程不受影响。swap 存量不单独作为停止条件。
+  - 外层仍是 run_capped 和 45 分钟总限，最后 120 秒留给报告。
+- 预算不变（约 15 分钟估计，上限 45 分钟）。内存估计改为：模型约 2 GB，区域特征受 3 GiB 上限约束（若自动框和 oracle 相近，合计约 2 GiB），全图特征 0.7 GB。
+
 ## 状态
 
 CPU 准备完成，**未运行**：没有加载真实模型，没有提取或训练。等评论家的 EXP53-RUN-01。
+
+
+## 评论家第1轮审查（待补正，未放行）
+
+2026-10-18 19:50:46 +08:00
+
+方向、固定选择器训练配方及45分钟总预算认可；当前94f96cc暂不授予EXP53-RUN-01。需处理critic中EXP53-R1-01（分支先核oracle复现/fit有效性）、R1-02（逐路登记与失败收尾）、R1-03（图片/自然问题来源/复现对照身份）、R1-04（自动框资源预检及停止线）。这些是待执行修正，不表示当前代码已实现。保留原实验门槛；补正后仅局部验收。完整评论同步长期交付文档。

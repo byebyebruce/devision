@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # exp53 automatic region selection for EXP51-T's frozen digit head (docs/experiments/2026-10-18-exp53-selector-plan.md;
-# critic EXP53-PREP-01). Only after the critic's model permission (EXP53-RUN-01). Stages of scripts/exp53/stages.py:
-# start (model-free, START.json before any forward) -> global (MPS) -> train (CPU) -> local (MPS) -> readout (CPU),
-# then the model-free report -- with --finalize when a stage failed or was stopped, so whatever is complete and bound
-# is reported and the rest stated. Hard limit start + 45 minutes (EXP53_LIMIT seconds for CPU fixtures only); every
-# stage bounded (TERM, KILL 15 s later); the last RESERVE seconds for the report; fresh only, no resume, no retry.
+# critic EXP53-PREP-01, R1-01..04). Only after the critic's model permission (EXP53-RUN-01). Stages of
+# scripts/exp53/stages.py: start (model-free, START.json before any forward) -> global (MPS) -> train (CPU) -> local
+# (MPS) -> readout (CPU), each under scripts/exp53/watch.py (its own process group; stall: no progress within 5 min /
+# for 3 min; available memory < 1.5 GiB for 30 s; two checks projecting past the deadline; TERM then KILL 15 s later)
+# inside run_capped; then the model-free report -- with --finalize when a stage failed or was stopped. Hard limit start
+# + 45 minutes (EXP53_LIMIT for CPU fixtures only); the last RESERVE seconds for the report; fresh only, no resume, no
+# retry. Exit: the first failing stage's status, else the report's (a failed report is never exit 0).
 #   nohup bash scripts/exp53/run.sh > runs/exp53.out 2>&1 &
 set -u
 cd "$(dirname "$0")/../.."
@@ -19,6 +21,7 @@ DEADLINE=$(( $(date +%s) + ${EXP53_LIMIT:-2700} ))
 echo "$DEADLINE" > runs/exp53.deadline
 STATUS=runs/exp53-status.txt
 RESERVE=${EXP53_RESERVE:-120}
+WATCH_ARGS=${EXP53_WATCH_ARGS:-}
 . scripts/exp38/steps.sh
 log "exp53: deadline $(date -r "$DEADLINE" '+%F %T')"
 codes=""
@@ -27,7 +30,8 @@ for stage in start global train local readout; do
   if [ $stage = start ]; then
     step start uv run python scripts/exp53/stages.py start --deadline "$DEADLINE"
   else
-    step $stage uv run python scripts/exp53/stages.py $stage
+    step $stage uv run python scripts/exp53/watch.py --deadline $(( DEADLINE - RESERVE )) $WATCH_ARGS \
+      --progress runs/exp53/progress-$stage.txt --log runs/exp53/watch-$stage.txt -- uv run python scripts/exp53/stages.py $stage
   fi
   rc=$?
   codes="$codes $stage=$rc"
@@ -39,5 +43,7 @@ if [ $rc = 0 ]; then
 else
   final_report uv run python scripts/exp53/stages.py report --finalize "$codes"
 fi
-log "report exit $?"
+rrc=$?
+log "report exit $rrc"
+[ $rc = 0 ] && rc=$rrc
 exit "$rc"

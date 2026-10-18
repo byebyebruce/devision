@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -65,7 +65,40 @@ p49 = p51.p49
 
 
 def sha(p: str) -> str:
-    return hashlib.sha256(open(p, "rb").read()).hexdigest()
+    """sha256 of a file, read in 1 MiB blocks (no whole-file copy in memory)."""
+    h = hashlib.sha256()
+    with open(p, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+SOURCES = {"fit_O": "data/exp42/fit_O.jsonl", "fit_L": "data/exp42/fit_L.jsonl", "rl_tune": "data/real_layout/questions_tune.jsonl",
+           "rl_tune_L": "data/exp40/rl_tune_L.jsonl"}
+EXP51_FEATURES = "runs/exp51/features.json"
+BUDGET_BYTES = 3 * 2 ** 30          # oracle + automatic region features together (critic EXP53-R1-04)
+
+
+def progress(out: str, stage: str, done: int, total: int) -> None:
+    """One progress line for scripts/exp53/watch.py: '<epoch> <done> <total>', flushed."""
+    with open(os.path.join(out, "progress-%s.txt" % stage), "a") as fh:
+        fh.write("%.3f %d %d\n" % (time.time(), done, total))
+        fh.flush()
+
+
+def pictures_digest(qs: List[Dict], data_root: str = "data") -> str:
+    """EXP51's picture digest: sha256 of the sorted {picture: sha256 of its file} JSON (scripts/exp51/extract.py)."""
+    pics = sorted({q["picture"] for q in qs})
+    return hashlib.sha256(json.dumps({p: sha(os.path.join(data_root, p)) for p in pics}, sort_keys=True).encode()).hexdigest()
+
+
+def start_record(out: str = OUT) -> Dict:
+    return json.load(open(os.path.join(out, "START.json")))
+
+
+def check_pictures(qs: List[Dict], out: str, data_root: str = "data") -> None:
+    if pictures_digest(qs, data_root) != start_record(out)["pictures_sha256"]:
+        raise SystemExit("the pictures differ from those START bound (EXP51's): refused before any forward")
 
 
 def write_json(path: str, obj) -> None:
@@ -113,10 +146,22 @@ def stage_start(deadline: int, out: str = OUT, vision=None) -> Dict:
     weights = {f: sha(os.path.join(RUN, "stage2", f)) for f in T_SHA}
     if weights != T_SHA:
         raise SystemExit("EXP50-T is not 1a8e5439 / 99c6246e")
+    srcs = json.load(open("data/exp49/MANIFEST.json"))["sources"]      # the question texts' sources (critic R1-03)
+    actual = {n: sha(p) for n, p in SOURCES.items()}
+    if any(srcs[n] != h for n, h in actual.items()):
+        raise SystemExit("question sources differ from data/exp49/MANIFEST.json")
+    qs = questions()
+    pics = pictures_digest(qs)
+    if pics != json.load(open(EXP51_FEATURES))["pictures_sha256"]:
+        raise SystemExit("pictures differ from EXP51's (features.json pictures_sha256)")
+    d51 = json.load(open(EXP51_REGISTRY))["T"]["details_sha256"]
+    if sha(EXP51_DETAILS) != d51:
+        raise SystemExit("EXP51's details_T differ from its registry")
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
          "files": {f: sha(f) for f in FILES}, "model": {"run": RUN, **weights}, "vision_identity": ident, "head_sha256": HEAD_SHA,
          "questions_sha256": man["questions_sha256"], "oracle_regions_sha256": man["regions_sha256"], "grid": man["grid"],
+         "sources": actual, "pictures_sha256": pics, "exp51_details_sha256": d51, "budget_bytes": BUDGET_BYTES,
          "selector": {"width": sel.WIDTH, "heads": sel.HEADS, "lr": sel.LR, "weight_decay": sel.WD, "batch": sel.BATCH,
                       "steps": sel.STEPS, "warmup": sel.WARMUP, "seed": sel.SEED, "device": "cpu",
                       "loss": "L1(cx, cy, w, h) + (1 - GIoU)", "train_sets": ["fit_O", "fit_L"]},
@@ -159,10 +204,12 @@ def q_text(q: Dict) -> str:
     return _TEXT[q["key"]]
 
 
-def load_texts(qs: List[Dict]) -> None:
-    src = {"fit_O": "data/exp42/fit_O.jsonl", "fit_L": "data/exp42/fit_L.jsonl", "rl_tune": "data/real_layout/questions_tune.jsonl",
-           "rl_tune_L": "data/exp40/rl_tune_L.jsonl"}
-    rows = {n: {r["id"]: r for r in map(json.loads, open(p))} for n, p in src.items()}
+def load_texts(qs: List[Dict], bound: Optional[Dict[str, str]] = None) -> None:
+    """The questions' instruction texts from the four sources; with `bound` (START's sources), each source file must
+    have that sha256 first (critic R1-03)."""
+    if bound is not None and any(sha(p) != bound[n] for n, p in SOURCES.items()):
+        raise SystemExit("question sources differ from those START bound: refused before any forward")
+    rows = {n: {r["id"]: r for r in map(json.loads, open(p))} for n, p in SOURCES.items()}
     for q in qs:
         _TEXT[q["key"]] = rows[q["set"]][q["id"]]["questions"][q["qid"]]["instructions"]
 
@@ -174,7 +221,8 @@ def stage_global(out: str = OUT, data_root: str = "data", device: str = "auto", 
     from devision.infer import Decider, best_device
     s_sha = started(out)
     qs = questions()
-    load_texts(qs)
+    load_texts(qs, start_record(out)["sources"])
+    check_pictures(qs, out, data_root)
     pics = sorted({q["picture"] for q in qs})
     dev = best_device() if device == "auto" else device
     d = Decider.load(os.path.join(RUN, "stage2"), device=dev)
@@ -194,6 +242,7 @@ def stage_global(out: str = OUT, data_root: str = "data", device: str = "auto", 
             for k, (w, h) in enumerate(sizes):
                 patches[s + k] = pt[k]
                 geom[s + k] = patch_geometry((0, 0, w, h), w, h, 256, 16).numpy()
+            progress(out, "global", s + len(chunk), len(pics))
     words, mask = question_words(d, qs)
     path = os.path.join(out, "global.npz")
     np.savez(path, patches=patches, geom=geom, words=words.numpy(), mask=mask.numpy(),
@@ -221,7 +270,8 @@ def stage_train(out: str = OUT, steps: int = sel.STEPS) -> Dict:
     targets = torch.tensor([sel.target_of(q["box"], q["width"], q["height"]) for q in qs])
     train_idx = [i for i, q in enumerate(qs) if q["set"] in ("fit_O", "fit_L")]
     t0 = time.time()
-    model, stats = sel.train(inp, train_idx, targets, steps=steps, log=print)
+    model, stats = sel.train(inp, train_idx, targets, steps=steps, log=print,
+                             on_step=lambda done: progress(out, "train", done, steps))
     torch.save(model.state_dict(), os.path.join(out, "selector.pt"))
     frac = sel.predict(model, inp, list(range(len(qs))))
     with open(os.path.join(out, "boxes.jsonl"), "w") as fh:
@@ -246,6 +296,25 @@ def auto_regions(qs: List[Dict], bx: Dict[str, Dict]) -> List[Dict]:
     return [reg51.region(bx[q["key"]]["box"], q["width"], q["height"]) for q in qs]
 
 
+def memory_now() -> Dict:
+    out: Dict = {}
+    if torch.backends.mps.is_available():
+        out["mps_driver_gib"] = torch.mps.driver_allocated_memory() / 2 ** 30
+    try:
+        import psutil
+        out["available_gib"] = psutil.virtual_memory().available / 2 ** 30
+    except ImportError:
+        pass
+    return out
+
+
+def region_budget(oracle: List[Dict], auto: List[Dict], limit: int = BUDGET_BYTES, dim: int = 768) -> Dict:
+    """Bytes the float16 region features of both paths would take, from the token counts alone (no allocation)."""
+    t = {"oracle": sum(len(r["index"]) for r in oracle), "auto": sum(len(r["index"]) for r in auto)}
+    b = (t["oracle"] + t["auto"]) * dim * 2
+    return {"tokens": t, "bytes": b, "limit": limit, "within": b <= limit}
+
+
 def stage_local(out: str = OUT, data_root: str = "data", device: str = "auto", batch: int = 4) -> Dict:
     from PIL import Image
 
@@ -256,6 +325,12 @@ def stage_local(out: str = OUT, data_root: str = "data", device: str = "auto", b
     bx = boxes(out)
     oracle = json.load(gzip.open(ORACLE_REGIONS, "rt"))
     auto = auto_regions(qs, bx)
+    budget = region_budget(oracle, auto)                  # before any large allocation or model load (R1-04)
+    write_json(os.path.join(out, "local_budget.json"), budget)
+    if not budget["within"]:
+        raise SystemExit("resource incomplete: region features would need %.2f GiB > %.2f GiB" % (
+            budget["bytes"] / 2 ** 30, BUDGET_BYTES / 2 ** 30))
+    check_pictures(qs, out, data_root)
     with gzip.open(os.path.join(out, "auto_regions.json.gz"), "wt") as fh:
         json.dump([{"key": q["key"], **r} for q, r in zip(qs, auto)], fh)
     dev = best_device() if device == "auto" else device
@@ -271,7 +346,7 @@ def stage_local(out: str = OUT, data_root: str = "data", device: str = "auto", b
         for i, r in enumerate(regs):
             o[i + 1] = o[i] + len(r["index"])
         offs[name], flats[name] = o, np.zeros((int(o[-1]), 768), np.float16)
-    t0 = time.time()
+    t0, first = time.time(), None
     with torch.no_grad():
         for s in range(0, len(pics), batch):
             chunk = pics[s:s + batch]
@@ -280,15 +355,21 @@ def stage_local(out: str = OUT, data_root: str = "data", device: str = "auto", b
                 with Image.open(os.path.join(data_root, p)) as img:
                     px.append(local_pixels(img, 256, 12, 0.25, "T"))
             kv = m.visual_inputs(torch.stack(px).to(dev))[0].float().cpu().numpy()
+            if first is None:
+                first = {"seconds": time.time() - t0, **memory_now()}
+                print("local first batch %s" % first, flush=True)
             for b, p in enumerate(chunk):
                 for i in by_pic[p]:
                     for name, regs in (("oracle", oracle), ("auto", auto)):
                         flats[name][offs[name][i]:offs[name][i + 1]] = kv[b][np.asarray(regs[i]["index"], np.int64)]
+            progress(out, "local", s + len(chunk), len(pics))
     files = {}
     for name in ("oracle", "auto"):
         np.savez(os.path.join(out, name + ".npz"), x=flats[name], offsets=offs[name])
         files[name + ".npz"] = sha(os.path.join(out, name + ".npz"))
     info = {"start_sha256": s_sha, "seconds": time.time() - t0, "device": dev, "tokens": {k: int(v[-1]) for k, v in offs.items()},
+            "max_tokens_per_question": {"oracle": max(len(r["index"]) for r in oracle), "auto": max(len(r["index"]) for r in auto)},
+            "first_batch": first, "budget": budget,
             "pixels": "local_pixels(img, 256, 12, 0.25, 'T') -> visual_inputs"}
     write_json(os.path.join(out, "local.json"), info)
     files.update({"local.json": sha(os.path.join(out, "local.json")), "auto_regions.json.gz": sha(os.path.join(out, "auto_regions.json.gz"))})
@@ -312,6 +393,8 @@ def stage_readout(out: str = OUT) -> Dict:
     s_sha = started(out)
     check_registered(out, "local")
     qs = questions()
+    if sha(QUESTIONS) != start_record(out)["questions_sha256"]:
+        raise SystemExit("questions differ from START")
     oracle = json.load(gzip.open(ORACLE_REGIONS, "rt"))
     auto = [r for r in json.load(gzip.open(os.path.join(out, "auto_regions.json.gz"), "rt"))]
     if [r["key"] for r in auto] != [q["key"] for q in qs]:
@@ -334,30 +417,35 @@ def stage_readout(out: str = OUT) -> Dict:
                  "regions_sha256": sha(ORACLE_REGIONS) if name == "oracle" else sha(os.path.join(out, "auto_regions.json.gz")),
                  "boxes_sha256": sha(os.path.join(out, "boxes.jsonl")) if name == "auto" else None}
         dsha = p49.write_details(os.path.join(out, "details_%s.jsonl" % name), qs, pred, donor, twin, ident)
+        register(out, "readout_" + name, {"details_%s.jsonl" % name: dsha})       # at once, this path only (R1-02)
         reg["details_%s.jsonl" % name] = dsha
+        progress(out, "readout", len(reg), 2)
         del tok, z
-    register(out, "readout", reg)
     return reg
 
 
 # ------------------------------------------------------------------ report
 
 def collect(out: str = OUT):
-    """(qs, {path: (pred, donor)}, states) from registered, identity-checked details."""
+    """(qs, {path: (pred, donor)}, states): each path from its own registry entry and identity, checked against START
+    and the registered local / selector products (critic R1-02 / 03); one path failing never discards the other."""
     qs = questions()
     preds, states = {}, {}
     for name in ("oracle", "auto"):
         path = os.path.join(out, "details_%s.jsonl" % name)
         try:
-            files = check_registered(out, "readout")
-            if files.get(os.path.basename(path)) != sha(path):
+            st = start_record(out)
+            if check_registered(out, "readout_" + name).get(os.path.basename(path)) != sha(path):
                 raise SystemExit("details not registered")
             pred, donor, ident = p49.read_details(path, qs)
-            if ident.get("path") != name or ident.get("start_sha256") != started(out) or ident.get("head_sha256") != HEAD_SHA \
-                    or ident.get("features_sha256") != sha(os.path.join(out, name + ".npz")):
-                raise SystemExit("details identity does not bind")
-            if name == "auto" and ident.get("boxes_sha256") != check_registered(out, "selector")["boxes.jsonl"]:
-                raise SystemExit("auto details are not about the registered boxes")
+            local = check_registered(out, "local")
+            want = {"path": name, "start_sha256": started(out), "head_sha256": HEAD_SHA, "questions_sha256": st["questions_sha256"],
+                    "features_sha256": local[name + ".npz"], "model": T_SHA,
+                    "regions_sha256": st["oracle_regions_sha256"] if name == "oracle" else local["auto_regions.json.gz"],
+                    "boxes_sha256": check_registered(out, "selector")["boxes.jsonl"] if name == "auto" else None}
+            bad = [k for k, v in want.items() if ident.get(k) != v]
+            if bad or sha(QUESTIONS) != st["questions_sha256"]:
+                raise SystemExit("details identity does not bind: %s" % (bad or "questions"))
             preds[name], states[name] = (pred, donor), {"state": "completed"}
         except (SystemExit, OSError, ValueError, KeyError) as e:
             states[name] = {"state": "missing" if not os.path.exists(path) else "invalid", "reason": str(e)}
@@ -391,13 +479,18 @@ def conditions_of(ro: Dict) -> Dict:
     return c
 
 
-def branch(st: Dict, auto_c, oracle_ok) -> str:
-    if auto_c is None:
-        return "incomplete: the automatic path is missing / invalid (oracle or training scores never stand in for it)"
+def branch(states: Dict, auto_c, oracle_ok) -> str:
+    """The pre-written branch, prerequisites first (critic R1-01): both paths complete and bound, the oracle reproduces
+    EXP51, the automatic path is valid on fit_O and fit_L; only then the original-picture investment line decides."""
+    missing = [k for k, v in states.items() if v["state"] != "completed"]
+    if missing or auto_c is None:
+        return "incomplete: %s missing / invalid -- no continuation (raw scores kept; oracle or training scores never stand in)" % (missing or ["auto"])
+    if not oracle_ok:
+        return "not located: the oracle path did not reproduce EXP51 (implementation evidence insufficient) -- no continuation, no long training"
+    if not (auto_c["validity"] and auto_c["fit_O_valid"]):
+        return "not located: the automatic selection did not learn on fit -- no long candidate training, no more steps or other thresholds"
     if auto_c["invest_original"]:
         return "automatic path readable on the original pictures: prepare connecting these selected, readable contents to ordinary decide (use, comparison, transfer, protection); no release of the probe"
-    if not oracle_ok or not (auto_c["validity"] and auto_c["fit_O_valid"]):
-        return "not located: the automatic selection did not learn on fit or the oracle path did not reproduce EXP51 -- no long candidate training, no more steps or other thresholds"
     return "oracle reproduced and automatic fit valid, tune below the condition: locate the selection / geometry generalisation first; local pixels are not re-judged unreadable"
 
 
@@ -410,6 +503,9 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
         res["paths"][name] = {"readout": ro, "conditions": conditions_of(ro), "cut_slice": p51.cut_slice(qs, pred)}
     oracle_ok = False
     if "oracle" in preds:                    # reproduction of EXP51-T's registered per-question readout
+        if sha(EXP51_DETAILS) != start_record(out)["exp51_details_sha256"] or \
+                sha(EXP51_DETAILS) != json.load(open(EXP51_REGISTRY))["T"]["details_sha256"]:
+            raise SystemExit("EXP51's details_T changed: no reproduction check")
         p51_pred, _, _ = p49.read_details(EXP51_DETAILS, qs)
         same = sum(p49.decode(a)["text"] == p49.decode(b)["text"] and p49.decode(a)["valid"] == p49.decode(b)["valid"]
                    for a, b in zip(preds["oracle"][0], p51_pred)) / len(qs)
@@ -422,6 +518,9 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
         res["boxes"] = box_diagnostics(qs, boxes(out))
     except (SystemExit, OSError, ValueError, KeyError) as e:
         res["boxes"] = {"state": "invalid", "reason": str(e)}
+    for f in ("local_budget.json", "local.json"):
+        if os.path.exists(os.path.join(out, f)):
+            res[f.split(".")[0]] = json.load(open(os.path.join(out, f)))
     auto_c = res["paths"].get("auto", {}).get("conditions")
     res["branch"] = branch(states, auto_c, oracle_ok)
     res["oracle_note"] = "the oracle path is a fidelity / capability control, never the result"
@@ -463,7 +562,14 @@ def main(argv=None) -> int:
     elif a.stage == "readout":
         print(json.dumps(stage_readout(), indent=1))
     else:
-        report(finalize=a.finalize)
+        try:
+            report(finalize=a.finalize)
+        except (SystemExit, OSError, ValueError, KeyError) as e:      # a failed report is never a successful run
+            msg = "REPORT FAILED: %s%s" % (e, " (after: %s)" % a.finalize if a.finalize else "")
+            os.makedirs(OUT, exist_ok=True)
+            open(os.path.join(OUT, "report.txt"), "w").write(msg + "\n")
+            print(msg, file=sys.stderr)
+            return 1
     return 0
 
 
