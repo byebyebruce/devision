@@ -207,6 +207,8 @@ def separability(combos: Dict[str, List[Tuple]]) -> Dict[str, float]:
         for i in range(n + 1):
             if i:
                 left_pos += xs[i - 1][1]
+            if 0 < i < n and xs[i - 1][0] == xs[i][0]:      # thresholds only between distinct values (critic EXP68-NOTE-01)
+                continue
             acc = max(left_pos + (n - i - (pos - left_pos)), (i - left_pos) + (pos - left_pos)) / n
             best = max(best, acc)
         out[f] = round(best, 4)

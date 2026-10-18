@@ -30,13 +30,14 @@
 
 | 特征 | 新 train（各 100） | 旧 facts train（26 / 48） |
 |---|---|---|
-| 重者质量 | 0.690 | 0.703 |
-| 轻者质量 | 0.550 | 0.770 |
-| 慢速 | 0.515 | 0.743 |
+| 重者质量 | 0.680 | 0.662 |
+| 轻者质量 | 0.500 | 0.770 |
+| 慢速 | 0.500 | 0.743 |
 | 快速 | 0.635 | 0.662 |
-| 质量比 | 0.665 | 0.757 |
+| 质量比 | 0.660 | 0.757 |
 | 速度比 | 0.630 | 0.811 |
 
+  - 修正（评审 EXP68-NOTE-01）：阈值只取在不同取值之间，不在相同取值内部切分。原表有几项因此偏高。重者质量一项，新数据（0.680）略高于旧数据（0.662），所以不能概括为「所有单特征捷径都减弱」；其余五项新数据更低。train / diag 的字节没有变，只有 MANIFEST 的描述性审计重算了。
 - **动能比分层**（只报告，不按结果改门槛）：near（较大动能 < 2 倍）/ large（≥ 2 倍）：
 
 | 类 | 新 train near / large | 新 diag near / large |
@@ -56,7 +57,7 @@
 - 9,600 项、1,200 次更新、每批 8；原子单元 (group, qid) 共 4,800 个，每个 2 项（两视图），拆开 0；每项正好一次。
 - 截断检查：train 和 diag 都没有 state 被截断，选项都可区分。
 
-## 运行与判据（运行前冻结；runner 在方案验收后再写，沿用 EXP65 的单臂编排）
+## 运行与判据（运行前冻结）
 
 - **阶段**：start（不加载模型）→ train（1,200 次更新）→ freeze → decide → exist / science → report（不加载模型）。
 - **decide 的请求**：
@@ -93,3 +94,26 @@
 - 与全部排除集和新 diag 都不相交；diag 480 个请求、每类 80 个、标签按规则、两种顺序互换。
 - PLAN：9,600 / 1,200、拆开 0、每项一次、没有截断。
 - text_only 训练不打开图片。
+
+## 实现（EXP68-R1-ACCEPT-01 之后；未运行）
+
+- **文件**：`configs/exp68-x.yaml`（与 EXP65-C 的 YAML 除 name / data 外逐项相同，check_yaml 核对）、`scripts/exp68/exp68.py`、`scripts/exp68/run.sh`。
+- **START 绑定**：
+  - EXP63（运行、端点、登记）；data/facts；data/exp65；
+  - EXP65 的运行（START 092537ee… / report 23f8959a… / registry 003e8abb…，以及登记过的全部文件）、C 的冻结端点 382e0a44… / cb7419ab… 和它的 screens；
+  - data/exp68：train 1798d1e8… / diag 3a96c3f7… 固定为已验收的字节，再核 MANIFEST、PLAN 和来源；
+  - tokenizer、代码。
+  - 每个阶段都重核。
+- **阶段**：start → train（devision-pipeline，watch 下）→ freeze（1,200 次更新，对 EXP63 实际端点做导出核对）→ decide → X 的 exist / science（devision-eval + freeze.py record）→ report。
+  - decide：X 上 fit / G / P / EXP65 diag / 新 diag 共 2,560 个请求；C 只在新 diag 上读 480 个，写进本次运行目录并登记。EXP65 的旧证据只读、不写。
+- **报告**：
+  - C 在 EXP65 diag 上的记录直接从 runs/exp65 读取，用同一个 read_set 核对登记、START、输入、端点和逐题完整性；
+  - X 的 EXP63 门槛、EXP65 diag 六类 ≥ 0.80、对 C 的冲突宏增益（case 簇区间下界 > 0）、保护（≥ −0.02），四项都满足才算满足实用条件；
+  - 新 diag 的六类准确率、两视图都对的比例、near / large 分层，以及对 C 的配对比较，都只报告；
+  - 缺项给 incomplete，不下路线结论。
+- **不加载模型的演练**（/tmp）：START 全部通过，请求数 3,040；C 在 EXP65 diag 上的记录核对通过；没有 X 的结果时，报告给 incomplete。
+- **CPU 夹具**（`scripts/exp68/test_exp68_runner.py`，6 项；加上数据夹具共 12 项，全过；pyright 0 错误）：
+  - YAML 改动任一参数就被拒绝；
+  - START 重复启动被拒绝，data/exp68 改动后被拒绝；
+  - 报告：X 等于 C 自己的记录时，七项门槛全是 true，但 diag 质量胜 38 / 80、对 C 的增益为 0，判为「不满足」；EXP65 diag 全对时判为「满足」，此时缺新 diag 只影响报告项；没有 X 时给 incomplete；
+  - run.sh stub：顺序正确，train 失败时直接 finalize，默认上限 3,600 秒、留 120 秒。
