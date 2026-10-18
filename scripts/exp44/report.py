@@ -24,12 +24,18 @@ after training, but reading to option scoring is still not connected" -- not "vi
 
     uv run python scripts/exp44/report.py
 """
+import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 from typing import Dict, List
+
+from transformers import AutoTokenizer
+
+from devision.train.rlcd import aux_example, aux_number
 
 HERE = os.path.dirname(__file__)
 
@@ -50,6 +56,7 @@ C_SHA = {"model.safetensors": "6596907825f0b9c1ba9c0e9eb8dc136a91d6c2a48b331bc50
          "config.json": "e5421f88ff74a665d4730725e56bb49246eed419002ca064d7f308baab0f89f9"}
 M_AUX = "runs/exp44-m-aux"
 AUX_SETS = {"aux_" + n: p for n, p in SETS.items()}
+NUMBER = re.compile(r"^\d[\d,]*(?:\.\d+)?$")       # the parse rule of scripts/exp44/aux_readout.py
 
 
 def j_identity(run: str, check: Dict, manifest: Dict) -> str:
@@ -86,6 +93,7 @@ def aux_records(run: str, name: str, data_path: str, checkpoint: str, head: Dict
             raise SystemExit("%s/%s: repeated %s" % (run, name, k))
         got[k] = g
     rows = r42.load(data_path)
+    tok = AutoTokenizer.from_pretrained(os.path.join(checkpoint, "tokenizer"))     # tokenizer only, no model
     out = []
     for r in rows:
         view = r.get("view") or r["id"].split(":")[2]
@@ -94,11 +102,20 @@ def aux_records(run: str, name: str, data_path: str, checkpoint: str, head: Dict
             if f == "cmp":
                 continue
             g = got.pop((r["id"], q), None)
-            if g is None or g["image_id"] != r["image_id"] or bool(g["correct"]) != (g["valid"] and g["prediction"] == g["gold_number"]):
-                raise SystemExit("%s/%s: missing or inconsistent %s %s" % (run, name, r["id"], q))
+            if g is None:
+                raise SystemExit("%s/%s: missing %s %s" % (run, name, r["id"], q))
+            gold = next(o for o, p in r["gold"][q]["probabilities"].items() if p == 1.0)
+            ids, _ = aux_example(tok, r.get("state_text", ""), v["instructions"], gold, 8)      # the training input rule
+            valid = g["prediction"] is not None and bool(NUMBER.match(g["prediction"]))       # the readout's parse rule
+            if g["gold_number"] != aux_number(gold) or g["image_id"] != r["image_id"] or g["image_used"] != r["image"] \
+                    or g["aux_input_sha256"] != hashlib.sha256(json.dumps(ids).encode()).hexdigest() \
+                    or bool(g["valid"]) != valid or bool(g["correct"]) != (valid and g["prediction"] == g["gold_number"]):
+                raise SystemExit("%s/%s: %s %s does not match its source question (gold, picture, input or validity)"
+                                 % (run, name, r["id"], q))
             out.append({"family": r["family"], "case": r["case"], "field": f, "object": b40.object_of(v["instructions"]),
                         "view": view, "picture": r.get("orig_id", r["id"]), "gold": g["gold_number"],
-                        "prediction": g["prediction"], "right": bool(g["correct"]), "aux_input": g["aux_input_sha256"]})
+                        "prediction": g["prediction"], "right": bool(g["correct"]), "valid": valid,
+                        "aux_input": g["aux_input_sha256"]})
     if got:
         raise SystemExit("%s/%s: %d records not in the data" % (run, name, len(got)))
     return out
@@ -178,21 +195,27 @@ def build(runs: Dict[str, str] = RUNS, m_aux: str = M_AUX) -> Dict:
                 if ca != cb:
                     raise SystemExit("%s: %s and %s on different questions" % (n, a, b))
                 out["differences"]["%s|%s-%s" % (n, a, b)] = {s: r42.diff(fams[(a, n)], fams[(b, n)], ca, s) for s in ("different", "both", "twin")}
-    rd, d = out["readout"].get("rl_tune", {}), out["differences"]
-    k = "rl_tune|J-M"
-    out["conditions"] = {
-        "progress": "incomplete" if "J" not in rd or k not in d else bool(
-            rd["J"]["different"] >= 0.60 and rd["J"]["both"] >= 0.20 and d[k]["both"]["ci95"][0] > 0
-            and rd["J"]["twin"] >= 0.20 and d[k]["twin"]["ci95"][0] > 0),
-        "number_loss_attribution": "incomplete" if "rl_tune|J-C" not in d else bool(
-            d["rl_tune|J-C"]["both"]["value"] >= 0.10 and d["rl_tune|J-C"]["both"]["ci95"][0] > 0)}
+    out["conditions"] = conditions(out)
     return out
+
+
+def conditions(out: Dict) -> Dict:
+    """The pre-written conditions; both "incomplete" unless all four main decision sets of J are read (critic
+    EXP44-R1-03) -- the per-set values and intervals of what was read stay in the report."""
+    if not all("J" in out["readout"].get(n, {}) for n in SETS) \
+            or not all("%s|J-%s" % (n, b) in out["differences"] for n in SETS for b in ("M", "C")):
+        return {"progress": "incomplete", "number_loss_attribution": "incomplete"}
+    rd, d = out["readout"]["rl_tune"], out["differences"]
+    k = "rl_tune|J-M"
+    return {"progress": bool(rd["J"]["different"] >= 0.60 and rd["J"]["both"] >= 0.20 and d[k]["both"]["ci95"][0] > 0
+                             and rd["J"]["twin"] >= 0.20 and d[k]["twin"]["ci95"][0] > 0),
+            "number_loss_attribution": bool(d["rl_tune|J-C"]["both"]["value"] >= 0.10 and d["rl_tune|J-C"]["both"]["ci95"][0] > 0)}
 
 
 def aux_summary(recs: List[Dict]) -> Dict:
     fam = r42.units(recs)
     out = r42.summary(fam)
-    out["valid"] = sum(r["prediction"] is not None for r in recs) / len(recs)
+    out["valid"] = {"valid": sum(r["valid"] for r in recs), "of": len(recs), "rate": sum(r["valid"] for r in recs) / len(recs)}
     out["whole"] = {f: {"right": sum(r["right"] for r in recs if r["field"] == f), "of": sum(r["field"] == f for r in recs)}
                     for f in r42.FIELDS if any(r["field"] == f for r in recs)}
     dep = dependence(recs)
@@ -223,8 +246,9 @@ def main() -> int:
             if isinstance(s, str):
                 print("%s %s: %s" % (n, who, s))
             else:
-                print("%s %s: whole %s both %.3f twin %.3f valid %.3f dependence %s" % (
-                    n, who, {f: "%d/%d" % (v["right"], v["of"]) for f, v in s["whole"].items()}, s["both"], s["twin"], s["valid"],
+                print("%s %s: whole %s both %.3f twin %.3f valid %d/%d dependence %s" % (
+                    n, who, {f: "%d/%d" % (v["right"], v["of"]) for f, v in s["whole"].items()}, s["both"], s["twin"],
+                    s["valid"]["valid"], s["valid"]["of"],
                     {f: "%+.3f [%+.3f, %+.3f] n%d" % (v["value"], *v["ci95"], v["n"]) for f, v in s["picture_dependence"].items()}))
     print("risk %s\nconditions %s" % (out["risk"], out["conditions"]))
     return 0

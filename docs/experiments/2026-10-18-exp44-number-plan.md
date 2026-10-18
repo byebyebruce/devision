@@ -34,6 +34,7 @@ EXP43 显示，同一个 EXP42-C 能从文字转录中按对象取值（tune 两
 - **默认路径**：aux_weight = 0 时不加载头，不构建任何东西，训练与以前完全相同。
   - 启用时，头和题表在设种子之前构建（与 teacher 相同的位置），所以 LoRA 初始化、批序和 CE 噪声序列不变。
   - aux_weight / aux_slots / aux_head 写进 TrainConfig、resume 键和 train_report（含头的身份）。
+  - 限制（评论家 EXP44-NOTE-01）：resume 只比较 aux_head 的仓库名，resume.pt 里没有存头张量的身份，所以同一仓库下实际头张量变了，恢复时**不会**被拒绝。本链是新目录、启动时核对实际缓存文件和张量、不重试，所以不受影响；以后若要用辅助 resume，需要先保存并比较头身份。
 
 ## 全量检查与例子（`scripts/exp44/check.py` → `data/exp44/CHECK.json`、`runs/exp44-preview/examples.md`）
 
@@ -59,13 +60,18 @@ EXP43 显示，同一个 EXP42-C 能从文字转录中按对象取值（tune 两
   - **依图检查**：只看数值改变的孪生，且两视图的辅助输入完全相同（只差图片），把另一视图的预测按本题 gold 打分作为"错图"。按字段报告"真图 − 错图"和 case 簇区间。
     - 本数据中两视图的 state_text 和问题相同，所以辅助输入相同；输入不同的孪生会被跳过并计数。
     - 依图阳性不等于证明了 OCR：粒子大小和间隙也随图变化。
+- **数字读出的逐题核对**（评论家 EXP44-R1-01 / 02）：
+  - 每条记录的 gold_number 必须等于从源题 gold 重建的数字；image_used 等于源图；aux_input_sha256 等于用该 checkpoint 的本地 tokenizer 按训练同一规则（rlcd.aux_example）重建的输入 hash（只加载 tokenizer）。
+  - valid 按读出的解析规则重算，并与明细一致；correct = valid 且预测等于 gold。
+  - 有效率按 valid 计，不是按"有预测串"计。
+  - 不一致就拒绝，之后才做两对象、孪生和依图的汇总。
 - **身份**（不满足就拒绝）：
   - M、C 仍是冻结身份；
   - J 的 START / run.json / train_report 都写明 objective ce、aux 1.0 / 8，起点和数据 sha 正确，头的身份等于 CHECK.json；
   - J 的每个文件都记录在冻结身份下；
   - 摘要中的 checkpoint / 温度 / control / data sha 都正确；逐题无漏无重。
   - 缺项记为 incomplete，不补 0。
-- **条件**（预写；算力投入条件，不是发布条件）：
+- **条件**（预写；算力投入条件，不是发布条件；J 的四个主决策集缺任何一个，两个条件都记为 incomplete，已读的各集数值和区间保留，评论家 EXP44-R1-03）：
   - **进步**：原图 tune 异值宏平均 ≥ 0.60；两对象 ≥ 0.20 且 J − M 下界 > 0；孪生 ≥ 0.20 且 J − M 下界 > 0。三条同时满足才讨论扩大训练。
   - **归因于数字 loss**：原图 tune 两对象 J − C ≥ 0.10 且下界 > 0。
   - 辅助读数、fit 或 L 单独好转，只用于定位下一环，不自动接长训。如果辅助头读对了但决策仍失败，写作"共享编码器训练后能读出数字，但读数到候选评分仍未打通"，不说"视觉已修复"。
@@ -114,7 +120,7 @@ EXP43 显示，同一个 EXP42-C 能从文字转录中按对象取值（tune 两
   4. 数字 loss 非有限时在更新前报错，不留 model.safetensors。
   5. 同一批"两次 backward"的梯度等于"联合 loss 一次 backward"（atol 1e-6）；梯度到达 projector；头被冻结。
 - 已有的 test_objective / test_distill / test_resume 照常通过（合计 21 项）。
-- `scripts/exp44/test_exp44.py`，4 项：数字读出在 tiny checkpoint 上端到端可运行；依图只在输入相同的孪生上计算；J 的身份拒绝错误的权重 / objective / 头；缺 J 时为 incomplete，C 的读数复现 EXP42。
+- `scripts/exp44/test_exp44.py`，10 项：数字读出在 tiny checkpoint 上端到端可运行；依图只在输入相同的孪生上计算；J 的身份拒绝错误的权重 / objective / 头；缺 J 时为 incomplete，C 的读数复现 EXP42；有效率按解析规则计（合法数字 / 有 SEP 的非数字 / 无结束符：6 题中 3 题有效）；改 gold_number、image_used、输入 hash 或谎报 valid，都拒绝；rl_tune 过线但缺 rl_tune_L 时两个条件都是 incomplete。
 - 报告冒烟：真实的 M、C 记录复现 EXP42 读数（rl_tune 两对象 M 0.008、C 0.013）。
 - chain 演练（假 uv）：启动检查（含头身份）通过；J 的 11 项按序 completed，冻结记录 10 个集合；报告在假摘要处拒绝（预期）。
 - pyright 0。没有运行真模型。

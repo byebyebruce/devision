@@ -85,3 +85,63 @@ def test_missing_j_is_incomplete():
     assert out["runs"]["J"].startswith("incomplete") and out["conditions"]["progress"] == "incomplete"
     assert out["aux"]["aux_rl_tune"]["M"] == "missing"
     assert out["readout"]["rl_tune"]["C"]["both"] == pytest.approx(0.0128, abs=1e-3)
+
+
+def aux_case(tmp_path, preds, mutate=None):
+    """A number readout of the first 6 fit_O questions under exp40-M's checkpoint name (its tokenizer is local);
+    preds: per question the prediction (None = no end token); mutate(record) for the refusal cases."""
+    from transformers import AutoTokenizer
+    from devision.train.rlcd import aux_example, aux_number
+    tok = AutoTokenizer.from_pretrained(os.path.join(ROOT, rep.INIT, "tokenizer"))
+    rows = [json.loads(x) for x in open(os.path.join(ROOT, "data", "exp42", "fit_O.jsonl"))][:6]
+    data = tmp_path / "set.jsonl"
+    data.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    run = tmp_path / "run"
+    (run / "eval").mkdir(parents=True)
+    check = json.load(open(os.path.join(ROOT, "data", "exp44", "CHECK.json")))
+    head = {k: v for k, v in check["head"].items() if k != "file_sha256"}
+    recs = []
+    for r, pred in zip(rows, preds):
+        (q, v), = r["questions"].items()
+        gold = next(o for o, p in r["gold"][q]["probabilities"].items() if p == 1.0)
+        ids, _ = aux_example(tok, r["state_text"], v["instructions"], gold, 8)
+        valid = pred is not None and bool(rep.NUMBER.match(pred))
+        g = aux_number(gold)
+        x = {"sample_id": r["id"], "qid": q, "image_id": r["image_id"], "image_used": r["image"],
+             "aux_input_sha256": __import__("hashlib").sha256(json.dumps(ids).encode()).hexdigest(),
+             "gold_number": g, "prediction": g if pred == "GOLD" else pred, "valid": valid or pred == "GOLD",
+             "correct": pred == "GOLD"}
+        recs.append(mutate(x) if mutate and len(recs) == 0 else x)
+    (run / "eval" / "aux_x.details.jsonl").write_text("".join(json.dumps(x) + "\n" for x in recs))
+    json.dump({"run": {"checkpoint": rep.INIT, "data_sha256": rep.r41.sha(str(data)), "slots": 8, "head": head}},
+              open(run / "eval" / "aux_x.json", "w"))
+    os.chdir(ROOT)
+    return rep.aux_records(str(run), "aux_x", str(data), rep.INIT, head)
+
+
+def test_validity_follows_the_parse_rule(tmp_path):
+    recs = aux_case(tmp_path, ["GOLD", "abc", None, "12", "GOLD", "1,2x"])
+    s = rep.aux_summary(recs)
+    assert s["valid"] == {"valid": 3, "of": 6, "rate": 0.5}               # GOLD, "12", GOLD; "abc" / None / "1,2x" invalid
+    assert sum(r["right"] for r in recs) == 2
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda x: dict(x, gold_number="999"),                                  # another gold
+    lambda x: dict(x, image_used="exp37/images/L/" + x["image_used"].split("/")[-1]),   # another picture
+    lambda x: dict(x, aux_input_sha256="0" * 64),                          # another input
+    lambda x: dict(x, prediction="abc", valid=True, correct=False),       # claims a non-number valid
+])
+def test_number_records_must_match_their_source(tmp_path, mutate):
+    with pytest.raises(SystemExit):
+        aux_case(tmp_path, ["GOLD"] * 6, mutate)
+
+
+def test_conditions_need_all_four_main_sets():
+    good = {"different": 0.9, "both": 0.5, "twin": 0.5}
+    ci = {"value": 0.3, "ci95": [0.1, 0.5]}
+    out = {"readout": {n: {"J": good} for n in rep.SETS},
+           "differences": {"%s|J-%s" % (n, b): {"both": ci, "twin": ci, "different": ci} for n in rep.SETS for b in "MC"}}
+    assert rep.conditions(out) == {"progress": True, "number_loss_attribution": True}
+    del out["readout"]["rl_tune_L"]                                        # rl_tune passes, rl_tune_L missing
+    assert rep.conditions(out) == {"progress": "incomplete", "number_loss_attribution": "incomplete"}
