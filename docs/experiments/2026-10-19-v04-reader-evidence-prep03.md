@@ -376,3 +376,14 @@
   - 固定运行文件在磁盘上的实际哈希等于 PINS；
   - bundle 和决策目录正是该 START 的 bundles.on。
   source 写入时、clone / bind 使用 source.json 时、lineage_problems（freeze / preflight / seal / check / build）每次都调用它。check_source 另外要求记录的 pins 等于规定来源，记录自己的 bundle_on 等于 START.bundles.on。
+- 干净安装核验（PENDING-01）：scripts/release/install_check.py。步骤：
+  1. 用当前代码树打 wheel；按 uv.lock 的版本导出依赖（带 train extra）；装进新建的虚拟环境，优先用 uv 缓存，缓存里没有的从 PyPI 取；最后不带依赖装上 wheel。
+  2. 在新环境里以 `python -I` 在代码树之外运行固定 smoke：普通题、温度、磁力、配错图，分别经 devision.load、reading="off" 和普通 Decider 跑一遍。
+  3. 与源环境逐项比对：
+     - devision 确实从新环境导入；
+     - 模块的名称和内容符合参考身份（给了冻结的 IDENTITY.json 时用它的 code，否则用源环境）；
+     - route / table / state / picture 完全相同，概率差 ≤ 1e-4；
+     - off 等于普通 Decider，且什么都不读；
+     - 带读取组合的 checkpoint 以 on 加载。
+  - 夹具 tests/release/test_install_check.py（8 项）：一次真实的隔离安装；模块被改、从源码树导入、表不同、off 与 Decider 不符、概率超差、没有以 on 加载，六种情况都会被报告。
+  - 尚未接入 hf.py verify：发布时以候选的 IDENTITY 和固定 cases 单独调用。
