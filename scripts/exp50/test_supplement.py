@@ -91,32 +91,32 @@ def test_missing_by_status_only_in_chain_order():
 
 
 def test_plan_preconditions(world):
-    s = sup.plan(RUNS, now=200)
+    s = sup.plan(RUNS, now=200, head=sup.HEAD_SHA)
     assert s["missing"] == ["rl_tune_L", "exist", "science"] and s["reused_C"] == ["fit_O", "fit_L", "rl_tune"]
     assert s["inputs"]["rl_tune_L"] == sha(world["rl_tune_L"]) and s["original"]["report.json"] == sha(sup.ORIG_REPORT)
     with pytest.raises(SystemExit, match="one supplement"):
-        sup.plan(RUNS, now=200)
+        sup.plan(RUNS, now=200, head=sup.HEAD_SHA)
     os.remove(sup.OUT + "/START.json")
     with pytest.raises(SystemExit, match="deadline"):
-        sup.plan(RUNS, now=50)
+        sup.plan(RUNS, now=50, head=sup.HEAD_SHA)
     open(sup.ORIG_OUT, "w").write("still running\n")
     with pytest.raises(SystemExit, match="final report"):
-        sup.plan(RUNS, now=200)
+        sup.plan(RUNS, now=200, head=sup.HEAD_SHA)
     open(sup.ORIG_OUT, "w").write("== final report (exit 0)\n")
     open("runs/exp50-c-status.txt", "a").write("train interrupted\n")
     with pytest.raises(SystemExit, match="no resume"):
-        sup.plan(RUNS, now=200)
+        sup.plan(RUNS, now=200, head=sup.HEAD_SHA)
 
 
 def test_t_missing_is_refused(world):
     open("runs/exp50-t-status.txt", "a").write("eval:science interrupted\n")
     with pytest.raises(SystemExit, match="only C"):
-        sup.plan(RUNS, now=200)
+        sup.plan(RUNS, now=200, head=sup.HEAD_SHA)
 
 
 def test_record_checks_and_report_keeps_originals(world, monkeypatch):
     before = originals()
-    sup.plan(RUNS, now=200)
+    sup.plan(RUNS, now=200, head=sup.HEAD_SHA)
     ev = sup.OUT + "/c"
     write_eval(ev, "rl_tune_L", "runs/exp50-c/stage2", world["rl_tune_L"], ROWS, drop=1)        # incomplete details
     with pytest.raises(SystemExit):
@@ -152,7 +152,86 @@ def test_record_checks_and_report_keeps_originals(world, monkeypatch):
 
 
 def test_changed_original_product_is_refused(world):
-    sup.plan(RUNS, now=200)
+    sup.plan(RUNS, now=200, head=sup.HEAD_SHA)
     open(sup.ORIG_TXT, "a").write("edited\n")
     with pytest.raises(SystemExit, match="original report.txt changed"):
         sup.sources(RUNS)
+
+
+def test_another_head_is_refused_before_anything(world):
+    """A merged orchestration commit with the same inference code: refused, nothing written."""
+    with pytest.raises(SystemExit, match="HEAD is ed59bfa"):
+        sup.plan(RUNS, now=200, head="ed59bfa18bc92274efa8f153a6f97d68830f6413")
+    assert not os.path.exists(sup.OUT + "/START.json")
+
+
+STUBS = {
+    "git": """#!/bin/bash
+case "$1" in rev-parse) echo "${FAKE_HEAD}";; diff) exit 0;; *) exit 0;; esac
+""",
+    "pgrep": """#!/bin/bash
+[ "$1" = "-fl" ] && exit 1
+exec /usr/bin/pgrep "$@"
+""",
+    "uv": """#!/bin/bash
+echo "uv $*" >> "${MARK}"
+case "${HANG}" in plan) [[ "$*" == *" plan"* ]] && exec sleep 300;; esac
+case "${HANG}" in record) [[ "$*" == *" plan"* ]] && { mkdir -p runs/exp50-supplement; echo '{"missing": ["exist"]}' > runs/exp50-supplement/START.json; exit 0; }
+                         [[ "$*" == *" data "* ]] && { echo data/x.jsonl; exit 0; }
+                         [[ "$*" == *"devision-eval"* ]] && exit 0
+                         [[ "$*" == *" record "* ]] && exec sleep 300;; esac
+exit 0
+""",
+}
+
+
+def stub_tree(tmp_path):
+    import shutil
+    import stat
+    root = tmp_path / "repo"
+    for rel in ("scripts/exp50/supplement.sh", "scripts/exp35/guard.sh", "scripts/exp38/steps.sh"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(os.path.join(HERE, "..", "..", rel), root / rel)
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for name, body in STUBS.items():
+        (bin_ / name).write_text(body)
+        (bin_ / name).chmod((bin_ / name).stat().st_mode | stat.S_IEXEC)
+    return root, bin_
+
+
+def run_entry(tmp_path, root, bin_, **env):
+    import subprocess
+    import time
+    e = {**os.environ, "PATH": "%s:%s" % (bin_, os.environ["PATH"]), "MARK": str(tmp_path / "calls.txt"), **env}
+    t = time.time()
+    p = subprocess.run(["bash", str(root / "scripts/exp50/supplement.sh")], env=e, capture_output=True, text=True, timeout=60)
+    return p, time.time() - t
+
+
+@pytest.mark.parametrize("hang", ["plan", "record"])
+def test_whole_entry_is_bounded_and_leaves_no_subtree(tmp_path, hang):
+    """plan or record stuck: the entry ends within SUP_LIMIT + SUP_GRACE with exit 124, its end in run.log, and no
+    process of its subtree left (the stubs' sleep 300)."""
+    import subprocess
+    root, bin_ = stub_tree(tmp_path)
+    limit = 4 if hang == "plan" else 22          # record: room for steps.sh's 15 s grace before the evaluation starts
+    p, took = run_entry(tmp_path, root, bin_, FAKE_HEAD="52ff5484ea7b36622a544f4134d176f0e3b5aeb8", HANG=hang, SUP_RESERVE="0",
+                        SUP_LIMIT=str(limit), SUP_GRACE="2")
+    assert p.returncode == 124, p.stdout + p.stderr
+    assert took < limit + 2 + 3
+    log = (root / "runs/exp50-supplement/run.log").read_text()
+    assert "argv:" in log and "exit 124 (stopped at the limit)" in log
+    calls = (tmp_path / "calls.txt").read_text()
+    assert (" record " in calls) == (hang == "record")
+    left = subprocess.run(["/usr/bin/pgrep", "-f", "sleep 300"], capture_output=True, text=True).stdout.split()
+    mine = [x for x in left if str(tmp_path) in subprocess.run(["ps", "-o", "command=", "-p", x], capture_output=True, text=True).stdout
+            or subprocess.run(["ps", "-o", "ppid=", "-p", x], capture_output=True, text=True).stdout.strip() == "1"]
+    assert not mine
+
+
+def test_entry_refuses_another_head_before_any_uv_call(tmp_path):
+    root, bin_ = stub_tree(tmp_path)
+    p, _ = run_entry(tmp_path, root, bin_, FAKE_HEAD="ed59bfa18bc92274efa8f153a6f97d68830f6413", SUP_LIMIT="20")
+    assert p.returncode == 1 and "not 52ff5484" in p.stdout
+    assert not (tmp_path / "calls.txt").exists()                                  # no plan, no evaluation

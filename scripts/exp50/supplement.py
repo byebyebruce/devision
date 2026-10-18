@@ -4,6 +4,8 @@ of the original run is touched (report, status, FROZEN, complete or half-written
 runs/exp50-supplement/ with their own hashes.
 
   plan    preconditions and the missing list, written to runs/exp50-supplement/START.json:
+          - the repository HEAD is exactly 52ff5484ea7b... (devision-eval writes it into every summary; SUP-R1-01), and
+            START records the sha256 of the (untracked) supplement scripts that run;
           - the chain is over: runs/exp50.out has its "final report" line, runs/exp50-report.json / .txt exist, the
             deadline has passed (no model process is running: checked by supplement.sh);
           - C's training completed (status "train completed") and its frozen weights / config are the stage2 files
@@ -46,6 +48,8 @@ OUT = "runs/exp50-supplement"
 ORDER = ["fit_O", "fit_L", "rl_tune", "rl_tune_L", "exist", "science"]
 DATA = {**rep.SETS, **rep.RISK}
 CODE = "52ff548"
+HEAD_SHA = "52ff5484ea7b36622a544f4134d176f0e3b5aeb8"   # the repository HEAD for the whole supplement (critic SUP-R1-01)
+SCRIPTS = ["scripts/exp50/supplement.py", "scripts/exp50/supplement.sh"]
 ORIG_REPORT, ORIG_TXT, ORIG_OUT, DEADLINE_FILE = "runs/exp50-report.json", "runs/exp50-report.txt", "runs/exp50.out", "runs/exp50.deadline"
 
 
@@ -61,8 +65,15 @@ def missing_of(st: Dict[str, str]) -> List[str]:
     return [n for n in ORDER if st.get("eval:" + n) != "completed"]
 
 
-def plan(runs: Dict[str, str] = rep.RUNS, out: str = OUT, now: float = 0.0) -> Dict:
+def git_head() -> str:
+    return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def plan(runs: Dict[str, str] = rep.RUNS, out: str = OUT, now: float = 0.0, head: str = "") -> Dict:
     now = now or time.time()
+    head = head or git_head()
+    if head != HEAD_SHA:     # devision-eval writes the HEAD into each summary: any other HEAD is refused before a run
+        raise SystemExit("HEAD is %s, not %s" % (head, HEAD_SHA))
     if not (os.path.exists(ORIG_REPORT) and os.path.exists(ORIG_TXT) and "final report" in open(ORIG_OUT).read()):
         raise SystemExit("the original chain has not written its final report")
     if now <= int(open(DEADLINE_FILE).read()):
@@ -87,7 +98,8 @@ def plan(runs: Dict[str, str] = rep.RUNS, out: str = OUT, now: float = 0.0) -> D
     c_done = [n for n in ORDER if n not in missing_of(st["C"])]
     c_fr = frozen.check(runs["C"], c_done)              # weights = the stage2 files now; completed sets unchanged
     miss = missing_of(st["C"])
-    start = {"missing": miss, "reused_C": c_done, "code": CODE, "git_head": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
+    start = {"missing": miss, "reused_C": c_done, "code": CODE, "git_head": head,
+             "scripts": {f: sha(f) for f in SCRIPTS if os.path.exists(f)},
              "original": {"report.json": sha(ORIG_REPORT), "report.txt": sha(ORIG_TXT), "exp50.out": sha(ORIG_OUT),
                           "status_T": sha(runs["T"] + "-status.txt"), "status_C": sha(runs["C"] + "-status.txt"),
                           "FROZEN_T": sha(frozen.path(runs["T"])), "FROZEN_C": sha(frozen.path(runs["C"])),
