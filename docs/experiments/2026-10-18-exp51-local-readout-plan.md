@@ -102,6 +102,13 @@ EXP50 交给 QuestionConditioning 的那些局部 patch，在已知字段区域�
   - 另外补了一条：C 的头没学好时，T − C 不是对照，归因记 "not located"，不会因为对照没学好而把 T 的高分记成原始细节的作用。
 - 预算不变（约 15–20 分钟，上限 30 分钟）；finalize 用最后 90 秒（原来 30 秒）。
 
+## 第 2 轮补正（EXP51-R2-01 / 02）
+
+- **登记（R2-01）**：每个条件的头和明细写完后，立即把该条件的 START、头和明细 sha256 原子写入 `runs/exp51/registry.json`。复算 / 收尾时实际明细和头必须与登记一致；没有登记或不一致都记 invalid。正常报告记录 registry 的 sha，recompute_matches 还要求两个条件都是 completed。
+  - 夹具：只改一行合法的预测（header、目标、供体、特征和头都不动）被拒绝；明细没有登记被拒绝；只完成 T 时 T 有登记并可核实，C 记 partial。
+- **元数据（R2-02）**：features.json、registry.json 和 report.json 都先写临时文件再原子替换。收尾遇到损坏或不完整的元数据时记 invalid 并写明原因，仍写出不完整报告；损坏的 registry 不会被覆盖。
+  - 夹具：features.json 截断（有明细和没有明细两种），finalize 照常写出 INCOMPLETE 报告，T − C / 归因记 incomplete。
+
 ## 状态
 
 CPU 准备完成，**未运行**：没有加载真实模型，没有提取特征，没有训练读出头。等评论家的模型许可。

@@ -161,7 +161,7 @@ def preds():
     return qs, perfect, donor, wrong, [key_i[q["twin"]] if q["twin"] else i for i, q in enumerate(qs)]
 
 
-def fake_run(out, preds, conds=("T", "C"), half=None):
+def fake_run(out, preds, conds=("T", "C"), half=None, register=True):
     """A run directory as start / extract / probe leave it: START, features.json, feature / head files, details."""
     qs, perfect, donor, wrong, donor_idx = preds
     os.makedirs(out, exist_ok=True)
@@ -179,7 +179,9 @@ def fake_run(out, preds, conds=("T", "C"), half=None):
                  "start_sha256": info["start_sha256"], "head_sha256": sha(os.path.join(out, "head_%s.pt" % cond))}
         pred, dn = (perfect, donor) if cond == "T" else (wrong, wrong)
         path = os.path.join(out, "details_%s.jsonl" % cond)
-        prb.p49.write_details(path, qs, pred, dn, donor_idx, ident)
+        dsha = prb.p49.write_details(path, qs, pred, dn, donor_idx, ident)
+        if register:
+            prb.register(out, cond, info["start_sha256"], ident["head_sha256"], dsha)
         if half == cond:                                                        # cut mid-write
             lines = open(path).read().splitlines()
             open(path, "w").write("\n".join(lines[: len(lines) // 2]) + "\n")
@@ -276,3 +278,56 @@ def test_run_finalizes_within_the_limit(tmp_path, hang):
     assert ("extract interrupted" if hang == "extract" else "extract failed") in st
     left = subprocess.run(["/usr/bin/pgrep", "-f", "sleep 300"], capture_output=True, text=True).stdout.split()
     assert not [x for x in left if subprocess.run(["ps", "-o", "ppid=", "-p", x], capture_output=True, text=True).stdout.strip() == "1"]
+
+
+def test_a_changed_prediction_is_refused_against_the_registry(tmp_path, preds):
+    """critic R2-01: one valid prediction edited (header, target, donor, features and head untouched) -> invalid."""
+    out = fake_run(str(tmp_path / "run"), preds)
+    path = os.path.join(out, "details_T.jsonl")
+    lines = open(path).read().splitlines()
+    row = json.loads(lines[1])
+    row["pred"] = prb.p49.labels("9" if row["target"] != "9" else "8")
+    lines[1] = json.dumps(row)
+    open(path, "w").write("\n".join(lines) + "\n")
+    res = prb.recompute(QUESTIONS, out, REGIONS)
+    assert res["states"]["T"]["state"] == "invalid" and "registered" in res["states"]["T"]["reason"]
+    assert res["states"]["C"]["state"] == "completed" and res["T_minus_C"] is None
+    unreg = fake_run(str(tmp_path / "unreg"), preds, register=False)        # details without a registry entry
+    r = prb.recompute(QUESTIONS, unreg, REGIONS)
+    assert r["states"]["T"]["state"] == r["states"]["C"]["state"] == "invalid" and "not registered" in r["states"]["T"]["reason"]
+
+
+def test_only_t_registered_is_verifiable(tmp_path, preds):
+    out = fake_run(str(tmp_path / "t"), preds, conds=("T",))
+    reg = json.load(open(os.path.join(out, "registry.json")))
+    assert set(reg) == {"T"} and reg["T"]["details_sha256"] == sha(os.path.join(out, "details_T.jsonl"))
+    r = prb.finalize(QUESTIONS, REGIONS, out, " probe=124")
+    assert r["states"]["T"]["state"] == "completed" and r["states"]["C"]["state"] == "partial"
+    assert r["conditions"]["T"]["status"]["original"] == "positive" and str(r["attribution"]).startswith("incomplete")
+
+
+def test_truncated_features_json_still_finalizes(tmp_path, preds):
+    """critic R2-02: features.json cut mid-write -> finalize writes the incomplete report with the reason."""
+    out = fake_run(str(tmp_path / "trunc"), preds)
+    fj = os.path.join(out, "features.json")
+    text = open(fj).read()
+    open(fj, "w").write(text[: len(text) // 2])
+    r = prb.finalize(QUESTIONS, REGIONS, out, " extract=124")
+    assert r["states"]["T"]["state"] == r["states"]["C"]["state"] == "invalid"
+    assert "features.json unreadable" in r["states"]["T"]["reason"] and r["T_minus_C"] is None
+    assert str(r["attribution"]).startswith("incomplete") and "INCOMPLETE" in open(os.path.join(out, "report.txt")).read()
+    assert json.load(open(os.path.join(out, "report.json")))["finalized"]["exit_codes"] == " extract=124"
+    nodet = str(tmp_path / "nodetails")                                       # truncated metadata, no details yet
+    os.makedirs(nodet)
+    open(os.path.join(nodet, "features.json"), "w").write('{"conditions": {"T"')
+    r2 = prb.finalize(QUESTIONS, REGIONS, nodet, " extract=124")
+    assert r2["states"]["T"]["state"] == "invalid" and "unreadable" in r2["states"]["T"]["reason"]
+
+
+def test_register_and_write_json_are_atomic(tmp_path):
+    p = str(tmp_path / "x.json")
+    prb.write_json(p, {"a": 1})
+    assert json.load(open(p)) == {"a": 1} and not os.path.exists(p + ".tmp")
+    open(str(tmp_path / "registry.json"), "w").write("{broken")
+    with pytest.raises(SystemExit):
+        prb.register(str(tmp_path), "T", "s", "h", "d")                       # a damaged registry is never overwritten

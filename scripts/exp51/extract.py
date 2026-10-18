@@ -130,7 +130,9 @@ def main(argv=None) -> int:
         np.savez(path, x=flat, offsets=offsets)
         info["conditions"][source] = {"shape": list(flat.shape), "sha256": sha(path), **timing}
         del flat
-        json.dump(info, open(os.path.join(a.out, "features.json"), "w"), indent=1)   # after each condition (finalize)
+        tmp = os.path.join(a.out, "features.json.tmp")                              # after each condition, atomic
+        json.dump(info, open(tmp, "w"), indent=1)
+        os.replace(tmp, os.path.join(a.out, "features.json"))
         print(source, json.dumps(info["conditions"][source]))
     return 0
 

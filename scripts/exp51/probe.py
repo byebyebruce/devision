@@ -31,7 +31,7 @@ import json
 import os
 import sys
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -222,13 +222,46 @@ def _sha(p: str) -> str:
     return hashlib.sha256(open(p, "rb").read()).hexdigest()
 
 
+def write_json(path: str, obj) -> None:
+    """Whole file to a temporary name, then an atomic rename (a stop mid-write never leaves a half file under `path`)."""
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(obj, fh, indent=1, default=str)
+    os.replace(tmp, path)
+
+
+def read_meta(path: str) -> Tuple[Dict, str]:
+    """(object, '') or ({}, reason) for a metadata file that is absent or not complete JSON."""
+    if not os.path.exists(path):
+        return {}, "%s absent" % os.path.basename(path)
+    try:
+        return json.load(open(path)), ""
+    except (ValueError, OSError) as e:
+        return {}, "%s unreadable: %s" % (os.path.basename(path), e)
+
+
+def register(out: str, cond: str, start_sha: str, head_sha: str, details_sha: str) -> Dict:
+    """runs/exp51/registry.json: per finished condition its START, head and details sha256 (critic R2-01), written as
+    soon as the condition's details are, atomically."""
+    path = os.path.join(out, "registry.json")
+    reg, why = read_meta(path)
+    if why and os.path.exists(path):
+        raise SystemExit(why)
+    reg = reg or {}
+    reg[cond] = {"condition": cond, "start_sha256": start_sha, "head_sha256": head_sha, "details_sha256": details_sha}
+    write_json(path, reg)
+    return reg
+
+
 def verify(cond: str, ident: Dict, out: str, questions: str, regions: str) -> str:
     """'' when a details file's identity is this condition's: its condition, questions, regions, START, model, features
     (as registered in features.json and, if the file is still there, its content) and head; else the reason."""
     start, fj = os.path.join(out, "START.json"), os.path.join(out, "features.json")
-    if not (os.path.exists(start) and os.path.exists(fj)):
-        return "no START.json / features.json"
-    info = json.load(open(fj))
+    if not os.path.exists(start):
+        return "no START.json"
+    info, why = read_meta(fj)
+    if why:
+        return why
     reg = info.get("conditions", {}).get(cond)
     checks = [(ident.get("condition") == cond, "details are condition %r" % ident.get("condition")),
               (ident.get("questions_sha256") == _sha(questions), "other questions"),
@@ -246,14 +279,18 @@ def collect(questions: str, regions: str, out: str):
     """(qs, completed (pred, donor) per condition, state per condition): completed / missing (no features, no details) /
     partial (features but no details, or details incomplete) / invalid (identity does not bind)."""
     qs = [json.loads(x) for x in open(questions) if x.strip()]
-    fj = os.path.join(out, "features.json")
-    registered = json.load(open(fj)).get("conditions", {}) if os.path.exists(fj) else {}
+    info, why_f = read_meta(os.path.join(out, "features.json"))
+    registered = info.get("conditions", {}) if info else {}
+    registry, why_r = read_meta(os.path.join(out, "registry.json"))
+    registry = registry or {}
     preds, states = {}, {}
     for cond in CONDS:
         path = os.path.join(out, "details_%s.jsonl" % cond)
         if not os.path.exists(path):
-            states[cond] = {"state": "partial" if cond in registered else "missing",
-                            "reason": "features extracted, no details" if cond in registered else "no features"}
+            states[cond] = {"state": "invalid" if why_f and os.path.exists(os.path.join(out, "features.json")) else
+                            "partial" if cond in registered else "missing",
+                            "reason": why_f if why_f and os.path.exists(os.path.join(out, "features.json")) else
+                            "features extracted, no details" if cond in registered else "no features"}
             continue
         try:
             pred, donor, ident = p49.read_details(path, qs)
@@ -261,11 +298,17 @@ def collect(questions: str, regions: str, out: str):
             states[cond] = {"state": "partial", "reason": "details incomplete: %s" % e}
             continue
         why = verify(cond, ident, out, questions, regions)
+        entry = registry.get(cond) or {}
+        if not why and not entry:
+            why = "details not registered (%s)" % (why_r or "no registry entry")
+        elif not why and (entry.get("details_sha256") != _sha(path) or entry.get("head_sha256") != ident.get("head_sha256")
+                          or entry.get("start_sha256") != ident.get("start_sha256") or entry.get("condition") != cond):
+            why = "details or head differ from the registered sha256"
         if why:
             states[cond] = {"state": "invalid", "reason": why}
             continue
         preds[cond] = (pred, donor)
-        states[cond] = {"state": "completed", "details_sha256": _sha(path)}
+        states[cond] = {"state": "completed", "details_sha256": entry["details_sha256"]}
     return qs, preds, states
 
 
@@ -308,7 +351,7 @@ def finalize(questions: str, regions: str, out: str, stages: str = "") -> Dict:
     st_path = out.rstrip("/") + "-status.txt"
     res["finalized"] = {"stages": open(st_path).read().split("\n") if os.path.exists(st_path) else [], "exit_codes": stages,
                         "note": "the run did not complete; incomplete conditions are not low scores"}
-    json.dump(res, open(os.path.join(out, "report.json"), "w"), indent=1, default=str)
+    write_json(os.path.join(out, "report.json"), res)
     open(os.path.join(out, "report.txt"), "w").write("\n".join(["INCOMPLETE run: %s" % stages] + lines_of(res)) + "\n")
     return res
 
@@ -367,6 +410,7 @@ def main(argv=None) -> int:
                  "start_sha256": info["start_sha256"], "head_sha256": sha(hp)}
         heads[cond] = {"head_sha256": sha(hp),
                        "details_sha256": p49.write_details(os.path.join(a.features, "details_%s.jsonl" % cond), qs, pred, donor, donor_idx, ident)}
+        register(a.features, cond, info["start_sha256"], heads[cond]["head_sha256"], heads[cond]["details_sha256"])
         preds[cond] = (pred, donor)
         del tok, z
     res = report_from(qs, preds)
@@ -375,8 +419,9 @@ def main(argv=None) -> int:
     rc = recompute(a.questions, a.features, a.regions)
     res["states"] = rc["states"]
     res["start_sha256"] = info["start_sha256"]
-    res["recompute_matches"] = same_result(rc, res)          # conditions, T - C, attribution and branch
-    json.dump(res, open(os.path.join(a.features, "report.json"), "w"), indent=1, default=str)
+    res["recompute_matches"] = same_result(rc, res) and all(v["state"] == "completed" for v in rc["states"].values())
+    res["registry_sha256"] = _sha(os.path.join(a.features, "registry.json"))
+    write_json(os.path.join(a.features, "report.json"), res)
     lines = lines_of(res) + ["recompute from details matches: %s" % res["recompute_matches"]]
     open(os.path.join(a.features, "report.txt"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
