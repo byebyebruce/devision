@@ -136,6 +136,27 @@ def bound_d69() -> Dict[str, str]:
     return {"manifest": sha(os.path.join(D69, "MANIFEST.json")), **m["sha256"], **AUDIT}
 
 
+def bound_sources() -> Dict[str, str]:
+    """The files the report scores with, against the frozen sources of the runs that accepted them (critic EXP69-R2-01):
+    EXP49's question list (rl_tune targets, families, cases) = EXP64's START.sources.exp49; the rl_tune rows (templates)
+    = EXP58's START tune_sha256; dev24's question files, field golds and transcriptions = EXP60's START.sources. The
+    runs' own STARTs are bound first (EXP58 / EXP60 / EXP64 identities), so a changed gold can never become a new
+    baseline -- not even at the first start."""
+    e59.bound_e58()
+    e61.bound_e60()
+    bound_e64()
+    s64 = json.load(open(os.path.join(E64, "START.json")))["sources"]
+    s58 = json.load(open(os.path.join(e59.E58, "START.json")))
+    s60 = json.load(open(os.path.join(e60.OUT, "START.json")))["sources"]
+    frozen = {"exp49_questions": (e61.QUESTIONS, s64["exp49"]), "tune": (e54.TUNE, s58["tune_sha256"]),
+              "transcribed": (e59.TRANSCRIBED, s60["transcribed"]), "fields": (e59.FIELDS, s60["fields"]),
+              "sqa_temp": (e59.SOURCES["temp"][1], s60["sqa_temp"]), "sqa_force": (e59.SOURCES["force"][1], s60["sqa_force"])}
+    bad = [k for k, (path, h) in frozen.items() if sha(path) != h]
+    if bad:
+        raise SystemExit("scoring source %s differs from its frozen source" % bad)
+    return {k: h for k, (_, h) in frozen.items()}
+
+
 def train_pictures() -> List[str]:
     return sorted({r["picture"] for r in jsonl(os.path.join(D69, "train.jsonl"))})
 
@@ -149,7 +170,7 @@ def stage_start(deadline: int, out: str = OUT, data_root: str = "data") -> Dict:
     tr = jsonl(os.path.join(D69, "train.jsonl"))
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
          "files": {f: sha(f) for f in FILES}, "exp62": e64.bound_e62(), "exp64": bound_e64(), "exp60": e61.bound_e60(), "model": st58["model"],
-         "bundle": st58["bundle"], "variants": e64.bound_variants(data_root), "data": bound_d69(),
+         "bundle": st58["bundle"], "variants": e64.bound_variants(data_root), "data": bound_d69(), "sources": bound_sources(),
          "train_pictures": e64.pictures_digest([{"picture": p} for p in train_pictures()], data_root),
          "recipe": {"init": "c92 " + C92, "lr": LR, "weight_decay": WD, "batch": BATCH, "steps": STEPS, "warmup": WARMUP, "seed": SEED,
                     "loss": "L1(cx, cy, w, h) + (1 - GIoU) in window fractions", "device": "cpu", "samples": len(tr)},
@@ -170,6 +191,8 @@ def check_start(out: str, data_root: str = "data", code: bool = True) -> Dict:
         raise SystemExit("EXP62 / EXP64 / EXP60 / data/exp69 differ from START")
     if e64.bound_variants(data_root) != st["variants"]:
         raise SystemExit("data/exp61 differs from START")
+    if bound_sources() != st["sources"]:
+        raise SystemExit("the scoring sources differ from START")
     if data_root and e64.pictures_digest([{"picture": p} for p in train_pictures()], data_root) != st["train_pictures"]:
         raise SystemExit("training pictures differ from START")
     return st

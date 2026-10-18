@@ -196,6 +196,65 @@ def test_report_missing_or_changed_other_fields(started, monkeypatch, case, stat
     assert res["validity"]["state"] == state and res["branch"].startswith(state)
 
 
+def changed_exp49(tmp_path, field):
+    """data/exp49/questions.jsonl with one rl_tune speed question's target (a legal other number) or cluster fields
+    (family / case) changed, key and template untouched."""
+    lines = open(m.e61.QUESTIONS).read().splitlines()
+    for i, x in enumerate(lines):
+        q = json.loads(x)
+        if q["set"] == "rl_tune" and q["field"] == "speed":
+            if field == "target":
+                q["target"] = str(int(q["target"]) + 10)
+            else:
+                q["family"], q["case"] = q["family"] + "x", q["case"] + "x"
+            lines[i] = json.dumps(q)
+            break
+    p = tmp_path / ("q49_%s.jsonl" % field)
+    p.write_text("\n".join(lines) + "\n")
+    return str(p)
+
+
+def swapped_gold(tmp_path):
+    """data/exp28/fields.jsonl with one gold moved to another option whose number is also in the transcription."""
+    tr = json.load(open(m.e59.TRANSCRIBED))
+    lines = open(m.e59.FIELDS).read().splitlines()
+    for i, x in enumerate(lines):
+        f = json.loads(x)
+        rid = f["id"].split(":", 1)[1].rsplit(":", 2)[0]
+        pr = f["gold"]["q"]["probabilities"]
+        g = max(pr, key=pr.get)
+        other = [o for o in pr if o != g and o in tr.get(rid, "")]
+        if other:
+            pr[g], pr[other[0]] = pr[other[0]], pr[g]
+            lines[i] = json.dumps(f)
+            out = tmp_path / "fields.jsonl"
+            out.write_text("\n".join(lines) + "\n")
+            return str(out)
+    raise AssertionError("no swappable gold")
+
+
+@data
+@pytest.mark.parametrize("which", ["target", "cluster", "gold", "transcribed"])
+def test_scoring_sources_bound_to_frozen_runs(started, tmp_path, monkeypatch, which):
+    """critic EXP69-R2-01: a legal-looking change of a target, a cluster field or a dev24 gold / transcription (keys and
+    templates unchanged) is refused at a first start and makes an existing run's report invalid, with no route."""
+    fake_reads(started, monkeypatch)
+    assert m.bound_sources() == json.load(open(os.path.join(started, "START.json")))["sources"]
+    if which in ("target", "cluster"):
+        monkeypatch.setattr(m.e61, "QUESTIONS", changed_exp49(tmp_path, which))
+    elif which == "gold":
+        monkeypatch.setattr(m.e59, "FIELDS", swapped_gold(tmp_path))
+        m.e59.gold_numbers(m.e59.items())                                   # passes exp59's own check ...
+    else:
+        p = tmp_path / "tr.json"
+        p.write_text(open(m.e59.TRANSCRIBED).read().replace("1,300", "1,330", 1))
+        monkeypatch.setattr(m.e59, "TRANSCRIBED", str(p))
+    with pytest.raises(SystemExit, match="scoring source"):
+        m.stage_start(0, out=str(tmp_path / "fresh"))                         # ... not a first start
+    res = m.report(started)                                                   # ... nor an existing run's report
+    assert res["branch"].startswith("invalid") and "gates" not in res and "dev24" not in res
+
+
 def test_gates_and_branch():
     f = lambda e, x: {"exact": e, **{"exact:" + k: {"value": x} for k in ("mass", "speed", "distance")}}  # noqa: E731
     g = m.gates({"rl_tune": {"corr": f(0.93, 0.9), "c92": f(0.94, 0.92)}, "tune_V": {"corr": f(0.9, 0.85), "c92": f(0.94, 0.92)},

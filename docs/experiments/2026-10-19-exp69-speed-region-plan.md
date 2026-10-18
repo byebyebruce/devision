@@ -45,7 +45,7 @@
 
 - **读数**：每张图编码一次。
   - rl_tune（600）、tune_V（600）：c92 路径（AA，必须复现 EXP64）、校正路径、目标区域对照（紧框；只描述，不是严格上界）；
-  - dev24（24）：c92、校正、EXP60 oracle（只作已用开发诊断）。
+  - dev24（24）：c92、校正。dev24 的 oracle 对照不在本轮计算，引用已冻结的外部证据：EXP64 dev24_oracle_new 和 EXP67 OO，都是同一个 EXP64 头（评审 EXP69-NOTE-03）。
 - **门槛**：
   - 旧版式 rl_tune 与 EXP61 版式 tune_V：校正路径的速度 exact 和整体 exact 相对 c92 下降 ≤ 0.03；
   - 质量 / 距离的读数与 c92 路径逐字节相同；
@@ -100,3 +100,15 @@
   - START 重复启动被拒绝，data/exp69 改动后被拒绝；
   - 报告：三条路径都代入 EXP64 的读数时为 valid，门槛是 old / tune_V 通过、dev24 速度未过（16 / 24）；缺一个文件给 incomplete，校正路径的质量读数被改给 invalid；门槛和分支的用例；
   - run.sh stub：顺序正确，train 失败时直接 finalize，默认 1,800 秒、留 120 秒。
+
+## 第 2 轮修正（评审 EXP69-R2-01 / NOTE-03；未运行）
+
+- **R2-01 评分来源**：新增 bound_sources，把报告实际用来评分的文件对回接受它们的运行所冻结的来源：
+  - EXP49 题单（rl_tune 的 target / family / case）= EXP64 START.sources.exp49（80943a63…）；
+  - rl_tune 行（模板）= EXP58 START.tune_sha256（84117b36…）；
+  - dev24 的题文件、字段金标和转录 = EXP60 START.sources（sqa_temp d222ad4a… / sqa_force ac934daf… / fields 2fd94777… / transcribed 838c4c4d…）。
+  - 先核 EXP58 / EXP60 / EXP64 各自的运行身份，所以即使是第一次启动，改过的金标也不能成为新的基线。
+  - 结果写进本轮 START 的 sources 字段；check_start 每次重核，start、features、train、reads 和无图报告（评分之前）都会调用它。
+  - 夹具（临时文件，正式题单不动）：保持 key 和模板不变，分别改一道 rl_tune 速度题的 target（换成另一个合法数）、改聚簇字段（family / case）、把 dev24 一道金标换成转录里另一个已有数字（能通过 exp59 自己的检查）、改转录。四种情况下，新的首次启动都被拒绝；已有 START 的报告给 invalid，没有门槛和路线。未改数据的原报告夹具照常成立。
+- **NOTE-03**：dev24 不新增第三条路径；oracle 对照改为引用已冻结的 EXP64 / EXP67 外部证据（见上面「评测与预写门槛」）。
+- 数据、校正器结构、训练配方和门槛都不变；没有加载模型。
