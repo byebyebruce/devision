@@ -198,6 +198,58 @@ def serialise(state_text: str, table: List[List[str]]) -> str:
     return (state_text + "\n" if state_text else "") + HEADER + "\n" + "\n".join(lines)
 
 
+# ------------------------------------------------------------------ the optional speed-region corrector (exp69)
+
+SPEED = ("What is the average particle speed in sample A?", "What is the average particle speed in sample B?")
+CORRECTOR = {"templates": list(SPEED), "grow_y_box_heights": 0.5, "grow_x_px": 8.0, "views": "local (view > 0)"}
+
+
+def corrector_window(box: Sequence[float], w: int, h: int) -> List[float]:
+    """exp69's window around the selector's box [x, y, w, h]: grown by 0.5 of its height above / below and 8 px left /
+    right, clipped to the canvas, as xyxy (scripts/exp69 window_of / build.window, unchanged)."""
+    x, y, bw, bh = box
+    b = [x, y, x + bw, y + bh]
+    hh = b[3] - b[1]
+    gy, gx = CORRECTOR["grow_y_box_heights"], CORRECTOR["grow_x_px"]
+    return [max(0.0, b[0] - gx), max(0.0, b[1] - gy * hh), min(float(w), b[2] + gx), min(float(h), b[3] + gy * hh)]
+
+
+def corrector_tokens(win: Sequence[float], w: int, h: int) -> Dict[str, List]:
+    """region() of the window, local views only: token indices and their geom against the window (exp69, unchanged)."""
+    r = region([win[0], win[1], win[2] - win[0], win[3] - win[1]], w, h)
+    keep = [i for i, v in enumerate(r["view"]) if v > 0]
+    return {"index": [r["index"][i] for i in keep], "geom": [r["geom"][i] for i in keep]}
+
+
+def corrector_box(frac: Sequence[float], win: Sequence[float], w: int, h: int) -> List[float]:
+    """A window-fraction (cx, cy, w, h) to a pixel box [x, y, w, h]: clipped to the window, at least 1 px each side,
+    inside the canvas (exp69 to_pixels, unchanged)."""
+    cx, cy, bw, bh = frac
+    ww, wh = win[2] - win[0], win[3] - win[1]
+    x0, x1 = max(win[0], win[0] + (cx - bw / 2) * ww), min(win[2], win[0] + (cx + bw / 2) * ww)
+    y0, y1 = max(win[1], win[1] + (cy - bh / 2) * wh), min(win[3], win[1] + (cy + bh / 2) * wh)
+    if x1 - x0 < 1:
+        c = min(max((x0 + x1) / 2, win[0] + 0.5), win[2] - 0.5)
+        x0, x1 = c - 0.5, c + 0.5
+    if y1 - y0 < 1:
+        c = min(max((y0 + y1) / 2, win[1] + 0.5), win[3] - 0.5)
+        y0, y1 = c - 0.5, c + 0.5
+    x0, y0, x1, y1 = max(0.0, x0), max(0.0, y0), min(float(w), x1), min(float(h), y1)
+    return [x0, y0, x1 - x0, y1 - y0]
+
+
+def corrector_forward(m: "Selector", patches, geom, pmask, words, wmask):
+    """Selector.forward with a key padding mask on the picture tokens (exp69's corrector, unchanged)."""
+    pos = m.pos(torch.arange(words.size(1), device=words.device))[None]
+    q = m.context(m.word(words.float()) + pos, src_key_padding_mask=~wmask)
+    img = m.patch(patches.float()) + m.geom(geom.float())
+    s = m.query[None].expand(words.size(0), -1, -1)
+    s = s + m.ask(s, q, q, key_padding_mask=~wmask, need_weights=False)[0]
+    s = s + m.look1(s, img, img, key_padding_mask=~pmask, need_weights=False)[0]
+    s = s + m.look2(m.norm(s), img, img, key_padding_mask=~pmask, need_weights=False)[0]
+    return torch.sigmoid(m.box(s[:, 0]))
+
+
 # ------------------------------------------------------------------ the pipeline
 
 def sha(path: str) -> str:
@@ -221,12 +273,13 @@ def tree_sha(path: str) -> str:
 class Reading:
     """The frozen reader bound to one decision checkpoint (a `Decider` with local views 12 / 0.25 / T)."""
 
-    def __init__(self, decider, selector: Selector, head: CharHead, identity: Dict):
+    def __init__(self, decider, selector: Selector, head: CharHead, identity: Dict, corrector: Optional[Selector] = None):
         cfg = decider.cfg
         if (cfg.local_views, cfg.local_overlap, cfg.local_source) != (GRID["n"], GRID["overlap"], "T"):
             raise ValueError("reading mode needs the decision checkpoint's local views 12 / 0.25 / T")
         self.decider, self.selector, self.head, self.identity = decider, selector.eval(), head.eval(), identity
-        for p in list(selector.parameters()) + list(head.parameters()):
+        self.corrector = corrector.eval() if corrector is not None else None     # optional (exp69): speed templates only
+        for p in list(selector.parameters()) + list(head.parameters()) + (list(corrector.parameters()) if corrector is not None else []):
             p.requires_grad_(False)
 
     @classmethod
@@ -237,10 +290,13 @@ class Reading:
         from .infer import Decider, best_device
         ident = json.load(open(os.path.join(bundle_dir, "reading.json")))
         checks = {"selector.pt": sha(os.path.join(bundle_dir, "selector.pt")), "head.pt": sha(os.path.join(bundle_dir, "head.pt")),
+                  **({"corrector.pt": sha(os.path.join(bundle_dir, "corrector.pt"))} if "corrector.pt" in ident["sha256"] else {}),
                   "model.safetensors": sha(os.path.join(decision_dir, "model.safetensors")),
                   "config.json": sha(os.path.join(decision_dir, "config.json")),
                   "tokenizer": tree_sha(os.path.join(decision_dir, "tokenizer"))}
         bad = [k for k, v in checks.items() if ident["sha256"].get(k) != v]
+        if "corrector.pt" in ident["sha256"] and ident.get("corrector") != CORRECTOR:
+            bad = bad or ["corrector rule"]
         if bad or ident.get("policy") != POLICY or ident.get("grid") != GRID:
             raise ValueError("reading bundle does not bind this checkpoint / its components: %s" % (bad or "policy / grid"))
         decider = Decider.load(decision_dir, device=best_device() if device == "auto" else device)
@@ -255,7 +311,12 @@ class Reading:
         sel.load_state_dict(torch.load(os.path.join(bundle_dir, "selector.pt"), map_location="cpu"), strict=True)
         head = CharHead(ident["dims"]["head"])
         head.load_state_dict(torch.load(os.path.join(bundle_dir, "head.pt"), map_location="cpu"), strict=True)
-        return cls(decider, sel.to(dev), head.to(dev), ident)
+        corr = None
+        if "corrector.pt" in ident["sha256"]:
+            corr = Selector(*ident["dims"]["selector"])
+            corr.load_state_dict(torch.load(os.path.join(bundle_dir, "corrector.pt"), map_location="cpu"), strict=True)
+            corr = corr.to(dev)
+        return cls(decider, sel.to(dev), head.to(dev), ident, corr)
 
     def _words(self, texts: List[str]):
         from .model import text_encoder
@@ -290,8 +351,17 @@ class Reading:
         reads, regs = [], []
         for t, f in zip(templates, frac):
             box, bad = pixel_box(f, w, h)
-            regs.append(region(box, w, h))
-            reads.append({"question": t, "box": box, "degenerate": bad})
+            rd: Dict[str, Any] = {"question": t, "box": box, "degenerate": bad}
+            if self.corrector is not None and t in SPEED:                       # exp69: the speed box from local detail
+                win = corrector_window(box, w, h)
+                ct = corrector_tokens(win, w, h)
+                cw, cm = self._words([t])
+                c = corrector_forward(self.corrector, kv[torch.tensor(ct["index"], device=dev)].half().float()[None],
+                                      torch.tensor(ct["geom"], dtype=torch.float32, device=dev)[None],
+                                      torch.ones(1, len(ct["index"]), dtype=torch.bool, device=dev), cw, cm)[0].float().cpu().tolist()
+                rd = {"question": t, "box": corrector_box(c, win, w, h), "degenerate": False, "selector_box": box}
+            regs.append(region(rd["box"], w, h))
+            reads.append(rd)
         n = max(len(r["index"]) for r in regs)
         x = torch.zeros(len(regs), n, kv.shape[1], device=dev)
         msk = torch.zeros(len(regs), n, dtype=torch.bool, device=dev)
@@ -338,19 +408,26 @@ class Reading:
         return res
 
 
-def write_bundle(out_dir: str, decision_dir: str, selector_pt: str, head_pt: str, sources: Dict, dims: Optional[Dict] = None) -> Dict:
-    """A reading bundle: the two frozen component files copied as they are, and reading.json binding them and the
-    decision checkpoint (weights / config / tokenizer) by sha256 (no tensor is loaded)."""
+def write_bundle(out_dir: str, decision_dir: str, selector_pt: str, head_pt: str, sources: Dict, dims: Optional[Dict] = None,
+                 corrector_pt: Optional[str] = None) -> Dict:
+    """A reading bundle: the frozen component files copied as they are (the optional exp69 speed corrector too), and
+    reading.json binding them and the decision checkpoint (weights / config / tokenizer) by sha256 (no tensor is
+    loaded). Without corrector_pt the bundle is exactly the earlier two-component one."""
     import shutil
     os.makedirs(out_dir, exist_ok=False)
     shutil.copyfile(selector_pt, os.path.join(out_dir, "selector.pt"))
     shutil.copyfile(head_pt, os.path.join(out_dir, "head.pt"))
+    if corrector_pt is not None:
+        shutil.copyfile(corrector_pt, os.path.join(out_dir, "corrector.pt"))
     ident = {"policy": POLICY, "grid": GRID, "templates": TEMPLATES, "domains": DOMAINS, "dims": dims or {"selector": [768, 1024], "head": 768},
              "sha256": {"selector.pt": sha(os.path.join(out_dir, "selector.pt")), "head.pt": sha(os.path.join(out_dir, "head.pt")),
                         "model.safetensors": sha(os.path.join(decision_dir, "model.safetensors")),
                         "config.json": sha(os.path.join(decision_dir, "config.json")),
                         "tokenizer": tree_sha(os.path.join(decision_dir, "tokenizer"))},
              "sources": sources, "float16": "selector patches and words, head region features (as in exp53 / exp51)"}
+    if corrector_pt is not None:
+        ident["sha256"]["corrector.pt"] = sha(os.path.join(out_dir, "corrector.pt"))
+        ident["corrector"] = CORRECTOR
     with open(os.path.join(out_dir, "reading.json"), "w") as fh:
         json.dump(ident, fh, indent=1)
     return ident

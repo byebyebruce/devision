@@ -162,3 +162,71 @@ def test_the_verified_entry_loads_its_own_decider(tmp_path):
 def test_needs_the_local_view_checkpoint(tmp_path):
     with pytest.raises(ValueError, match="local views"):
         R.Reading(tiny_decider(), R.Selector(32, 64), R.CharHead(32), {})
+
+
+def test_corrector_matches_exp69():
+    """The optional speed corrector (exp69) migrated unchanged: window, local tokens, pixel box and masked forward."""
+    import random
+    e69 = load("exp69_runner", "scripts/exp69/exp69.py")
+    rng = random.Random(0)
+    for _ in range(15):
+        w, h = rng.randint(400, 650), rng.randint(300, 420)
+        box = [rng.uniform(0, w / 2), rng.uniform(h / 2, h - 40), rng.uniform(100, w / 2), rng.uniform(20, 38)]
+        win = R.corrector_window(box, w, h)
+        assert win == e69.window_of(box, w, h) and R.corrector_tokens(win, w, h) == e69.window_tokens(win, w, h)
+        f = [rng.random(), rng.random(), rng.random() * 0.8, rng.random() * 0.8]
+        assert R.corrector_box(f, win, w, h) == e69.to_pixels(f, win, w, h)
+    torch.manual_seed(0)
+    m = R.Selector(32, 64).eval()
+    x, g = torch.randn(2, 30, 32), torch.rand(2, 30, 4)
+    pm = torch.ones(2, 30, dtype=torch.bool)
+    pm[1, 20:] = False
+    w_, wm = torch.randn(2, 5, 64), torch.ones(2, 5, dtype=torch.bool)
+    with torch.no_grad():
+        assert torch.equal(R.corrector_forward(m, x, g, pm, w_, wm), e69.corrector_forward(m, x, g, pm, w_, wm))
+    assert R.SPEED == e69.SPEED
+
+
+def corrected_reading(tmp_path):
+    d, rd = tiny_reading(tmp_path)
+    torch.manual_seed(9)
+    torch.save(R.Selector(32, 64).state_dict(), tmp_path / "corr.pt")
+    R.write_bundle(str(tmp_path / "bundle_c"), str(tmp_path / "ck"), str(tmp_path / "sel.pt"), str(tmp_path / "head.pt"), {},
+                   dims={"selector": [32, 64], "head": 32}, corrector_pt=str(tmp_path / "corr.pt"))
+    return rd, R.Reading.load(str(tmp_path / "ck"), str(tmp_path / "bundle_c"), device="cpu")
+
+
+def test_optional_corrector_changes_only_speed_boxes(tmp_path):
+    rd, rc = corrected_reading(tmp_path)
+    assert rd.corrector is None and rc.corrector is not None
+    img = picture()
+    a = rd.read(img, list(R.TEMPLATES))
+    b = rc.read(img, list(R.TEMPLATES))
+    for x, y in zip(a["reads"], b["reads"]):
+        if x["question"] in R.SPEED:
+            assert y["selector_box"] == x["box"] and y["box"] != x["box"] and not y["degenerate"]
+            win = R.corrector_window(x["box"], 560, 405)
+            assert win[0] <= y["box"][0] and y["box"][0] + y["box"][2] <= win[2] + 1e-9
+        else:
+            assert y == x                                                        # mass / distance: the uncorrected read
+    q2 = {"m": q(MAG, ("red", "blue"))}
+    assert rd.decide("x", {"m": q2["m"]}, image=img) == rc.decide("x", {"m": q2["m"]}, image=img)   # magnets untouched
+    ident = json.loads((tmp_path / "bundle_c" / "reading.json").read_text())
+    assert ident["corrector"] == R.CORRECTOR and "corrector.pt" in ident["sha256"]
+    plain = json.loads((tmp_path / "bundle" / "reading.json").read_text())
+    assert "corrector" not in plain and "corrector.pt" not in plain["sha256"]                     # off: the earlier bundle
+
+
+@pytest.mark.parametrize("change", ["file", "rule"])
+def test_corrector_bundle_refusal(tmp_path, change):
+    corrected_reading(tmp_path)
+    if change == "file":
+        with open(tmp_path / "bundle_c" / "corrector.pt", "ab") as fh:
+            fh.write(b"x")
+    else:
+        p = tmp_path / "bundle_c" / "reading.json"
+        ident = json.loads(p.read_text())
+        ident["corrector"]["grow_x_px"] = 12.0
+        p.write_text(json.dumps(ident))
+    with pytest.raises(ValueError, match="does not bind"):
+        R.Reading.load(str(tmp_path / "ck"), str(tmp_path / "bundle_c"), device="cpu")
