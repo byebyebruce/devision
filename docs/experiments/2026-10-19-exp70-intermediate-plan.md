@@ -69,3 +69,27 @@
 
 - K 块只读 state：改金标或选项顺序不改变 K；格式和 A / B 顺序固定；金标被改时，K 顺序核对会拒绝。
 - 生成的四个文件：请求数、每类数量、来源逐字相同、K 前缀、截断全部符合。
+
+## 实现（EXP70-PLAN-ACCEPT-01 / IMPL-PREP-01 之后；未运行）
+
+- **文件**：`scripts/exp70/exp70.py`、`scripts/exp70/run.sh`（硬上限 900 秒，最后 120 秒报告；标记 runs/exp70.started；与其他模型任务串行）。
+- **START 绑定**：
+  - EXP68 的运行（START 94c7632b… / report 7178c240… / registry fe7a5225… 及其登记的全部文件，包括 details_x_diag68.jsonl 605b0e2e…）；
+  - EXP68-X 的冻结端点（FROZEN.json 和实际文件都是 2e5b272e… / 87f82281…）和 tokenizer；
+  - data/exp68（沿用 bound_d68）；data/exp70（四个文件固定为已验收的哈希）；代码。
+  - 每个阶段和报告都重核。
+- **decide**（一次加载 X；普通 decide，image = None，原始温度 1）：
+  - 先做 48 个 raw 保真请求，与 EXP68 已登记的 x_diag68 比较：预测相同，每个概率的差 ≤ 1e-4；结果写进 fidelity.json 并登记。不一致就立即停止，不发其他任何请求；
+  - 之后依次是 diag68_K（480）、train_raw（120）、train_K（120）。每组做完立即写出并登记（沿用 e57.write_set 和 read_set 的身份与逐题核对）。
+- **report**（不加载模型）：
+  - 有效性：START、四组记录和复用的 raw 记录都经 read_set 核对；保真在报告里重算；缺文件给 incomplete，存在但核对不过给 invalid，都不下结论；
+  - 统计：新 diag 上 raw 与 K 各类准确率、两视图都对、near / large（沿用 EXP68 的 diag68_summary）；K − raw 冲突宏平均和每类差值；训练切片 raw / K 的各类准确率，raw 冲突类 < 0.90 时标注拟合不足的替代解释；
+  - 分支按方案。
+- **统计口径**（评审 EXP70-NOTE-01）：区间是 95 % 百分位区间，来自对组合族的 2,000 次配对重抽（两视图一起抽），seed 0，即 EXP68 的 conflict_difference / r41.interval；单类差值用同一实现。门槛不变。
+- **CPU 夹具**（`scripts/exp70/test_exp70_runner.py` 8 项，加上数据夹具共 10 项，全过；pyright 0 错误；不加载模型，用假 decider）：
+  - START 重复启动被拒绝；data/exp70 改动后被拒绝；
+  - 保真失败（概率偏 0.01）：只写出并登记 fid_raw 和 fidelity，其他请求一个都不发；报告给 invalid、没有 diag；
+  - 三个分支：K 全对 → 「帮助」；K 与 raw 相同 → 「未定位」（差值为 0）；K 全错 → 「干扰」；保真最大差为 0，区间口径写明 95 %；
+  - 缺 train_K → incomplete；train_K 登记后被改 → invalid；
+  - run.sh stub：顺序 start → decide → report；decide 失败时 finalize；默认 900 秒、留 120 秒。
+  - 夹具中发现的一点：equal 类的两种顺序表格文字相同、只差选项顺序，所以按 state 查找必须同时带上选项顺序（只影响假 decider，不影响 runner）。
