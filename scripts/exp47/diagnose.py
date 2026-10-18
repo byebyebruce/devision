@@ -108,12 +108,40 @@ def contrast(recs: List[Dict], plus: str, minus: str) -> Dict:
     return {u: sum(v) / len(v) for u, v in units.items() if len(v) == 2}
 
 
+def mode_summary(recs: List[Dict]) -> Dict:
+    """Per mode and slice (split x layout, split, layout, field): questions right, units with both right, units whose two
+    questions got the same predicted option, and against baseline wrong -> right / right -> wrong / prediction changed.
+    No attention quantity: exp47 does not measure any (critic EXP47-R1-01; version 1 printed EXP46's zero-filled ones)."""
+    by = defaultdict(list)
+    for r in recs:
+        by[r["mode"]].append(r)
+    base = {(r["unit"], r["object"]): r for r in by.get("baseline", [])}
+    out: Dict = {}
+    for mode, rs in by.items():
+        groups = defaultdict(list)
+        for r in rs:
+            for g in ("all", r["split"], r["layout"], r["field"], "%s/%s" % (r["split"], r["layout"])):
+                groups[g].append(r)
+        out[mode] = {}
+        for g, gr in sorted(groups.items()):
+            units = defaultdict(list)
+            for r in gr:
+                units[r["unit"]].append(r)
+            pairs = [v for v in units.values() if len(v) == 2]
+            out[mode][g] = {"questions": len(gr), "right": sum(r["correct"] for r in gr), "units": len(pairs),
+                            "both_right": sum(all(x["correct"] for x in v) for v in pairs),
+                            "same_answer": sum(v[0]["prediction"] == v[1]["prediction"] for v in pairs),
+                            "wrong_to_right": sum((not base[(r["unit"], r["object"])]["correct"]) and r["correct"] for r in gr) if base else None,
+                            "right_to_wrong": sum(base[(r["unit"], r["object"])]["correct"] and not r["correct"] for r in gr) if base else None,
+                            "prediction_changed": sum(base[(r["unit"], r["object"])]["prediction"] != r["prediction"] for r in gr) if base else None}
+    return out
+
+
 def analyse(recs: List[Dict], units_meta: Dict[str, Dict]) -> Dict:
     """The pre-written readout: per slice (split x layout, and field) each mode's right / both right / same answer /
     changes against baseline; C_beta, C_1, C_beta - C_1 per unit; the continuation condition."""
     c_b, c_1 = contrast(recs, "target_gain", "other_gain"), contrast(recs, "target_1", "other_1")
-    out: Dict = {"modes": e46.summarize([dict(r, mass_target=0.0, mass_other=0.0, ab_l1=0.0, top_patch=0) for r in recs]),
-                 "slices": {}}
+    out: Dict = {"report_version": 2, "modes": mode_summary(recs), "attention": "not measured in exp47", "slices": {}}
     for sl in ("fit/original", "fit/L", "tune/original", "tune/L"):
         us = [u for u, m in units_meta.items() if "%s/%s" % (m["split"], m["layout"]) == sl]
         diff = [c_b[u] - c_1[u] for u in us if u in c_b and u in c_1]
