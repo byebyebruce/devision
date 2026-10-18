@@ -13,7 +13,8 @@ apart only.
 Conditions per condition (EXP49's): validity on fit_L (macro >= 0.90, each field >= 0.75) and, for the original pictures,
 also fit_O (same thresholds); investment on tune_O and tune_L (macro >= 0.80, each field >= 0.60, both >= 0.50, twin >=
 0.50, real - donor >= 0.20 with lower bound > 0). Attribution to original detail: tune_O exact macro T - C >= +0.10 with
-its case-cluster lower bound > 0 (2,000 resamples, seed 0) and T's original investment true. Branch (critic EXP51-PREP-01):
+its case-cluster lower bound > 0 (2,000 resamples, seed 0) and T's original investment true -- and C's head learned on
+fit (otherwise T - C is no control: "not located"). Branch (critic EXP51-PREP-01):
   - T original positive and attribution: local content readable under the oracle region; next, direct supervision of
     local content readout, then question selection / decision use;
   - T and C both original positive, attribution not passed: content / selection path may be prepared, not credited to
@@ -169,16 +170,20 @@ def status(r: Dict, c: Dict) -> Dict[str, str]:
 
 
 def branch(st: Dict[str, Dict], attribution) -> str:
+    """The pre-written branch; a positive condition is kept even when the other head was not learned (critic R1-03)."""
     t, c = st["T"]["original"], st["C"]["original"]
-    if "not learned" in t or "not learned" in c:
-        return "a head was not learned: not located (no new head, steps or thresholds)"
     if t == "positive" and attribution is True:
         return "local content readable under the oracle region, credited to original detail: next, direct supervision of local content readout, then question selection / decision use"
     if t == "positive" and c == "positive":
         return "T and C both readable on the original pictures, attribution not passed: content / selection path may be prepared, not credited to original detail; cheaper readable inputs first"
     if t == "positive":
-        return "T readable on the original pictures, C not, but the T - C attribution condition not passed: report the raw numbers; not credited to original detail"
-    return "valid heads, original pictures below the condition: negative for this fixed readout only; no long 12-view candidate training"
+        return "T alone readable on the original pictures (C: %s), attribution %s: report the raw numbers; not credited to original detail" % (
+            c, "not located" if "not learned" in c else "not passed")
+    if c == "positive":
+        return "C alone readable on the original pictures (T: %s): positive evidence for the reduced-detail input, not credited to original detail and not a negative for both" % t
+    if "not learned" in t or "not learned" in c:
+        return "no condition positive and a head was not learned (T: %s, C: %s): not located (no new head, steps or thresholds)" % (t, c)
+    return "valid heads, original pictures below the condition in both: negative for this fixed readout only; no long 12-view candidate training"
 
 
 def cut_slice(qs, pred) -> Dict:
@@ -190,7 +195,8 @@ def cut_slice(qs, pred) -> Dict:
 
 
 def report_from(qs, preds: Dict[str, tuple]) -> Dict:
-    """The readout, conditions, T - C and branch from per-condition (pred, donor) -- used by the run and by --recompute."""
+    """The readout, conditions, T - C and branch from the completed conditions' (pred, donor); fewer than both: each
+    completed condition's own result is kept, T - C / attribution / branch are incomplete (never a low score)."""
     y = [p49.labels(q["target"]) for q in qs]
     res: Dict = {"conditions": {}}
     for cond, (pred, donor) in preds.items():
@@ -202,22 +208,109 @@ def report_from(qs, preds: Dict[str, tuple]) -> Dict:
         d = {s: t_minus_c(qs, preds["T"][0], preds["C"][0], s) for s in ("fit_O", "fit_L", "rl_tune", "rl_tune_L")}
         res["T_minus_C"] = d
         att = bool(d["rl_tune"]["value"] >= 0.10 and d["rl_tune"]["ci95"][0] > 0 and res["conditions"]["T"]["conditions"]["invest_original"])
+        if att and res["conditions"]["C"]["status"]["original"].startswith("not learned"):
+            att = "not located: C's head was not learned, so T - C is no control"   # never credited without a learned C
         res["attribution"] = att
         res["branch"] = branch({k: v["status"] for k, v in res["conditions"].items()}, att)
     else:
-        res["attribution"] = res["branch"] = "incomplete: a condition is missing"
+        res["T_minus_C"] = None
+        res["attribution"] = res["branch"] = "incomplete: completed conditions %s" % sorted(preds)
     return res
 
 
-def recompute(questions: str, out: str) -> Dict:
+def _sha(p: str) -> str:
+    return hashlib.sha256(open(p, "rb").read()).hexdigest()
+
+
+def verify(cond: str, ident: Dict, out: str, questions: str, regions: str) -> str:
+    """'' when a details file's identity is this condition's: its condition, questions, regions, START, model, features
+    (as registered in features.json and, if the file is still there, its content) and head; else the reason."""
+    start, fj = os.path.join(out, "START.json"), os.path.join(out, "features.json")
+    if not (os.path.exists(start) and os.path.exists(fj)):
+        return "no START.json / features.json"
+    info = json.load(open(fj))
+    reg = info.get("conditions", {}).get(cond)
+    checks = [(ident.get("condition") == cond, "details are condition %r" % ident.get("condition")),
+              (ident.get("questions_sha256") == _sha(questions), "other questions"),
+              (ident.get("regions_sha256") == _sha(regions), "other regions"),
+              (ident.get("start_sha256") == _sha(start) == info.get("start_sha256"), "other START"),
+              (ident.get("model") == info.get("model"), "other model"),
+              (reg is not None and ident.get("features_sha256") == reg["sha256"], "features not registered for this condition")]
+    fpath, hpath = os.path.join(out, "features_%s.npz" % cond), os.path.join(out, "head_%s.pt" % cond)
+    checks.append((not os.path.exists(fpath) or _sha(fpath) == ident.get("features_sha256"), "features file changed"))
+    checks.append((os.path.exists(hpath) and _sha(hpath) == ident.get("head_sha256"), "head missing or changed"))
+    return "; ".join(why for ok, why in checks if not ok)
+
+
+def collect(questions: str, regions: str, out: str):
+    """(qs, completed (pred, donor) per condition, state per condition): completed / missing (no features, no details) /
+    partial (features but no details, or details incomplete) / invalid (identity does not bind)."""
     qs = [json.loads(x) for x in open(questions) if x.strip()]
-    preds = {}
+    fj = os.path.join(out, "features.json")
+    registered = json.load(open(fj)).get("conditions", {}) if os.path.exists(fj) else {}
+    preds, states = {}, {}
     for cond in CONDS:
         path = os.path.join(out, "details_%s.jsonl" % cond)
-        if os.path.exists(path):
-            pred, donor, _ = p49.read_details(path, qs)
-            preds[cond] = (pred, donor)
-    return report_from(qs, preds)
+        if not os.path.exists(path):
+            states[cond] = {"state": "partial" if cond in registered else "missing",
+                            "reason": "features extracted, no details" if cond in registered else "no features"}
+            continue
+        try:
+            pred, donor, ident = p49.read_details(path, qs)
+        except (SystemExit, ValueError, KeyError, IndexError) as e:
+            states[cond] = {"state": "partial", "reason": "details incomplete: %s" % e}
+            continue
+        why = verify(cond, ident, out, questions, regions)
+        if why:
+            states[cond] = {"state": "invalid", "reason": why}
+            continue
+        preds[cond] = (pred, donor)
+        states[cond] = {"state": "completed", "details_sha256": _sha(path)}
+    return qs, preds, states
+
+
+def recompute(questions: str, out: str, regions: str = "data/exp51/regions.json.gz") -> Dict:
+    """The report from saved, identity-checked details only (no model, no head training)."""
+    qs, preds, states = collect(questions, regions, out)
+    res = report_from(qs, preds)
+    res["states"] = states
+    return res
+
+
+def same_result(a: Dict, b: Dict) -> bool:
+    keys = ("conditions", "T_minus_C", "attribution", "branch")
+    return all(json.dumps(a.get(k), sort_keys=True, default=str) == json.dumps(b.get(k), sort_keys=True, default=str) for k in keys)
+
+
+def lines_of(res: Dict) -> List[str]:
+    lines = []
+    for cond in CONDS:
+        st = res.get("states", {}).get(cond)
+        if st and st["state"] != "completed":
+            lines.append("%s %s: %s" % (cond, st["state"], st["reason"]))
+    for cond, v in res["conditions"].items():
+        for s_, x in v["readout"].items():
+            lines.append("%s %-6s exact %.3f (%s) valid %.3f chars %.3f both %.3f twin %.3f same %.3f real-donor %+.3f %s follows %.3f" % (
+                cond, s_, x["exact"], {f: None if x["exact:" + f]["value"] is None else round(x["exact:" + f]["value"], 3) for f in p49.FIELDS},
+                x["valid"], x["chars"] or 0, x["both"], x["twin"], x["same"], x["real_minus_donor"],
+                [round(c, 3) for c in x["real_minus_donor_ci"]], x["donor_follows"]))
+        lines.append("%s conditions %s fit_O valid %s status %s cut slice %s" % (cond, v["conditions"], v["fit_O_valid"], v["status"], v["cut_slice"]))
+    if res.get("T_minus_C"):
+        lines.append("T - C exact %s" % {k: "%+.3f [%+.3f, %+.3f]" % (d["value"], *d["ci95"]) for k, d in res["T_minus_C"].items()})
+    lines.append("attribution %s; branch: %s" % (res["attribution"], res["branch"]))
+    return lines
+
+
+def finalize(questions: str, regions: str, out: str, stages: str = "") -> Dict:
+    """Model-free end of a run that did not complete (critic EXP51-R1-01): whatever is complete and bound is read, the
+    rest is stated; report.json / report.txt written with the stage statuses; no model, no training, no retry."""
+    res = recompute(questions, out, regions)
+    st_path = out.rstrip("/") + "-status.txt"
+    res["finalized"] = {"stages": open(st_path).read().split("\n") if os.path.exists(st_path) else [], "exit_codes": stages,
+                        "note": "the run did not complete; incomplete conditions are not low scores"}
+    json.dump(res, open(os.path.join(out, "report.json"), "w"), indent=1, default=str)
+    open(os.path.join(out, "report.txt"), "w").write("\n".join(["INCOMPLETE run: %s" % stages] + lines_of(res)) + "\n")
+    return res
 
 
 def main(argv=None) -> int:
@@ -226,18 +319,24 @@ def main(argv=None) -> int:
     ap.add_argument("--regions", default="data/exp51/regions.json.gz")
     ap.add_argument("--features", default="runs/exp51")
     ap.add_argument("--device", default="cpu")
-    ap.add_argument("--recompute", action="store_true")
+    ap.add_argument("--recompute", action="store_true", help="the report from the saved details only (no model)")
+    ap.add_argument("--finalize", default=None, help="model-free end of an incomplete run; the stage exit codes")
     a = ap.parse_args(argv)
+    if a.finalize is not None:
+        res = finalize(a.questions, a.regions, a.features, a.finalize)
+        print("\n".join(lines_of(res)))
+        return 0
     if a.recompute:
-        res = recompute(a.questions, a.features)
-        print(json.dumps({"attribution": res["attribution"], "branch": res["branch"],
-                          "status": {k: v["status"] for k, v in res["conditions"].items()}}, indent=1))
+        res = recompute(a.questions, a.features, a.regions)
+        print(json.dumps({"states": res["states"], "attribution": res["attribution"], "branch": res["branch"],
+                          "status": {k: v["status"] for k, v in res["conditions"].items()}}, indent=1, default=str))
         return 0
     import gzip
     info = json.load(open(os.path.join(a.features, "features.json")))
     sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()  # noqa: E731
-    if info["questions_sha256"] != sha(a.questions) or info["regions_sha256"] != sha(a.regions):
-        raise SystemExit("features are not bound to these questions / regions")
+    if info["questions_sha256"] != sha(a.questions) or info["regions_sha256"] != sha(a.regions) \
+            or info.get("start_sha256") != sha(os.path.join(a.features, "START.json")):
+        raise SystemExit("features are not bound to these questions / regions / START")
     qs = [json.loads(x) for x in open(a.questions) if x.strip()]
     regs = json.load(gzip.open(a.regions, "rt"))
     key_i = {q["key"]: i for i, q in enumerate(qs)}
@@ -264,7 +363,8 @@ def main(argv=None) -> int:
         pred = predict(head, tok, allq, device=a.device)
         donor = predict(head, tok, allq, donor_idx, device=a.device)
         ident = {"features_sha256": info["conditions"][cond]["sha256"], "questions_sha256": info["questions_sha256"],
-                 "regions_sha256": info["regions_sha256"], "model": info["model"], "condition": cond}
+                 "regions_sha256": info["regions_sha256"], "model": info["model"], "condition": cond,
+                 "start_sha256": info["start_sha256"], "head_sha256": sha(hp)}
         heads[cond] = {"head_sha256": sha(hp),
                        "details_sha256": p49.write_details(os.path.join(a.features, "details_%s.jsonl" % cond), qs, pred, donor, donor_idx, ident)}
         preds[cond] = (pred, donor)
@@ -272,20 +372,12 @@ def main(argv=None) -> int:
     res = report_from(qs, preds)
     res.update(features=info, heads=heads, oracle="the field box selects the region tokens and gives their geometry (not available to the product)",
                training={"questions": len(train), "lr": p49.LR, "weight_decay": p49.WD, "batch": p49.BATCH, "steps": p49.STEPS, "seed": p49.SEED})
-    rc = recompute(a.questions, a.features)
-    res["recompute_matches"] = json.dumps(rc["conditions"], sort_keys=True, default=str) == json.dumps(
-        {k: v for k, v in res["conditions"].items()}, sort_keys=True, default=str) and rc["branch"] == res["branch"]
+    rc = recompute(a.questions, a.features, a.regions)
+    res["states"] = rc["states"]
+    res["start_sha256"] = info["start_sha256"]
+    res["recompute_matches"] = same_result(rc, res)          # conditions, T - C, attribution and branch
     json.dump(res, open(os.path.join(a.features, "report.json"), "w"), indent=1, default=str)
-    lines = []
-    for cond, v in res["conditions"].items():
-        for s_, x in v["readout"].items():
-            lines.append("%s %-6s exact %.3f (%s) valid %.3f chars %.3f both %.3f twin %.3f same %.3f real-donor %+.3f %s follows %.3f" % (
-                cond, s_, x["exact"], {f: None if x["exact:" + f]["value"] is None else round(x["exact:" + f]["value"], 3) for f in p49.FIELDS},
-                x["valid"], x["chars"] or 0, x["both"], x["twin"], x["same"], x["real_minus_donor"],
-                [round(c, 3) for c in x["real_minus_donor_ci"]], x["donor_follows"]))
-        lines.append("%s conditions %s fit_O valid %s status %s cut slice %s" % (cond, v["conditions"], v["fit_O_valid"], v["status"], v["cut_slice"]))
-    lines.append("T - C exact %s" % {k: "%+.3f [%+.3f, %+.3f]" % (d["value"], *d["ci95"]) for k, d in res["T_minus_C"].items()})
-    lines.append("attribution %s; branch: %s; recompute from details matches: %s" % (res["attribution"], res["branch"], res["recompute_matches"]))
+    lines = lines_of(res) + ["recompute from details matches: %s" % res["recompute_matches"]]
     open(os.path.join(a.features, "report.txt"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0

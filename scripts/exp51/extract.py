@@ -106,6 +106,13 @@ def main(argv=None) -> int:
     ck = os.path.join(a.run, "stage2")
     if {f: sha(os.path.join(ck, f)) for f in T_SHA} != T_SHA:
         raise SystemExit("EXP50-T is not 1a8e5439 / 99c6246e")
+    spath = os.path.join(a.out, "START.json")                # written by start.py before any model forward (R1-02)
+    if not os.path.exists(spath):
+        raise SystemExit("no %s: run scripts/exp51/start.py first" % spath)
+    st = json.load(open(spath))
+    if st["questions_sha256"] != man["questions_sha256"] or st["regions_sha256"] != man["regions_sha256"] \
+            or {f: st["model"][f] for f in T_SHA} != T_SHA or st["vision_identity"] != ident:
+        raise SystemExit("START.json does not bind these questions / regions / model / vision tower")
     qs = [json.loads(x) for x in open(a.questions) if x.strip()]
     regs = json.load(gzip.open(rpath, "rt"))
     if [r["key"] for r in regs] != [q["key"] for q in qs]:
@@ -113,8 +120,7 @@ def main(argv=None) -> int:
     pictures = sorted({q["picture"] for q in qs})
     device = best_device() if a.device == "auto" else a.device
     model = Decider.load(ck, device=device).model.eval()
-    os.makedirs(a.out, exist_ok=True)
-    info = {"model": {"run": a.run, **T_SHA}, "vision_identity": ident, "questions_sha256": man["questions_sha256"],
+    info = {"start_sha256": sha(spath), "model": {"run": a.run, **T_SHA}, "vision_identity": ident, "questions_sha256": man["questions_sha256"],
             "regions_sha256": man["regions_sha256"], "device": device, "grid": man["grid"],
             "pictures_sha256": hashlib.sha256(json.dumps({p: sha(os.path.join(a.data_root, p)) for p in pictures}, sort_keys=True).encode()).hexdigest(),
             "preprocessing": "devision.image.local_pixels(img, 256, 12, 0.25, source) -> model.visual_inputs", "conditions": {}}
@@ -124,8 +130,8 @@ def main(argv=None) -> int:
         np.savez(path, x=flat, offsets=offsets)
         info["conditions"][source] = {"shape": list(flat.shape), "sha256": sha(path), **timing}
         del flat
+        json.dump(info, open(os.path.join(a.out, "features.json"), "w"), indent=1)   # after each condition (finalize)
         print(source, json.dumps(info["conditions"][source]))
-    json.dump(info, open(os.path.join(a.out, "features.json"), "w"), indent=1)
     return 0
 
 

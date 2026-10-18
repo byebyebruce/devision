@@ -83,6 +83,25 @@ EXP50 交给 QuestionConditioning 的那些局部 patch，在已知字段区域�
 - 视觉身份：决策部分可以不同，视觉张量差一个字节就拒绝。
 - 条件、归因和分支：完美 / 全错预测下的结果；只有一个条件时为 incomplete；切字切片计数正确。
 
+## 第 1 轮评审补正（EXP51-R1-01 / 02 / 03）
+
+- **身份（R1-02）**：
+  - `scripts/exp51/start.py` 在第一次模型前向之前写 `runs/exp51/START.json`，记录完整 git HEAD 和脏文件、11 个执行或导入文件（本实验脚本、EXP49 读出、EXP41 区间、image / model / infer）的 sha256、模型 / config / 视觉塔摘要、题单、区域、网格、种子 / 步数 / 设备、开始时间和绝对截止。已存在就拒绝。
+  - extract 必须看到 START 并核对其绑定；features.json 记 start_sha256，并在每个条件提取完后更新。
+  - 明细的 identity 写入条件、START、特征、题单、区域、模型和头的 sha。
+  - 复算不再丢弃 identity：核对条件与文件名一致、题单 / 区域与当前文件一致、START 与 features.json 一致、模型、特征是否已登记、特征文件内容未变、头未变。不通过的条件记为 invalid，T − C 和归因记 incomplete。
+  - recompute_matches 比较单条件读出、T − C、归因和分支。
+  - 夹具：交换 T / C 明细、另一个 START、特征内容改动都判为 invalid；正常复算与直接计算相同。
+- **不完整收尾（R1-01）**：`run.sh` 依次执行 start → extract → probe，任何一步失败或到限，就在同一截止内（最后 90 秒）运行无模型的 `probe.py --finalize`。
+  - 每个条件标为 completed / missing / partial / invalid，并写原因、各阶段 status 和退出码；
+  - 不足两个条件时，T − C / 归因 / 分支记 incomplete，不当作低分；
+  - 退出码保留第一个失败阶段的值（到限时为 124）；
+  - 正常完成时不再另跑 finalize。
+  - 夹具：没有特征、只有 T、明细写了一半、提取卡住（假进程，在上限内以 124 结束，有 finalize、没有残留子树）、提取失败（退出码 7）。
+- **分支（R1-03）**：先看阳性。C 单独阳性记"C alone readable"，不再落入"两臂都未达"；一个头没学好不抹掉另一个头的阳性。
+  - 另外补了一条：C 的头没学好时，T − C 不是对照，归因记 "not located"，不会因为对照没学好而把 T 的高分记成原始细节的作用。
+- 预算不变（约 15–20 分钟，上限 30 分钟）；finalize 用最后 90 秒（原来 30 秒）。
+
 ## 状态
 
 CPU 准备完成，**未运行**：没有加载真实模型，没有提取特征，没有训练读出头。等评论家的模型许可。

@@ -130,11 +130,149 @@ def test_conditions_branch_and_incomplete():
     donor = [perfect[key_i[q["twin"]]] if q["twin"] else perfect[i] for i, q in enumerate(qs)]
     wrong = [[prb.p49.EOS] + [-100] * 4 for _ in qs]                              # empty: invalid everywhere
     res = prb.report_from(qs, {"T": (perfect, donor), "C": (wrong, wrong)})
-    assert res["conditions"]["T"]["status"]["original"] == "positive" and res["attribution"] is True
-    assert res["T_minus_C"]["rl_tune"]["value"] == pytest.approx(1.0)
+    assert res["conditions"]["T"]["status"]["original"] == "positive" and res["T_minus_C"]["rl_tune"]["value"] == pytest.approx(1.0)
     assert res["conditions"]["C"]["status"]["original"].startswith("not learned")
-    assert res["branch"].startswith("a head was not learned")                       # an unlearned C: not located
+    assert str(res["attribution"]).startswith("not located")                       # an unlearned C is no control
+    assert res["branch"].startswith("T alone readable") and "attribution not located" in res["branch"]   # T's positive kept
     res2 = prb.report_from(qs, {"T": (perfect, donor), "C": (perfect, donor)})
     assert res2["attribution"] is False and res2["branch"].startswith("T and C both readable")
     assert prb.report_from(qs, {"T": (perfect, donor)})["branch"].startswith("incomplete")
     assert res["conditions"]["T"]["cut_slice"] == {"right": 15, "of": 15}
+
+
+# ---- critic EXP51-R1-01 / 02 / 03: identity, incomplete runs, branch
+
+QUESTIONS, REGIONS = os.path.join(ROOT, "data/exp49/questions.jsonl"), os.path.join(ROOT, "data/exp51/regions.json.gz")
+
+
+def sha(p):
+    import hashlib
+    return hashlib.sha256(open(p, "rb").read()).hexdigest()
+
+
+@pytest.fixture(scope="module")
+def preds():
+    qs = [json.loads(x) for x in open(QUESTIONS)]
+    perfect = [prb.p49.labels(q["target"]) for q in qs]
+    key_i = {q["key"]: i for i, q in enumerate(qs)}
+    donor = [perfect[key_i[q["twin"]]] if q["twin"] else perfect[i] for i, q in enumerate(qs)]
+    wrong = [[prb.p49.EOS] + [-100] * 4 for _ in qs]
+    key_i = {q["key"]: i for i, q in enumerate(qs)}
+    return qs, perfect, donor, wrong, [key_i[q["twin"]] if q["twin"] else i for i, q in enumerate(qs)]
+
+
+def fake_run(out, preds, conds=("T", "C"), half=None):
+    """A run directory as start / extract / probe leave it: START, features.json, feature / head files, details."""
+    qs, perfect, donor, wrong, donor_idx = preds
+    os.makedirs(out, exist_ok=True)
+    json.dump({"started": "x"}, open(os.path.join(out, "START.json"), "w"))
+    info = {"start_sha256": sha(os.path.join(out, "START.json")), "model": {"run": "runs/exp50-t"},
+            "questions_sha256": sha(QUESTIONS), "regions_sha256": sha(REGIONS), "conditions": {}}
+    for cond in ("T", "C"):
+        open(os.path.join(out, "features_%s.npz" % cond), "wb").write(cond.encode() * 10)
+        info["conditions"][cond] = {"sha256": sha(os.path.join(out, "features_%s.npz" % cond))}
+    json.dump(info, open(os.path.join(out, "features.json"), "w"))
+    for cond in conds:
+        open(os.path.join(out, "head_%s.pt" % cond), "wb").write(b"head" + cond.encode())
+        ident = {"features_sha256": info["conditions"][cond]["sha256"], "questions_sha256": info["questions_sha256"],
+                 "regions_sha256": info["regions_sha256"], "model": info["model"], "condition": cond,
+                 "start_sha256": info["start_sha256"], "head_sha256": sha(os.path.join(out, "head_%s.pt" % cond))}
+        pred, dn = (perfect, donor) if cond == "T" else (wrong, wrong)
+        path = os.path.join(out, "details_%s.jsonl" % cond)
+        prb.p49.write_details(path, qs, pred, dn, donor_idx, ident)
+        if half == cond:                                                        # cut mid-write
+            lines = open(path).read().splitlines()
+            open(path, "w").write("\n".join(lines[: len(lines) // 2]) + "\n")
+    return out
+
+
+def test_recompute_keeps_identity_and_matches(tmp_path, preds):
+    out = fake_run(str(tmp_path / "run"), preds)
+    res = prb.recompute(QUESTIONS, out, REGIONS)
+    assert {c: s["state"] for c, s in res["states"].items()} == {"T": "completed", "C": "completed"}
+    direct = prb.report_from(preds[0], {"T": (preds[1], preds[2]), "C": (preds[3], preds[3])})
+    assert prb.same_result(res, direct) and res["T_minus_C"]["rl_tune"]["value"] == pytest.approx(1.0)
+
+
+def test_swapped_or_foreign_details_are_invalid(tmp_path, preds):
+    out = fake_run(str(tmp_path / "run"), preds)
+    t, c = os.path.join(out, "details_T.jsonl"), os.path.join(out, "details_C.jsonl")
+    os.rename(t, t + ".x")
+    os.rename(c, t)
+    os.rename(t + ".x", c)                                                      # T and C details exchanged
+    res = prb.recompute(QUESTIONS, out, REGIONS)
+    assert res["states"]["T"]["state"] == res["states"]["C"]["state"] == "invalid"
+    assert res["T_minus_C"] is None and str(res["attribution"]).startswith("incomplete")
+    out2 = fake_run(str(tmp_path / "run2"), preds)
+    open(os.path.join(out2, "features_C.npz"), "ab").write(b"changed")       # registered content changed
+    json.dump({"started": "other"}, open(os.path.join(out2, "START.json"), "w"))  # another START
+    res2 = prb.recompute(QUESTIONS, out2, REGIONS)
+    assert res2["states"]["C"]["state"] == "invalid" and "features file changed" in res2["states"]["C"]["reason"]
+    assert "other START" in res2["states"]["T"]["reason"]
+
+
+def test_finalize_no_features_only_t_and_half_written(tmp_path, preds):
+    out = str(tmp_path / "none")
+    os.makedirs(out)
+    open(out + "-status.txt", "w").write("start completed\nextract interrupted\n")
+    res = prb.finalize(QUESTIONS, REGIONS, out, " start=0 extract=124")
+    assert {c: s["state"] for c, s in res["states"].items()} == {"T": "missing", "C": "missing"}
+    assert "INCOMPLETE" in open(os.path.join(out, "report.txt")).read() and res["finalized"]["stages"][1] == "extract interrupted"
+    only_t = fake_run(str(tmp_path / "t"), preds, conds=("T",))
+    r = prb.finalize(QUESTIONS, REGIONS, only_t, " probe=124")
+    assert r["states"]["T"]["state"] == "completed" and r["states"]["C"]["state"] == "partial"
+    assert r["conditions"]["T"]["status"]["original"] == "positive" and r["T_minus_C"] is None
+    half = fake_run(str(tmp_path / "half"), preds, half="C")
+    r = prb.finalize(QUESTIONS, REGIONS, half, " probe=124")
+    assert r["states"]["C"]["state"] == "partial" and "incomplete" in r["states"]["C"]["reason"]
+
+
+def test_c_alone_positive_is_kept():
+    pos = {"original": "positive"}
+    assert prb.branch({"T": {"original": "valid, below the condition"}, "C": pos}, False).startswith("C alone readable")
+    assert prb.branch({"T": {"original": "not learned: not located"}, "C": pos}, False).startswith("C alone readable")
+    assert prb.branch({"T": {"original": "valid, below the condition"}, "C": {"original": "not learned: not located"}}, False).startswith("no condition positive")
+    assert prb.branch({"T": {"original": "valid, below the condition"}, "C": {"original": "valid, below the condition"}}, False).startswith("valid heads")
+
+
+STUB_UV = """#!/bin/bash
+echo "uv $*" >> "${MARK}"
+case "$*" in
+  *start.py*) exit 0;;
+  *extract.py*) [ "${HANG}" = extract ] && exec sleep 300; exit 7;;
+  *--finalize*) mkdir -p runs/exp51; echo final > runs/exp51/report.txt; exit 0;;
+  *probe.py*) exec sleep 300;;
+esac
+"""
+
+
+@pytest.mark.parametrize("hang", ["extract", "fail"])
+def test_run_finalizes_within_the_limit(tmp_path, hang):
+    """Extraction stuck (stopped at the limit) or failing: finalize still runs, inside the limit, no subtree left."""
+    import shutil
+    import stat
+    import subprocess
+    import time
+    root = tmp_path / "repo"
+    for rel in ("scripts/exp51/run.sh", "scripts/exp35/guard.sh", "scripts/exp38/steps.sh"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(os.path.join(ROOT, rel), root / rel)
+    b = tmp_path / "bin"
+    b.mkdir()
+    for name, body in {"uv": STUB_UV, "pgrep": '#!/bin/bash\n[ "$1" = "-fl" ] && exit 1\nexec /usr/bin/pgrep "$@"\n'}.items():
+        (b / name).write_text(body)
+        (b / name).chmod((b / name).stat().st_mode | stat.S_IEXEC)
+    env = {**os.environ, "PATH": "%s:%s" % (b, os.environ["PATH"]), "MARK": str(tmp_path / "calls"), "HANG": hang,
+           "EXP51_LIMIT": "24", "EXP51_RESERVE": "4"}
+    t = time.time()
+    p = subprocess.run(["bash", str(root / "scripts/exp51/run.sh")], env=env, capture_output=True, text=True, timeout=60)
+    took = time.time() - t
+    assert p.returncode == (124 if hang == "extract" else 7), p.stdout + p.stderr
+    assert took < 24 + 3
+    calls = (tmp_path / "calls").read_text()
+    assert "--finalize" in calls and "probe.py --device" not in calls
+    assert (root / "runs/exp51/report.txt").read_text() == "final\n"
+    st = (root / "runs/exp51-status.txt").read_text()
+    assert ("extract interrupted" if hang == "extract" else "extract failed") in st
+    left = subprocess.run(["/usr/bin/pgrep", "-f", "sleep 300"], capture_output=True, text=True).stdout.split()
+    assert not [x for x in left if subprocess.run(["ps", "-o", "ppid=", "-p", x], capture_output=True, text=True).stdout.strip() == "1"]
