@@ -135,6 +135,11 @@ class TrainConfig:
     # loaded, the vision tower / projector / conditioning are never called and are frozen, only LoRA and the decision
     # head train. The JSONL's image fields stay as source identity only. False: the picture path, unchanged.
     text_only: bool = False
+    # exp65 (docs/experiments/2026-10-19-exp65-weight-plan.md): question_weight_file, a JSONL of {"id", "qid", "weight"}
+    # covering every training question exactly once, scales each question's gold CE: loss = sum(w_i * CE_i) / questions
+    # in the batch (objective ce only; the RLCD noise is still drawn, so the random stream is the arm without weights).
+    # Training only: validation, decide and the fitted temperatures are unchanged. "": off (the original code path).
+    question_weight_file: str = ""
     number_reader: bool = False
     number_file: str = ""
     number_weight: float = 0.0
@@ -299,13 +304,17 @@ def _forward(model, batch, pixels, device, return_hidden: bool = False, index: O
                  visual=visual, patches=patches, return_hidden=return_hidden, patch_geom=geom)
 
 
-def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = "rlcd"):
-    """(loss, gold CE). objective "ce": the gold CE alone, after drawing the same RLCD noise (same random stream)."""
+def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = "rlcd", weight: Optional[torch.Tensor] = None):
+    """(loss, gold CE). objective "ce": the gold CE alone, after drawing the same RLCD noise (same random stream);
+    with `weight` (exp65, ce only) the loss is sum(w_i * CE_i) / batch questions, the returned CE stays unweighted."""
     k = mask.sum(-1, keepdim=True).float()
     eps = torch.randn((group_size,) + logits.shape, device=logits.device) * sigma * mask
     if objective == "ce":
-        ce = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
-        return ce, ce
+        per = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1)
+        ce = per.mean()
+        if weight is None:
+            return ce, ce
+        return (weight.to(per.dtype) * per).sum() / per.shape[0], ce
     eps = (eps - eps.sum(-1, keepdim=True) / k) * mask
     z = logits.detach().unsqueeze(0) + eps
     q = torch.softmax(z.masked_fill(~mask, -1e4), -1)
@@ -316,6 +325,28 @@ def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = 
     logp = -(((z - logits.unsqueeze(0)) ** 2) * mask).sum(-1) / (2 * sigma ** 2)
     ce = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
     return -(adv * logp).mean() + ce, ce
+
+def question_weights(path: str, samples: Sequence[Sample]) -> Dict[Tuple[str, str], float]:
+    """exp65's per-question CE weights: exactly one finite positive weight for every training question, no other key."""
+    want = {(s["id"], qid) for s in samples for qid in s["questions"]}
+    out: Dict[Tuple[str, str], float] = {}
+    for line in open(path):
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        k = (r["id"], r["qid"])
+        w = float(r["weight"])
+        if k in out:
+            raise ValueError("question_weight_file: %s %s twice" % k)
+        if k not in want:
+            raise ValueError("question_weight_file: %s %s is not a training question" % k)
+        if not (w > 0 and w == w and w != float("inf")):
+            raise ValueError("question_weight_file: %s %s weight %r" % (k[0], k[1], w))
+        out[k] = w
+    if set(out) != want:
+        raise ValueError("question_weight_file misses %d training questions" % len(want - set(out)))
+    return out
+
 
 INTERACTION_FORMULA = "J4/softplus(1-J)/v1"
 
@@ -718,7 +749,7 @@ _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
                 "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
                 "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
-                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only")
+                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -782,6 +813,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         teacher = Decider.load(c.distill_teacher, device="cpu").model.to(device).eval().requires_grad_(False)
     if c.region_file and not c.question_conditioning:
         raise ValueError("region_file supervises the question conditioning attention: it needs question_conditioning")
+    qweights: Dict[Tuple[str, str], float] = {}
+    if c.question_weight_file:
+        if c.objective != "ce":
+            raise ValueError("question_weight_file weights the gold CE: it needs objective ce")
+        qweights = question_weights(c.question_weight_file, samples)
     if c.number_file and not c.number_reader:
         raise ValueError("number_file supervises the number reader: it needs number_reader")
     if c.number_reader:   # exp52: before the seeds below; its own seed, so every arm starts from the same tensors
@@ -989,8 +1025,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 else:
                     logits = _forward(model, batch, pixels, device, index=index)
                 logits = logits.float()
+            qw = torch.tensor([qweights[(it["sample_id"], it["qid"])] for it in chunk], device=device) if qweights else None
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
-                              batch["qtype"].to(device), sigma, c.group_size, c.objective)
+                              batch["qtype"].to(device), sigma, c.group_size, c.objective, qw)
             interaction = None
             if inter:   # the same forward's option logits; joins the loss checked finite below, one backward / step
                 i_loss, i_j = interaction_loss(logits, [inter[(it["sample_id"], it["qid"])] for it in chunk])

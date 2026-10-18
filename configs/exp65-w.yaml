@@ -1,0 +1,30 @@
+# exp65 arm W (docs/experiments/2026-10-19-exp65-weight-plan.md; critic EXP65-PREP-01): from EXP63's frozen end
+# (3e8443e9 / 70c302c4), a new LoRA r16 + the decision head, EXP63's recipe on the same data/facts/train.jsonl and plan
+# (1,200 updates of 8, every question once, two-view units whole). The only difference between the arms is the per-question
+# CE weight: C all 1 (the original code path), W data/exp65/weights.jsonl (temperature comparisons 200 / n_class over six
+# rule classes, everything else 1). Run only by scripts/exp65/run.sh.
+name: exp65-w
+device: mps
+common:
+  log_every: 25
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp63/stage2
+  data: data/facts/train.jsonl
+  val: data/facts/fit.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    text_only: true
+    micro_batch: 8
+    eval_batch: 8
+    lora_r: 16
+    lr_lora: 5.0e-05
+    lr_head: 1.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 0
+    amp: 'off'
+    seed: 1
+    question_weight_file: data/exp65/weights.jsonl
