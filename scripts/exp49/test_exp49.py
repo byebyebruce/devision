@@ -64,6 +64,7 @@ def synthetic(n, shuffle=False, seed=0):
             x[i, k, 10 + k] += 3.0
     mask = torch.ones(n, 6, dtype=torch.bool)
     rel = torch.stack([torch.zeros(6, dtype=torch.long), torch.arange(6)], -1).expand(n, -1, -1).contiguous()
+    rel = (rel, torch.zeros(n, 6, 4))
     labels_t = targets[:]
     if shuffle:
         perm = torch.randperm(n, generator=g).tolist()
@@ -72,24 +73,41 @@ def synthetic(n, shuffle=False, seed=0):
 
 
 def exact(head, x, m, r, targets):
-    pred = pb.predict(head, x, m, r)
+    pred = pb.predict(head, x, m, r[0], r[1])
     return sum(pb.decode(p)["valid"] and pb.decode(p)["text"] == t for p, t in zip(pred, targets)) / len(targets)
 
 
 def test_head_learns_signal_but_not_random_or_shuffled_labels():
     x, m, r, y, t = synthetic(300)
-    head = pb.train_head(x[:200], m[:200], r[:200], y[:200], steps=300)
-    assert exact(head, x[200:], m[200:], r[200:], t[200:]) > 0.9
+    head = pb.train_head(x[:200], m[:200], r[0][:200], r[1][:200], y[:200], steps=300)
+    assert exact(head, x[200:], m[200:], (r[0][200:], r[1][200:]), t[200:]) > 0.9
     xs, ms, rs, ys, ts = synthetic(300, shuffle=True, seed=1)                      # labels not matching the tokens
-    head = pb.train_head(xs[:200], ms[:200], rs[:200], ys[:200], steps=300)
-    assert exact(head, xs[200:], ms[200:], rs[200:], ts[200:]) < 0.05
+    head = pb.train_head(xs[:200], ms[:200], rs[0][:200], rs[1][:200], ys[:200], steps=300)
+    assert exact(head, xs[200:], ms[200:], (rs[0][200:], rs[1][200:]), ts[200:]) < 0.05
 
 
 def test_region_cells_and_relative_positions():
-    idx, rel = ex.region([0, 0, 64, 32], 256, 256, 16)                              # top-left 64 x 32 px: 4 x 2 cells
+    idx, rel, geom = ex.region([0, 0, 64, 32], 256, 256, 16)                        # top-left 64 x 32 px: 4 x 2 cells
     assert idx == [0, 1, 2, 3, 16, 17, 18, 19] and rel[0] == (0, 0) and rel[-1] == (1, 3)
-    idx8, rel8 = ex.region([128, 128, 32, 32], 256, 256, 8)
+    assert geom[0] == pytest.approx((8 / 64, 8 / 32, 16 / 64, 16 / 32))
+    idx8, rel8, _ = ex.region([128, 128, 32, 32], 256, 256, 8)
     assert idx8 == [36] and rel8 == [(0, 0)]
+
+
+def test_same_cells_different_box_give_different_geometry():
+    a = ex.region([1.75, 367.0, 256.5, 26.0], 521, 409, 8)                         # rl01744 v0 sample A: mass and speed rows
+    b = ex.region([1.75, 341.0, 256.5, 26.0], 521, 409, 8)
+    assert a[0] == b[0] and a[1] == b[1] and a[2] != b[2]                         # same cells and integer positions, other geometry
+
+
+def test_geometry_on_the_real_questions():
+    qs = [json.loads(x) for x in open(os.path.join(ROOT, "data", "exp49", "questions.jsonl"))]
+    regions = {side: [ex.region(q["box"], q["width"], q["height"], side) for q in qs] for side in (16, 8)}
+    c = ex.geometry_checks(qs, regions)
+    for layer in ("siglip", "proj"):
+        assert c[layer]["collisions_with_geometry"] == 0
+        assert c[layer]["changed_twins"] == c[layer]["changed_twins_same_input_geometry"] == 2808
+    assert c["proj"]["collisions_cells_only"] == 240 and c["siglip"]["collisions_cells_only"] == 0
 
 
 def tiny_setup(tmp_path):
@@ -116,13 +134,14 @@ def test_extraction_keeps_only_region_tokens(tmp_path):
     info = json.load(open(tmp_path / "out" / "features.json"))
     assert z["siglip"].shape[0] == 4 and z["proj"].shape[0] == 4
     for i, q in enumerate(qs):
-        idx, _ = ex.region(q["box"], q["width"], q["height"], 16)
+        idx, _, _ = ex.region(q["box"], q["width"], q["height"], 16)
         assert z["siglip_mask"][i].sum() == len(idx) and not z["siglip_mask"][i, len(idx):].any()
     from devision.train.rlcd import _Images
     with torch.no_grad():
         px = torch.stack([_Images(str(tmp_path / "data"), d)("0.png")])
         patches = d.model.vision_patches(px)
-    idx, _ = ex.region(qs[0]["box"], 60, 40, 16)
+    idx, _, _ = ex.region(qs[0]["box"], 60, 40, 16)
+    assert z["siglip_geom"].shape[-1] == 4 and np.isfinite(z["siglip_geom"]).all()
     assert np.allclose(z["siglip"][0, :len(idx)], patches[0, idx].numpy().astype(np.float16), atol=1e-3)
     assert info["questions_sha256"] and info["features_sha256"]
     (tmp_path / "q.jsonl").write_text((tmp_path / "q.jsonl").read_text() + "\n")    # questions changed after extraction
@@ -131,18 +150,8 @@ def test_extraction_keeps_only_region_tokens(tmp_path):
 
 
 def test_readout_counts_on_fabricated_predictions():
-    def q(key, setname, pic, obj, target, family, view, twin, changed):
-        return {"key": key, "set": setname, "picture": pic, "object": obj, "field": "mass", "target": target, "family": family,
-                "case": family, "view": view, "twin": twin, "twin_changed": changed}
-    qs = []
-    for s in pb.SET_NAME:
-        qs += [q(s + "a0", s, s + "p0", "A", "10", "f1", "v0", s + "a1", True), q(s + "b0", s, s + "p0", "B", "20", "f1", "v0", s + "b1", True),
-               q(s + "a1", s, s + "p1", "A", "20", "f1", "v1", s + "a0", True), q(s + "b1", s, s + "p1", "B", "10", "f1", "v1", s + "b0", True)]
-    y = [pb.labels(x["target"]) for x in qs]
-    pred = y[:]                                                                    # every real prediction right
-    key_i = {x["key"]: i for i, x in enumerate(qs)}
-    donor = [y[key_i[x["twin"]]] for x in qs]                                      # donor features read the twin's value
-    r = pb.readout(qs, [[c if c != -100 else 0 for c in p] for p in pred], [[c if c != -100 else 0 for c in p] for p in donor], y)
+    qs, pred, donor, _ = fabricated()                                              # every real prediction right; donors read the twin
+    r = pb.readout(qs, pred, donor, [pb.labels(x["target"]) for x in qs])
     for name in ("fit_O", "tune_O"):
         assert r[name]["exact"] == 1.0 and r[name]["both"] == 1.0 and r[name]["twin"] == 1.0 and r[name]["same"] == 0.0
         assert r[name]["real_minus_donor"] == 1.0 and r[name]["donor_follows"] == 1.0
@@ -154,3 +163,49 @@ def test_ambiguous_regions_are_flagged():
           dict(base, key="c", box=[128, 128, 60, 10], target="3")]
     assert pb.ambiguous(qs, 8) == [True, True, False]                              # rows 0-9 and 4-11 share the same cells
     assert pb.ambiguous(qs, 16) == [True, True, False]                             # both inside the first 16-px row
+
+
+def fabricated(right=True):
+    def q(key, setname, pic, obj, target, family, view, twin, changed):
+        return {"key": key, "set": setname, "picture": pic, "object": obj, "field": "mass", "target": target, "family": family,
+                "case": family, "view": view, "twin": twin, "twin_changed": changed, "box": [0, 0, 10, 10] if obj == "A" else [20, 0, 10, 10],
+                "width": 40, "height": 40}
+    qs = []
+    for s in pb.SET_NAME:
+        qs += [q(s + "a0", s, s + "p0", "A", "10", "f1", "v0", s + "a1", True), q(s + "b0", s, s + "p0", "B", "20", "f1", "v0", s + "b1", True),
+               q(s + "a1", s, s + "p1", "A", "20", "f1", "v1", s + "a0", True), q(s + "b1", s, s + "p1", "B", "10", "f1", "v1", s + "b0", True)]
+    y = [[c if c != -100 else 0 for c in pb.labels(x["target"])] for x in qs]
+    key_i = {x["key"]: i for i, x in enumerate(qs)}
+    didx = [key_i[x["twin"]] for x in qs]
+    return qs, y, [y[j] for j in didx], didx
+
+
+def test_details_round_trip_and_refusals(tmp_path):
+    qs, pred, donor, didx = fabricated()
+    (tmp_path / "q.jsonl").write_text("".join(json.dumps(x) + "\n" for x in qs))
+    for layer in ("siglip", "proj"):
+        pb.write_details(str(tmp_path / ("details_%s.jsonl" % layer)), qs, pred, donor, didx, {"x": 1})
+    rc = pb.recompute(str(tmp_path / "q.jsonl"), str(tmp_path))
+    direct = pb.readout(qs, pred, donor, [pb.labels(x["target"]) for x in qs], pb.ambiguous(qs, 16))
+    assert json.dumps(rc["layers"]["siglip"]["readout"], sort_keys=True, default=str) == json.dumps(direct, sort_keys=True, default=str)
+    p = tmp_path / "details_siglip.jsonl"
+    lines = p.read_text().splitlines()
+    for bad in (lines[:-1], lines + [lines[-1]], lines[:1] + [lines[1].replace(qs[0]["twin"], qs[1]["key"])] + lines[2:]):
+        p.write_text("\n".join(bad) + "\n")
+        with pytest.raises(SystemExit):
+            pb.read_details(str(p), qs)
+
+
+def test_branch_never_blames_an_invalid_head():
+    pos = {"validity": True, "invest_original": True, "invest_L": True}
+    low = {"validity": True, "invest_original": False, "invest_L": False}
+    bad = {"validity": False, "invest_original": False, "invest_L": False}
+    l_only_valid = {"validity": True, "invest_original": False, "invest_L": True}
+    l_only_invalid = {"validity": False, "invest_original": False, "invest_L": True}
+    assert pb.branch({"siglip": pos, "proj": pos}).startswith("both layers readable")
+    assert pb.branch({"siglip": pos, "proj": low}).startswith("SigLIP readable, projector below")
+    b = pb.branch({"siglip": pos, "proj": bad})
+    assert "not located" in b and "below" not in b                                 # projector readout not learned: no blame
+    assert pb.branch({"siglip": l_only_valid, "proj": low}).startswith("only L readable")
+    assert not pb.branch({"siglip": l_only_invalid, "proj": bad}).startswith("only L")   # original negative from an invalid head
+    assert pb.branch({"siglip": bad, "proj": bad}).startswith("readout not learned")

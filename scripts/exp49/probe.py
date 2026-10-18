@@ -70,12 +70,13 @@ class Head(nn.Module):
         super().__init__()
         self.inp = nn.Linear(d_in, WIDTH)
         self.row, self.col = nn.Embedding(max_rel, WIDTH), nn.Embedding(max_rel, WIDTH)
+        self.geom = nn.Linear(4, WIDTH)                                     # continuous geometry relative to the box
         self.queries = nn.Parameter(torch.randn(SLOTS, WIDTH) * 0.02)
         self.att = nn.MultiheadAttention(WIDTH, HEADS, batch_first=True)
         self.out = nn.Sequential(nn.LayerNorm(WIDTH), nn.Linear(WIDTH, WIDTH), nn.GELU(), nn.Linear(WIDTH, CLASSES))
 
-    def forward(self, x, mask, rel):
-        kv = self.inp(x.float()) + self.row(rel[..., 0]) + self.col(rel[..., 1])
+    def forward(self, x, mask, rel, geom):
+        kv = self.inp(x.float()) + self.row(rel[..., 0]) + self.col(rel[..., 1]) + self.geom(geom.float())
         q = self.queries.unsqueeze(0).expand(x.size(0), -1, -1)
         o = self.att(q, kv, kv, key_padding_mask=~mask, need_weights=False)[0]
         return self.out(o)                                                  # [B, SLOTS, CLASSES]
@@ -88,7 +89,7 @@ def sample_loss(logits: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return (ce.sum(1) / valid.sum(1)).mean()
 
 
-def train_head(x, mask, rel, y, steps: int = STEPS, seed: int = SEED, device: str = "cpu") -> Head:
+def train_head(x, mask, rel, geom, y, steps: int = STEPS, seed: int = SEED, device: str = "cpu") -> Head:
     torch.manual_seed(seed)
     head = Head(x.shape[-1]).to(device)
     opt = torch.optim.AdamW(head.parameters(), lr=LR, weight_decay=WD)
@@ -98,7 +99,7 @@ def train_head(x, mask, rel, y, steps: int = STEPS, seed: int = SEED, device: st
         if len(order) < BATCH:
             order += torch.randperm(len(y), generator=g).tolist()
         idx, order = order[:BATCH], order[BATCH:]
-        logits = head(x[idx].to(device), mask[idx].to(device), rel[idx].to(device))
+        logits = head(x[idx].to(device), mask[idx].to(device), rel[idx].to(device), geom[idx].to(device))
         loss = sample_loss(logits, y[idx].to(device))
         if not torch.isfinite(loss):
             raise RuntimeError("non-finite readout loss")
@@ -108,11 +109,12 @@ def train_head(x, mask, rel, y, steps: int = STEPS, seed: int = SEED, device: st
     return head.eval()
 
 
-def predict(head, x, mask, rel, device: str = "cpu", batch: int = 256) -> List[List[int]]:
+def predict(head, x, mask, rel, geom, device: str = "cpu", batch: int = 256) -> List[List[int]]:
     out = []
     with torch.no_grad():
         for s in range(0, len(x), batch):
-            out += head(x[s:s + batch].to(device), mask[s:s + batch].to(device), rel[s:s + batch].to(device)).argmax(-1).cpu().tolist()
+            out += head(x[s:s + batch].to(device), mask[s:s + batch].to(device), rel[s:s + batch].to(device),
+                        geom[s:s + batch].to(device)).argmax(-1).cpu().tolist()
     return out
 
 
@@ -125,8 +127,9 @@ def _load(name, rel):
 
 
 def ambiguous(qs: List[Dict], side: int) -> List[bool]:
-    """Questions whose region cells on this grid are exactly those of another question of the same picture with a
-    different target: the head (which gets no field or object name) cannot tell them apart -- a ceiling of the grid."""
+    """Questions whose region CELLS on this grid are exactly those of another question of the same picture with a
+    different target -- a difficulty slice defined before the run (critic EXP49-R1-01: with the continuous box geometry
+    the head's inputs no longer coincide; reported apart only, the conditions use all questions)."""
     ex = _load("exp49_extract", "extract.py")
     reg = [tuple(ex.region(q["box"], q["width"], q["height"], side)[0]) for q in qs]
     by = defaultdict(list)
@@ -209,8 +212,9 @@ def readout(qs: List[Dict], pred: List[List[int]], donor: List[List[int]], y: Li
         keys = sorted(cl)
         if amb is not None:
             ua = [i for i in idx if not amb[i]]
-            res["ambiguous_questions"] = len(idx) - len(ua)
-            res["exact_unambiguous"] = sum(right[i] for i in ua) / len(ua) if ua else None
+            sl = [i for i in idx if amb[i]]
+            res["cell_collision_slice"] = {"questions": len(sl), "exact": sum(right[i] for i in sl) / len(sl) if sl else None,
+                                           "exact_outside": sum(right[i] for i in ua) / len(ua) if ua else None}
         res["real_minus_donor_ci"] = r41.interval(lambda fs: macro(fs, "real_minus_donor"), keys,
                                                   lambda ks: [f for k in ks for f in sorted(cl[k])])["ci95"]
         res["clusters"] = len(keys)
@@ -229,17 +233,79 @@ def conditions(r: Dict) -> Dict:
     return {"validity": bool(valid_head("fit_L")), "invest_original": invest("tune_O"), "invest_L": invest("tune_L")}
 
 
+def status(c: Dict) -> Dict[str, str]:
+    """Per layout, what a layer's result may say: positive evidence, a valid head below the investment condition, or a
+    readout that was not learned (critic EXP49-R1-03: a low score of an invalid head is never a negative finding)."""
+    def one(invest):
+        if invest:
+            return "positive"
+        return "valid, below the condition" if c["validity"] else "not learned: not located"
+    return {"original": one(c["invest_original"]), "L": one(c["invest_L"])}
+
+
 def branch(c: Dict[str, Dict]) -> str:
-    s, p = c["siglip"], c["proj"]
-    if not (s["validity"] or p["validity"]):
-        return "readout not learned (fit_L validity failed for both heads): no bottleneck located"
-    if s["invest_original"] and p["invest_original"]:
+    s, p = status(c["siglip"]), status(c["proj"])
+    if s["original"] == "positive" and p["original"] == "positive":
         return "both layers readable on the original pictures: next, the path from the question to the content and the options"
-    if s["invest_original"] and not p["invest_original"]:
-        return "SigLIP readable, projector not: next, local number supervision of the projection / shared visual path"
-    if (s["invest_L"] or p["invest_L"]) and not (s["invest_original"] or p["invest_original"]):
-        return "only L readable: next, a fixed multi-view / local-detail encoding of the real input"
-    return "mixed / not located: report the raw numbers"
+    if s["original"] == "positive" and p["original"] == "valid, below the condition":
+        return "SigLIP readable, projector below the condition with a valid head: next, local number supervision of the projection / shared visual path"
+    if s["original"] == "positive" and p["original"].startswith("not learned"):
+        return "SigLIP readable on the original pictures; the projector readout was not learned: projector not located"
+    l_pos = [k for k, v in (("siglip", s), ("proj", p)) if v["L"] == "positive"]
+    if l_pos and all(v["original"] == "valid, below the condition" for k, v in (("siglip", s), ("proj", p)) if k in l_pos):
+        return "only L readable (original below the condition with a valid head): next, a fixed multi-view / local-detail encoding"
+    if not (c["siglip"]["validity"] or c["proj"]["validity"]):
+        return "readout not learned (fit_L validity failed for both heads): no bottleneck located"
+    return "mixed / not located: report the raw numbers (siglip %s, projector %s)" % (s, p)
+
+
+def write_details(path: str, qs: List[Dict], pred: List[List[int]], donor: List[List[int]], donor_idx: List[int], ident: Dict) -> str:
+    """Every question's real and donor slot predictions, parses and keys, bound to the features / questions (EXP49-R1-02)."""
+    with open(path, "w") as fh:
+        fh.write(json.dumps({"identity": ident}) + "\n")
+        for i, q in enumerate(qs):
+            dr, dd = decode(pred[i]), decode(donor[i])
+            fh.write(json.dumps({"key": q["key"], "target": q["target"], "pred": pred[i], "pred_text": dr["text"], "pred_valid": dr["valid"],
+                                 "donor_key": qs[donor_idx[i]]["key"] if q["twin_changed"] else None, "donor": donor[i],
+                                 "donor_text": dd["text"], "donor_valid": dd["valid"]}) + "\n")
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+
+def read_details(path: str, qs: List[Dict]):
+    """(pred, donor) lists in question order from a details file; refused unless it holds every question once, with the
+    question file's target and donor (the twin, for value-changed twins)."""
+    lines = [json.loads(x) for x in open(path) if x.strip()]
+    rows = lines[1:]
+    by = {}
+    for r in rows:
+        if r["key"] in by:
+            raise SystemExit("%s: %s twice" % (path, r["key"]))
+        by[r["key"]] = r
+    if set(by) != {q["key"] for q in qs}:
+        raise SystemExit("%s: %d questions missing, %d unknown" % (path, len({q["key"] for q in qs} - set(by)), len(set(by) - {q["key"] for q in qs})))
+    for q in qs:
+        r = by[q["key"]]
+        if r["target"] != q["target"] or r["donor_key"] != (q["twin"] if q["twin_changed"] else None):
+            raise SystemExit("%s: %s target or donor differs from the question file" % (path, q["key"]))
+    return [by[q["key"]]["pred"] for q in qs], [by[q["key"]]["donor"] for q in qs], lines[0]["identity"]
+
+
+def recompute(questions: str, out: str) -> Dict:
+    """The report from the saved details only (no model, no head): the same readout, conditions and branch."""
+    qs = [json.loads(x) for x in open(questions) if x.strip()]
+    y = [labels(q["target"]) for q in qs]
+    res: Dict = {"layers": {}}
+    for layer in ("siglip", "proj"):
+        path = os.path.join(out, "details_%s.jsonl" % layer)
+        if not os.path.exists(path):
+            res["layers"][layer] = "incomplete: no details"
+            continue
+        pred, donor, _ = read_details(path, qs)
+        ro = readout(qs, pred, donor, y, ambiguous(qs, 16 if layer == "siglip" else 8))
+        res["layers"][layer] = {"readout": ro, "conditions": conditions(ro)}
+    res["branch"] = branch({k: v["conditions"] for k, v in res["layers"].items()}) if all(isinstance(v, dict) for v in res["layers"].values()) \
+        else "incomplete: a layer is missing"
+    return res
 
 
 def main(argv=None) -> int:
@@ -247,7 +313,12 @@ def main(argv=None) -> int:
     ap.add_argument("--questions", default="data/exp49/questions.jsonl")
     ap.add_argument("--features", default="runs/exp49")
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--recompute", action="store_true", help="the report from the saved details only (no model)")
     a = ap.parse_args(argv)
+    if a.recompute:
+        res = recompute(a.questions, a.features)
+        print(json.dumps({"branch": res["branch"], "conditions": {k: v["conditions"] for k, v in res["layers"].items() if isinstance(v, dict)}}, indent=1))
+        return 0
     info = json.load(open(os.path.join(a.features, "features.json")))
     if info["questions_sha256"] != hashlib.sha256(open(a.questions, "rb").read()).hexdigest() or \
             info["features_sha256"] != hashlib.sha256(open(os.path.join(a.features, "features.npz"), "rb").read()).hexdigest():
@@ -258,30 +329,38 @@ def main(argv=None) -> int:
     train = [i for i, q in enumerate(qs) if q["set"] in ("fit_O", "fit_L")]
     key_i = {q["key"]: i for i, q in enumerate(qs)}
     donor_idx = [key_i[q["twin"]] if q["twin"] else i for i, q in enumerate(qs)]
+    ident = {"features_sha256": info["features_sha256"], "questions_sha256": info["questions_sha256"], "model": info["model"]}
     res: Dict = {"features": info, "training": {"questions": len(train), "lr": LR, "weight_decay": WD, "batch": BATCH, "steps": STEPS,
                                                 "seed": SEED, "width": WIDTH, "heads": HEADS, "slots": SLOTS},
-                 "oracle": "the target box selects the region tokens (not available to the product)", "layers": {}}
+                 "oracle": "the target box selects the region tokens and gives their geometry (not available to the product)", "layers": {}}
     for layer in ("siglip", "proj"):
-        x, m, r = torch.from_numpy(z[layer]), torch.from_numpy(z[layer + "_mask"]), torch.from_numpy(z[layer + "_rel"])
+        x, m = torch.from_numpy(z[layer]), torch.from_numpy(z[layer + "_mask"])
+        r, g = torch.from_numpy(z[layer + "_rel"]), torch.from_numpy(z[layer + "_geom"])
         random.seed(SEED)
-        head = train_head(x[train], m[train], r[train], y[train], device=a.device)
-        pred = predict(head, x, m, r, a.device)
-        donor = predict(head, x[donor_idx], m[donor_idx], r[donor_idx], a.device)
+        head = train_head(x[train], m[train], r[train], g[train], y[train], device=a.device)
+        torch.save(head.state_dict(), os.path.join(a.features, "head_%s.pt" % layer))
+        pred = predict(head, x, m, r, g, a.device)
+        donor = predict(head, x[donor_idx], m[donor_idx], r[donor_idx], g[donor_idx], a.device)
+        dsha = write_details(os.path.join(a.features, "details_%s.jsonl" % layer), qs, pred, donor, donor_idx, ident)   # before resampling
         ro = readout(qs, pred, donor, y.tolist(), ambiguous(qs, 16 if layer == "siglip" else 8))
-        res["layers"][layer] = {"readout": ro, "conditions": conditions(ro)}
+        res["layers"][layer] = {"readout": ro, "conditions": conditions(ro), "status": status(conditions(ro)), "details_sha256": dsha,
+                                "head_sha256": hashlib.sha256(open(os.path.join(a.features, "head_%s.pt" % layer), "rb").read()).hexdigest()}
     res["branch"] = branch({k: v["conditions"] for k, v in res["layers"].items()})
+    rc = recompute(a.questions, a.features)
+    res["recompute_matches"] = all(json.dumps(rc["layers"][k]["readout"], sort_keys=True, default=str) == json.dumps(res["layers"][k]["readout"], sort_keys=True, default=str)
+                                   for k in res["layers"]) and rc["branch"] == res["branch"]
     os.makedirs(a.features, exist_ok=True)
     json.dump(res, open(os.path.join(a.features, "report.json"), "w"), indent=1, default=str)
     lines = []
     for layer, v in res["layers"].items():
-        for s, x in v["readout"].items():
+        for s_, x in v["readout"].items():
             lines.append("%-6s %-6s exact %.3f (%s) valid %.3f chars %.3f both %.3f twin %.3f same %.3f real-donor %+.3f %s follows %.3f" % (
-                layer, s, x["exact"], {f: None if x["exact:" + f]["value"] is None else round(x["exact:" + f]["value"], 3) for f in FIELDS},
+                layer, s_, x["exact"], {f: None if x["exact:" + f]["value"] is None else round(x["exact:" + f]["value"], 3) for f in FIELDS},
                 x["valid"], x["chars"] or 0, x["both"], x["twin"], x["same"], x["real_minus_donor"],
                 [round(c, 3) for c in x["real_minus_donor_ci"]], x["donor_follows"]) +
-                " ambiguous %s exact without them %s" % (x.get("ambiguous_questions"), x.get("exact_unambiguous")))
-        lines.append("%s conditions %s" % (layer, v["conditions"]))
-    lines.append("branch: %s" % res["branch"])
+                " cell-collision slice %s" % x.get("cell_collision_slice"))
+        lines.append("%s conditions %s status %s" % (layer, v["conditions"], v["status"]))
+    lines.append("branch: %s; recompute from details matches: %s" % (res["branch"], res["recompute_matches"]))
     open(os.path.join(a.features, "report.txt"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
