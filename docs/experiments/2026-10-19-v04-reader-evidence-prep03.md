@@ -337,3 +337,24 @@
   - 或者改从已有前向直接输出稳定的 log-prob；
   - 用 tiny 夹具验证。
 - 合成确认的统计权重：以图为单位，每张图一道比较题，权重相同。
+
+### 5.6 5.1 / 5.2 的 CPU 实现（分支 v04-reading-entry，基线 3f22b8d；不加载真实权重）
+
+- 基线说明：develop（a9022cd）缺少读取链代码（reading.py 的校正器等在 exp 分支上），所以从 v04-evidence-prep 拉分支；它与 develop 只差 develop 上的一篇 exp57 结果文档。
+- 已实现：
+  - infer.resolve_request / resolve_checkpoint / picture_identity；
+  - Decider.use_raw_temperatures 与 diagnostics；
+  - Reading 的 predict / cfg / model / tok / use_raw_temperatures、先统一解析再路由、route 和像素记录、规则比对（check_rules；发布入口 full_rules）；
+  - write_bundle 写入 header / table_format / rules_sha256；
+  - devision.load(reading=auto|on|off)；devision-eval / devision-serve 的 --reading / --revision；/health 返回 reading 状态；
+  - evaluate 记录 route / reading_domain / 像素哈希，逐请求核对，汇总写 reading；devision-eval 记录 runtime_code；
+  - 带 reading/ 时 calibrate 拒绝运行；
+  - scripts/release/rebind.py（clone / bind，lineage）；
+  - check_eval：freeze 记录 reading 和代码参考，参考来自新进程的探针；content 检查 on 证据和代码身份（实际载入的模块必须都在参考里、内容相同，必需模块必须载入）；结果目录落在绑定的 checkpoint 之内时 freeze 拒绝；
+  - hf.build 整树复制、不改 config、核对推理文件。
+- 实现时发现：只评测的 YAML 中，checkpoint 的上一级没有 run.json 时，结果会写进 checkpoint 目录本身，会改变被冻结的树。所以候选必须放在带 run.json 的轮次目录下（例如 runs/v04-candidate/stage），freeze 已对这种情况拒绝。
+- 夹具：tests/model/test_reading_entry.py（12 项）、tests/release/test_reading_lifecycle.py（7 项）。
+- 尚未实现：
+  - 干净安装核验（hf.py verify 在新虚拟环境中从 wheel 安装，再按模块名比对运行身份）：比对函数 code_problems 已有，安装流程本身未接；
+  - temperature_by_route：只在 5.3 选中分支 1 后另行送审；
+  - rl_calib 用 log p 拟合时的有限性检查：属于拟温工具，跑之前随工具一起实现。

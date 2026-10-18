@@ -49,6 +49,7 @@ TEMPLATES = {
     "What is the distance between the magnets in Pair 2?": ("Pair 2", "distance between the magnets"),
 }
 DOMAINS = {"temperature": list(TEMPLATES)[:4], "magnets": list(TEMPLATES)[4:]}
+TABLE_FORMAT = "exp54-v1"              # serialise(): the state text, HEADER, one "object: quantity = value" row per value
 
 
 # ------------------------------------------------------------------ routing (question text only)
@@ -270,6 +271,38 @@ def tree_sha(path: str) -> str:
     return hashlib.sha256(json.dumps(sorted(items)).encode()).hexdigest()
 
 
+def rules() -> Dict[str, Any]:
+    """The reading rules in this code, as a bundle's reading.json records them (JSON round trip: tuples -> lists)."""
+    return json.loads(json.dumps({"policy": POLICY, "grid": GRID, "templates": TEMPLATES, "domains": DOMAINS, "header": HEADER,
+                                  "table_format": TABLE_FORMAT, "corrector": CORRECTOR}))
+
+
+def rules_sha(r: Dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(r, sort_keys=True).encode()).hexdigest()
+
+
+def check_rules(ident: Dict[str, Any], full: bool = False) -> List[str]:
+    """The rules a bundle declares that differ from this code's (empty: all agree). Older bundles (exp66-exp71) carry
+    no header / table_format / rules_sha256: they are compared on the rest, unless `full` (the release entry), which
+    requires all three."""
+    code = rules()
+    bad = [k for k in ("policy", "grid", "templates", "domains") if ident.get(k) != code[k]]
+    if "corrector.pt" in ident.get("sha256", {}) and ident.get("corrector") != code["corrector"]:
+        bad.append("corrector")
+    for k in ("header", "table_format"):
+        if (k in ident or full) and ident.get(k) != code[k]:
+            bad.append(k)
+    if ("rules_sha256" in ident or full) and ident.get("rules_sha256") != rules_sha(declared_rules(ident)):
+        bad.append("rules_sha256")
+    return bad
+
+
+def declared_rules(ident: Dict[str, Any]) -> Dict[str, Any]:
+    """The rule entries of a reading.json (the corrector rule only when the bundle has a corrector)."""
+    keys = ["policy", "grid", "templates", "domains", "header", "table_format"] + (["corrector"] if "corrector.pt" in ident.get("sha256", {}) else [])
+    return {k: ident.get(k) for k in keys}
+
+
 class Reading:
     """The frozen reader bound to one decision checkpoint (a `Decider` with local views 12 / 0.25 / T)."""
 
@@ -279,14 +312,39 @@ class Reading:
             raise ValueError("reading mode needs the decision checkpoint's local views 12 / 0.25 / T")
         self.decider, self.selector, self.head, self.identity = decider, selector.eval(), head.eval(), identity
         self.corrector = corrector.eval() if corrector is not None else None     # optional (exp69): speed templates only
+        self.reading_status: Dict[str, Any] = {"mode": "on", "reading_json_sha256": None, "rules_sha256": identity.get("rules_sha256"),
+                                               "corrector": corrector is not None}
         for p in list(selector.parameters()) + list(head.parameters()) + (list(corrector.parameters()) if corrector is not None else []):
             p.requires_grad_(False)
 
+    # the ordinary decider's interface, on the same objects (not copies): eval, serve and callers use these
+    @property
+    def cfg(self):
+        return self.decider.cfg
+
+    @property
+    def model(self):
+        return self.decider.model
+
+    @property
+    def tok(self):
+        return self.decider.tok
+
+    def use_raw_temperatures(self) -> None:
+        """Every temperature this reader applies set to 1: the supported questions are decided by the same Decider,
+        so this covers both paths."""
+        self.decider.use_raw_temperatures()
+
+    def predict(self, state: Any, questions: Any, image: Any = None) -> Dict:
+        """Same as `decide`, under Laya's name."""
+        return self.decide(state, questions, image=image)
+
     @classmethod
-    def load(cls, decision_dir: str, bundle_dir: str, device: str = "auto") -> "Reading":
-        """The verified entry: checks every sha256 in the bundle's reading.json -- its two component files and the
-        decision checkpoint's weights / config / tokenizer -- and only then loads the Decider from that same
-        `decision_dir` itself (no caller-supplied model), then the components."""
+    def load(cls, decision_dir: str, bundle_dir: str, device: str = "auto", full_rules: bool = False) -> "Reading":
+        """The verified entry: checks every sha256 in the bundle's reading.json -- its component files and the
+        decision checkpoint's weights / config / tokenizer -- and its declared rules against this code (`check_rules`;
+        `full_rules`: header / table format / rules hash required, as the release entry does), and only then loads
+        the Decider from that same `decision_dir` itself (no caller-supplied model), then the components."""
         from .infer import Decider, best_device
         ident = json.load(open(os.path.join(bundle_dir, "reading.json")))
         checks = {"selector.pt": sha(os.path.join(bundle_dir, "selector.pt")), "head.pt": sha(os.path.join(bundle_dir, "head.pt")),
@@ -295,12 +353,15 @@ class Reading:
                   "config.json": sha(os.path.join(decision_dir, "config.json")),
                   "tokenizer": tree_sha(os.path.join(decision_dir, "tokenizer"))}
         bad = [k for k, v in checks.items() if ident["sha256"].get(k) != v]
-        if "corrector.pt" in ident["sha256"] and ident.get("corrector") != CORRECTOR:
-            bad = bad or ["corrector rule"]
-        if bad or ident.get("policy") != POLICY or ident.get("grid") != GRID:
-            raise ValueError("reading bundle does not bind this checkpoint / its components: %s" % (bad or "policy / grid"))
+        if bad:
+            raise ValueError("reading bundle does not bind this checkpoint / its components: %s" % bad)
+        rule_bad = check_rules(ident, full=full_rules)
+        if rule_bad:
+            raise ValueError("reading bundle's rules differ from this code: %s" % rule_bad)
         decider = Decider.load(decision_dir, device=best_device() if device == "auto" else device)
-        return cls._attach(decider, bundle_dir, ident)
+        r = cls._attach(decider, bundle_dir, ident)
+        r.reading_status["reading_json_sha256"] = sha(os.path.join(bundle_dir, "reading.json"))
+        return r
 
     @classmethod
     def _attach(cls, decider, bundle_dir: str, ident: Dict) -> "Reading":
@@ -382,27 +443,31 @@ class Reading:
         return {"table": table, "reads": reads, "seconds": time.perf_counter() - t0}
 
     def decide(self, state: Any, questions: Dict[str, Dict], image: Any = None, diagnostics: Optional[Dict] = None) -> Dict:
-        """Ordinary decide's response (Jev structure unchanged). Supported questions are decided on the text state plus
-        the table read from `image`; the others, and every request without an image or without a supported question,
-        go through ordinary decide unchanged. `diagnostics` (optional dict) receives the reads and timings.
+        """Ordinary decide's response (Jev structure unchanged). The request is first resolved exactly as ordinary
+        decide resolves it (`infer.resolve_request`: question checks, the picture from `image=` or an image part in
+        `state`, both refused); then supported questions are decided on the text state plus the table read from that
+        picture, and the others -- and every request without a picture or without a supported question -- go through
+        ordinary decide unchanged. `diagnostics` (optional dict) receives each question's route ("read" /
+        "ordinary"), the picture's pixel identity, and for a read request the reads, table, state and timing.
         Encoding: a request whose questions are all supported encodes the picture once; a mixed request encodes it
         twice (once for the reading, once in ordinary decide for the other questions)."""
-        from .infer import _split_state
-        templates = reads_for(questions)
-        if image is None or not templates:
-            return self.decider.decide(state, questions, image=image)
-        supported = {k: q for k, q in questions.items() if domain_of(q.get("instructions", "")) is not None}
+        from .infer import picture_identity, resolve_request
+        text_state, picture = resolve_request(state, questions, image)
+        templates = reads_for(questions) if picture is not None else []
+        supported = {k: q for k, q in questions.items() if templates and domain_of(q.get("instructions", "")) is not None}
+        if diagnostics is not None:
+            diagnostics.update(route={k: ("read" if k in supported else "ordinary") for k in questions}, picture=picture_identity(picture))
+        if not supported:
+            return self.decider._decide(text_state, questions, picture)
         others = {k: q for k, q in questions.items() if k not in supported}
-        text_state, state_image = _split_state(state)
-        if state_image is not None:
-            raise ValueError("give the image as image=, not inside state, in reading mode")
-        r = self.read(image, templates)
+        r = self.read(picture, templates)
         text = text_state if isinstance(text_state, str) else (json.dumps(text_state) if text_state else "")
-        res = self.decider.decide(serialise(text, r["table"]), supported, image=None)
+        res = self.decider._decide(serialise(text, r["table"]), supported, None)
         if others:
-            rest = self.decider.decide(state, others, image=image)
+            rest = self.decider._decide(text_state, others, picture)
             res["answers"].update(rest["answers"])
             res["usage"] = {k: res["usage"].get(k, 0) + rest["usage"].get(k, 0) for k in res["usage"]}
+        res["answers"] = {k: res["answers"][k] for k in questions}       # the request's question order
         if diagnostics is not None:
             diagnostics.update(table=r["table"], reads=r["reads"], read_seconds=r["seconds"], state=serialise(text, r["table"]))
         return res
@@ -419,7 +484,8 @@ def write_bundle(out_dir: str, decision_dir: str, selector_pt: str, head_pt: str
     shutil.copyfile(head_pt, os.path.join(out_dir, "head.pt"))
     if corrector_pt is not None:
         shutil.copyfile(corrector_pt, os.path.join(out_dir, "corrector.pt"))
-    ident = {"policy": POLICY, "grid": GRID, "templates": TEMPLATES, "domains": DOMAINS, "dims": dims or {"selector": [768, 1024], "head": 768},
+    ident = {"policy": POLICY, "grid": GRID, "templates": TEMPLATES, "domains": DOMAINS, "header": HEADER, "table_format": TABLE_FORMAT,
+             "dims": dims or {"selector": [768, 1024], "head": 768},
              "sha256": {"selector.pt": sha(os.path.join(out_dir, "selector.pt")), "head.pt": sha(os.path.join(out_dir, "head.pt")),
                         "model.safetensors": sha(os.path.join(decision_dir, "model.safetensors")),
                         "config.json": sha(os.path.join(decision_dir, "config.json")),
@@ -428,9 +494,11 @@ def write_bundle(out_dir: str, decision_dir: str, selector_pt: str, head_pt: str
     if corrector_pt is not None:
         ident["sha256"]["corrector.pt"] = sha(os.path.join(out_dir, "corrector.pt"))
         ident["corrector"] = CORRECTOR
+    ident = json.loads(json.dumps(ident))
+    ident["rules_sha256"] = rules_sha(declared_rules(ident))
     with open(os.path.join(out_dir, "reading.json"), "w") as fh:
         json.dump(ident, fh, indent=1)
     return ident
 
 
-__all__ = ["Reading", "write_bundle", "reads_for", "domain_of", "TEMPLATES", "UNREADABLE", "fmt", "decode"]
+__all__ = ["Reading", "write_bundle", "rules", "check_rules", "reads_for", "domain_of", "TEMPLATES", "UNREADABLE", "fmt", "decode"]

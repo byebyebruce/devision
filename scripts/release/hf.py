@@ -82,6 +82,13 @@ def sha256(path: str) -> str:
     return h.hexdigest()
 
 
+def inference_hashes(path: str) -> Dict[str, str]:
+    """sha256 of a file, or of every file under a directory (relative names)."""
+    if os.path.isfile(path):
+        return {"": sha256(path)}
+    return {os.path.relpath(os.path.join(b, f), path): sha256(os.path.join(b, f)) for b, _, fs in os.walk(path) for f in fs}
+
+
 def files_of(folder: str) -> List[str]:
     return sorted(os.path.relpath(os.path.join(d, f), folder) for d, _, fs in os.walk(folder) for f in fs
                   if not f.startswith(".") or f == ".gitattributes")
@@ -322,7 +329,8 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(os.path.join(out, "evaluation"))
-    for f in CHECKPOINT:
+    bound = os.path.isdir(os.path.join(ckpt, "reading"))     # the reading combination: evaluated files are copied as they are
+    for f in CHECKPOINT + (["reading"] if bound else []):
         src, dst = os.path.join(ckpt, f), os.path.join(out, f)
         if os.path.isdir(src):
             shutil.copytree(src, dst)
@@ -332,8 +340,20 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
     # before 2026-10-07 calls it devision_config.json
     from devision.infer import config_path
     config = load_json(config_path(ckpt))
-    config["model_name"] = cfg["model_name"]
-    write_json(os.path.join(out, "config.json"), config)
+    if bound:
+        # the bundle binds config.json byte for byte, and the evaluation ran on it: the name is set before binding
+        # (scripts/release/rebind.py), never rewritten here
+        if config.get("model_name") != cfg["model_name"]:
+            raise SystemExit("%s: config model_name %r is not the release's %r; set it before binding the reading bundle"
+                             % (ckpt, config.get("model_name"), cfg["model_name"]))
+        shutil.copyfile(os.path.join(ckpt, "config.json"), os.path.join(out, "config.json"))
+        changed = [f for f in CHECKPOINT + ["config.json", "reading"]
+                   if inference_hashes(os.path.join(ckpt, f)) != inference_hashes(os.path.join(out, f))]
+        if changed:
+            raise SystemExit("built inference files differ from the evaluated checkpoint: %s" % changed)
+    else:
+        config["model_name"] = cfg["model_name"]
+        write_json(os.path.join(out, "config.json"), config)
     res = results(round_dir, config)
     internal_round = res.pop("round")      # only the version (v0.2) is public; the training round stays in provenance
     res["cpu_latency"] = cpu_latency(cfg.get("cpu_latency"), os.path.join(cfg["round"], cfg["stage"]))

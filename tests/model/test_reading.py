@@ -228,5 +228,5 @@ def test_corrector_bundle_refusal(tmp_path, change):
         ident = json.loads(p.read_text())
         ident["corrector"]["grow_x_px"] = 12.0
         p.write_text(json.dumps(ident))
-    with pytest.raises(ValueError, match="does not bind"):
+    with pytest.raises(ValueError, match="does not bind" if change == "file" else "rules differ from this code"):
         R.Reading.load(str(tmp_path / "ck"), str(tmp_path / "bundle_c"), device="cpu")
