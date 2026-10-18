@@ -73,6 +73,30 @@ def bound_d72() -> Dict[str, str]:
     return {"manifest": sha(os.path.join(D72, "MANIFEST.json")), **m["sha256"]}
 
 
+def bound_exp63() -> Dict:
+    """EXP63's protection baseline as it is actually used (critic EXP72-R2-01): exp65.bound_e63 (EXP63's run files and
+    registry, its frozen end, its frozen exist / science records), which must also equal the EXP63 record in EXP68's
+    START -- whose own sha256 is pinned (exp70.E68_RUN) -- so an internally consistent replacement is refused."""
+    b = e65.bound_e63()
+    if b != json.load(open(os.path.join(e70.E68, "START.json")))["exp63"]:
+        raise SystemExit("EXP63's baseline is not the one EXP68's START bound")
+    return b
+
+
+def frozen_state(run: str):
+    """(state, weights) of an arm's frozen end (critic EXP72-R2-02): FROZEN.json or a checkpoint file absent -> missing;
+    present but truncated, malformed or with other sha256 -> invalid (the reason kept); else completed."""
+    if not os.path.exists(os.path.join(run, "FROZEN.json")):
+        return "missing: no FROZEN.json in %s" % run, None
+    absent = [f for f in ("model.safetensors", "config.json") if not os.path.exists(os.path.join(run, "stage2", f))]
+    if absent:
+        return "missing: %s absent in %s/stage2" % (absent, run), None
+    try:
+        return "completed", fz.check(run, [])["weights"]
+    except (SystemExit, ValueError, KeyError, TypeError, OSError) as e:
+        return "invalid: frozen identity of %s: %s" % (run, e), None
+
+
 def check_yamls() -> None:
     import yaml
     y = {a: yaml.safe_load(open(YAML[a])) for a in ARMS}
@@ -111,7 +135,7 @@ def stage_start(deadline: int, out: str = OUT) -> Dict:
     from devision.reading import tree_sha
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
-         "files": {f: sha(f) for f in FILES}, "exp68": e70.bound_e68(), "exp68_data": e68.bound_d68(), "exp70_data": e70.bound_d70(),
+         "files": {f: sha(f) for f in FILES}, "exp63": bound_exp63(), "exp68": e70.bound_e68(), "exp68_data": e68.bound_d68(), "exp70_data": e70.bound_d70(),
          "data": bound_d72(), "sets": {a: {n: sha(p) for n, p in d.items()} for a, d in SETS.items()},
          "tokenizer": tree_sha(os.path.join(X_RUN, "stage2", "tokenizer")), "exp57_screens": fz.check(e63.E57, list(e57.SCREENS))["evals"],
          "exp49_questions": sha(e54.QUESTIONS), "exp54_inputs_P": sha(os.path.join(e54.OUT, "inputs_P.jsonl")),
@@ -130,6 +154,8 @@ def check_start(out: str = OUT, code: bool = True) -> Dict:
         bad = [f for f, h in st["files"].items() if sha(f) != h]
         if bad:
             raise SystemExit("code differs from START: %s" % bad)
+    if bound_exp63() != st["exp63"]:
+        raise SystemExit("EXP63's protection baseline differs from START")
     if e70.bound_e68() != st["exp68"] or e68.bound_d68() != st["exp68_data"] or e70.bound_d70() != st["exp70_data"] or bound_d72() != st["data"]:
         raise SystemExit("EXP68 / data/exp68 / data/exp70 / data/exp72 differ from START")
     if {a: {n: sha(p) for n, p in d.items()} for a, d in SETS.items()} != st["sets"]:
@@ -303,10 +329,9 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
     for arm, run in ARMS.items():
         a: Dict[str, Any] = {}
         res["arms"][arm] = a
-        try:
-            weights = fz.check(run, [])["weights"]
-        except SystemExit as e:
-            res["states"][arm] = "missing: %s" % e
+        state, weights = frozen_state(run)
+        if state != "completed":
+            res["states"][arm] = state                                        # the other arm is still computed
             continue
         for n in REQUIRED + ("fit",):
             rows, inputs = inputs_of(arm, n)

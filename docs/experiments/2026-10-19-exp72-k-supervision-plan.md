@@ -95,3 +95,22 @@
   - route 的边界：比较全过但 G = 0.979 → 停止；G = 0.98 → 读数项通过；保护失败 → 停止；K 臂未拟合、无增益、部分、incomplete / invalid 都有对应结论；raw 臂的 G 只报告、不阻断；
   - 报告级（假记录）：两臂记录相同 → 证据完整、增益为 0、走「无增益」分支；K 臂缺 G → incomplete；K 臂的 G 登记后被改 → invalid；K 臂保护低 0.05 → 停止；
   - run.sh stub：顺序 start → fid → 两臂训练 / freeze → decide → 两臂 exist / science → decide_fit → report；fid 失败时不训练、直接 finalize；默认 2,700 秒、留 120 秒。
+
+## 第 2 轮修正（评审 EXP72-R2-01 / R2-02 / DESIGN-02；未运行）
+
+- **R2-01 保护基线的身份**：
+  - 报告扣减的是 EXP63 的 exist / science 准确率，START 原来只绑定了 EXP57 的 screens。
+  - 现在 START 用 bound_exp63 登记 EXP63 的基线：先调用 exp65.bound_e63（EXP63 的运行文件和登记、冻结端点 3e8443e9 / 70c302c4、冻结的 exist / science 记录），再要求它等于 EXP68 START 里记录的 EXP63——EXP68 START 自己的 sha256 是固定的。
+  - check_start 每个阶段和报告都重核；不符就给 invalid，没有继续的路线。仍按实际 EXP63 扣分，不用 EXP57 代替。
+  - 夹具：在 EXP63 的逐文件链接副本里，把 exist 的摘要和明细一起换成另一份内部一致的结果（翻转一题，重算摘要的准确率）：
+    - FROZEN 不变 → 被冻结登记拒绝（changed after it was recorded）；
+    - FROZEN 也按新哈希重写 → 被「不是 EXP68 START 绑定的那个」拒绝；
+    - 两种情况下 check_start 和新的 stage_start 都拒绝，报告给 invalid。
+    - 原文件不变时可以通过（START 记录的就是它）。
+- **R2-02 冻结端点损坏**：每个臂的冻结核验改用 frozen_state：
+  - FROZEN.json 或检查点文件不存在 → missing（证据 incomplete）；
+  - 存在但截断、结构错误或 sha256 不符 → invalid（记录原因）；
+  - 该臂记录状态后，另一臂照常汇总，报告照常写出 report.json，整体不给路线。没有放宽 fz.check。
+  - 夹具（隔离的假臂目录，不碰真实权重）：FROZEN 缺失 → missing；FROZEN 截断 → invalid；权重缺失 → missing；sha 不符 → invalid。四种情况下 raw 臂的结果都保留、report.json 都写出、路线都以 incomplete / invalid 开头且没有路线。
+- **DESIGN-02**（运行前已被接受）：K 臂必须拟合；raw 臂未拟合时，只报告它的结果，不阻断。此时只能说「同预算下中间表示的监督适配收益」，不能说排除了优化或拟合差异后的纯泛化收益，也不能据此说 raw 路线普遍做不到。K 臂自己未拟合仍然停止，其他门槛不放宽。
+- 数据、配方、读出和门槛都不变；pytest scripts/exp72 17 项通过；pyright 0 错误。

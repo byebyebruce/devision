@@ -111,8 +111,9 @@ def fake_run(out, monkeypatch, skip=(), screens_low=False):
     ref = {(r["sample_id"], r["qid"]): r for r in m.e70.raw_registered()}
     m.e57.write_set(out, "fid", [ref[(rid, q)] for rid in sorted(rows) for q in rows[rid]["questions"]],
                     {"set": "fid", "start_sha256": s_sha, "inputs_sha256": m.e57.hash_inputs(inputs), "model": m.X_SHA, "temperature": "none (raw)", "image": None})
-    real = m.fz.check
-    monkeypatch.setattr(m.fz, "check", lambda run, ev: {"weights": FAKE["raw" if run.endswith("raw") else "k"], "evals": {}} if run in m.ARMS.values() else real(run, ev))
+    fake_runs = {"runs/exp72-raw": FAKE["raw"], "runs/exp72-k": FAKE["k"]}
+    real_state = m.frozen_state
+    monkeypatch.setattr(m, "frozen_state", lambda run: ("completed", fake_runs[run]) if run in fake_runs else real_state(run))
     e63s = {n: m.e57.screen_side(m.e65.E63, n, m.e57.SCREENS[n])[0] for n in m.e57.SCREENS}
     monkeypatch.setattr(m.e57, "screen", lambda run, n, *a, **k: {"new": e63s[n] - (0.05 if screens_low and run.endswith("-k") else 0.0)})
     cg = [json.loads(x) for x in open("runs/exp65/details_c_G.jsonl")][1:]
@@ -191,3 +192,84 @@ def test_run_order_failed_fid_and_limit(tmp_path):
     assert p.returncode == 4 and "train_raw" not in joined and "report --finalize" in joined
     s = open(os.path.join(ROOT, "scripts/exp72/run.sh")).read()
     assert "${EXP72_LIMIT:-2700}" in s and "${EXP72_RESERVE:-120}" in s
+
+
+# ------------------------------------------------------------------ round 2 (critic EXP72-R2-01 / R2-02)
+
+def exp63_copy(tmp_path, refreeze=False):
+    """runs/exp63 linked file by file, with eval/exist.{json,details.jsonl} replaced by another internally consistent
+    result (one answer flipped, the summary's accuracy recomputed); with refreeze, FROZEN.json re-records the new hashes."""
+    src = os.path.join(ROOT, "runs", "exp63")
+    dst = tmp_path / "exp63"
+    dst.mkdir()
+    for n in os.listdir(src):
+        if n not in ("eval", "FROZEN.json"):
+            os.symlink(os.path.join(src, n), dst / n)
+    (dst / "eval").mkdir()
+    for n in os.listdir(os.path.join(src, "eval")):
+        if not n.startswith("exist."):
+            os.symlink(os.path.join(src, "eval", n), dst / "eval" / n)
+    det = [json.loads(x) for x in open(os.path.join(src, "eval", "exist.details.jsonl"))]
+    r = det[0]
+    flip = next(o for o in r["probabilities"] if o != r["prediction"])
+    r["probabilities"] = {o: (0.9 if o == flip else 0.1) for o in r["probabilities"]}
+    r["prediction"], r["correct"] = flip, flip == r.get("gold_answer", flip)
+    (dst / "eval" / "exist.details.jsonl").write_text("".join(json.dumps(x) + "\n" for x in det))
+    summ = json.load(open(os.path.join(src, "eval", "exist.json")))
+    acc = sum(bool(x["correct"]) for x in det) / len(det)
+    summ["accuracy_all"] = acc
+    summ["accuracy"] = {k: (acc if v is not None else None) for k, v in summ["accuracy"].items()}
+    (dst / "eval" / "exist.json").write_text(json.dumps(summ, indent=2))
+    fr = json.load(open(os.path.join(src, "FROZEN.json")))
+    if refreeze:
+        fr["evals"]["exist"] = {f: m.sha(str(dst / "eval" / f)) for f in ("exist.json", "exist.details.jsonl")}
+    (dst / "FROZEN.json").write_text(json.dumps(fr, indent=1))
+    return str(dst), acc
+
+
+@data
+@pytest.mark.parametrize("refreeze,match", [(False, "changed after it was recorded"), (True, "not the one EXP68's START bound")])
+def test_exp63_baseline_bound(started, tmp_path, monkeypatch, refreeze, match):
+    st = m.check_start(started, code=False)
+    assert st["exp63"] == m.bound_exp63() and set(st["exp63"]["screens"]) == {"exist", "science"}
+    path, acc = exp63_copy(tmp_path, refreeze)
+    assert acc != pytest.approx(0.94701087, abs=1e-9)                                      # a different, consistent result
+    monkeypatch.setattr(m.e65, "E63", path)
+    with pytest.raises(SystemExit, match=match):
+        m.bound_exp63()
+    with pytest.raises(SystemExit):
+        m.check_start(started, code=False)
+    assert m.report(started)["route"].startswith("invalid")
+    with pytest.raises(SystemExit):
+        m.stage_start(0, out=str(tmp_path / "fresh"))
+
+
+def broken_arm(tmp_path, case):
+    run = tmp_path / "exp72-k"
+    (run / "stage2").mkdir(parents=True)
+    (run / "stage2" / "model.safetensors").write_bytes(b"weights")
+    (run / "stage2" / "config.json").write_text("{}")
+    good = {"weights": {"model.safetensors": m.sha(str(run / "stage2" / "model.safetensors")), "config.json": m.sha(str(run / "stage2" / "config.json"))},
+            "evals": {}}
+    if case == "frozen_truncated":
+        (run / "FROZEN.json").write_text(json.dumps(good)[:25])
+    elif case == "weights_missing":
+        (run / "FROZEN.json").write_text(json.dumps(good))
+        os.remove(run / "stage2" / "model.safetensors")
+    elif case == "wrong_sha":
+        (run / "FROZEN.json").write_text(json.dumps(dict(good, weights=dict(good["weights"], **{"model.safetensors": "0" * 64}))))
+    return str(run)
+
+
+@data
+@pytest.mark.parametrize("case,state", [("frozen_missing", "missing"), ("frozen_truncated", "invalid"), ("weights_missing", "missing"),
+                                        ("wrong_sha", "invalid")])
+def test_broken_frozen_arm(started, tmp_path, monkeypatch, case, state):
+    fake_run(started, monkeypatch)
+    k_run = broken_arm(tmp_path, case) if case != "frozen_missing" else broken_arm(tmp_path, "none")
+    monkeypatch.setattr(m, "ARMS", dict(m.ARMS, k=k_run))
+    res = m.report(started)
+    assert res["states"]["k"].startswith(state)
+    assert "fit_slice" in res["arms"]["raw"] and "G_reading" in res["arms"]["raw"]               # the other arm kept
+    assert os.path.exists(os.path.join(started, "report.json")) and json.load(open(os.path.join(started, "report.json")))["route"] == res["route"]
+    assert res["route"].startswith("incomplete" if state == "missing" else "invalid") and "no route" in res["route"]
