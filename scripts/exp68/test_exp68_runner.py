@@ -2,7 +2,8 @@
 """exp68's runner without a model: the arm is EXP65-C's on data/exp68 (anything else refused); START binds EXP63, EXP65
 (run, C's end and registered records), data/exp68 and refuses changes; the report reads C's reused EXP65 records and the
 arm's through the same checks and gives the pre-written decision (fixtures: the arm = C's own records -> does not
-meet; every diagnostic right -> meets; a missing new-diag file stays report-only); the run's order and limit."""
+meet; every diagnostic right -> meets, also with low but valid new diagnostics; a missing new diagnostic of X or C ->
+incomplete, a changed / inconsistent one -> invalid, both without a route); the run's order and limit."""
 import importlib.util
 import json
 import os
@@ -112,14 +113,50 @@ def test_report_arm_equal_to_c_does_not_meet(started, monkeypatch):
     assert a["diag68_conflict_gain_over_c"]["ci95"][0] > 0 and res["candidate_eligible"] is False
 
 
-@data
-def test_report_all_right_meets_and_new_diag_is_report_only(started, monkeypatch):
+def all_right_x():
     x = {c: records_of(m.E65, "c_" + c) for c in ("fit", "G", "P")}
     x["diag"] = right(m.inputs_of("diag")[0])
-    fake_run(started, monkeypatch, x, c68=False)                                            # no new-diag files at all
+    return x
+
+
+@data
+def test_report_meets_with_valid_new_diags_even_when_they_score_low(started, monkeypatch):
+    x = all_right_x()
+    x["diag68"] = right(m.inputs_of("diag68")[0], m.CLASSES)                 # every new-diag answer "sample B": low, but valid
+    fake_run(started, monkeypatch, x)
     res = m.report(started)
-    assert res["x"]["practical"] is True and res["decision"].startswith("the new data recipe meets")
-    assert res["states"]["x_diag68"].startswith("missing") and res["states"]["c_diag68"].startswith("missing")
+    assert res["new_diag_evidence"] == "completed" and res["x"]["diag68"]["accuracy"]["equal"] == 0.0
+    assert res["x"]["practical"] is True and res["decision"].startswith("the new data recipe meets")      # report-only in score
+
+
+@data
+@pytest.mark.parametrize("case", ["x_missing", "c_missing"])
+def test_missing_new_diag_gives_no_route(started, monkeypatch, case):
+    x = all_right_x()
+    if case != "x_missing":
+        x["diag68"] = right(m.inputs_of("diag68")[0])
+    fake_run(started, monkeypatch, x, c68=case != "c_missing")
+    res = m.report(started)
+    assert res["x"]["practical"] is True                                     # the metrics stay computed ...
+    assert res["new_diag_evidence"] == "incomplete" and res["decision"].startswith("incomplete") and "no route" in res["decision"]
+
+
+@data
+@pytest.mark.parametrize("case", ["changed_after_registration", "prediction_not_argmax"])
+def test_invalid_new_diag_gives_no_route(started, monkeypatch, case):
+    x = all_right_x()
+    x["diag68"] = right(m.inputs_of("diag68")[0])
+    if case == "prediction_not_argmax":
+        r = x["diag68"][0]
+        r["prediction"] = next(o for o in r["options"] if o != r["prediction"])                  # a legal option, not the argmax
+        r["correct"] = r["prediction"] == r["gold_answer"]
+    fake_run(started, monkeypatch, x)
+    if case == "changed_after_registration":
+        with open(os.path.join(started, "details_x_diag68.jsonl"), "a") as fh:
+            fh.write("\n")
+    res = m.report(started)
+    assert res["states"]["x_diag68"].startswith("invalid") and res["new_diag_evidence"] == "invalid"
+    assert res["decision"].startswith("invalid") and "no route" in res["decision"]
 
 
 @data

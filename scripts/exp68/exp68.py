@@ -245,6 +245,30 @@ def practical(g: Dict, diag: Optional[Dict], gain: Any, vs63: Dict) -> Any:
     return bool(all(v is True for v in g.values()) and all((diag[c]["accuracy"] or 0) >= 0.80 for c in CLASSES) and vs63["ok"] and gain is True)
 
 
+def read_state(out: str, name: str, e: BaseException) -> str:
+    """A failed read: "missing" when its details file does not exist, else "invalid: <reason>" (present but failing)."""
+    if not os.path.exists(os.path.join(out, "details_%s.jsonl" % name)):
+        return "missing"
+    return "invalid: %s" % e
+
+
+def evidence_state(states: Dict[str, str]) -> str:
+    """The new diagnostic is required evidence (critic EXP68-R2-01), though report-only in score: X's and C's files must
+    both be complete and valid. A missing file -> incomplete; present but failing its checks -> invalid."""
+    s = [states.get("x_diag68", "missing"), states.get("c_diag68", "missing")]
+    if all(v == "completed" for v in s):
+        return "completed"
+    if any(v.startswith("invalid") for v in s):
+        return "invalid"
+    return "incomplete"
+
+
+def route(evidence: str, p: Any) -> str:
+    if evidence != "completed":
+        return "%s: the new diagnostic of X or C is %s -- no route decision (the computed metrics are reported as they are)" % (evidence, evidence)
+    return decision(p)
+
+
 def decision(p: Any) -> str:
     if p == "incomplete":
         return "incomplete: a required item is missing -- no route decision"
@@ -280,7 +304,7 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
             c_recs[name] = e57.read_set(out_, "c_" + name, rows_, c_end, inp_)
             res["states"]["c_" + name] = "completed"
         except (SystemExit, OSError, ValueError, KeyError) as e:
-            res["states"]["c_" + name] = "missing / invalid: %s" % e
+            res["states"]["c_" + name] = read_state(out_, "c_" + name, e)
     a: Dict[str, Any] = {"comparison": {}, "paired": {}, "reading": {}, "screens": {}, "vs_exp63": {}}
     res["x"] = a
     recs: Dict[str, List[Dict]] = {}
@@ -296,7 +320,7 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
                 recs[c] = e57.read_set(out, "x_" + c, rows, weights, inputs)
                 res["states"]["x_" + c] = "completed"
             except (SystemExit, OSError, ValueError, KeyError) as e:
-                res["states"]["x_" + c] = "missing / invalid: %s" % e
+                res["states"]["x_" + c] = read_state(out, "x_" + c, e)
     qs53 = {q["key"]: q for q in jsonl(e54.QUESTIONS) if q["set"] == "rl_tune"}
     pin = e54.load_inputs(e54.OUT, "P")
     tune = {r["id"]: r for r in jsonl(e54.TUNE)}
@@ -339,7 +363,8 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
     scr = [a["vs_exp63"].get("screen:" + n) for n in e57.SCREENS]
     vs = {"state": "incomplete"} if None in scr else {"ok": all(x["difference"] >= -0.02 for x in scr)}
     a["practical"] = practical(a["gates"], a.get("diag"), gain, vs)
-    res["decision"] = decision(a["practical"])
+    res["new_diag_evidence"] = evidence_state(res["states"])
+    res["decision"] = route(res["new_diag_evidence"], a["practical"])
     res["scope"] = "the whole new data recipe (class quotas and combination diversity changed together); not credited to diversity alone"
     return write_report(out, res)
 

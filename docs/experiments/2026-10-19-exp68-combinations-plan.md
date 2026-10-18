@@ -109,11 +109,24 @@
 - **报告**：
   - C 在 EXP65 diag 上的记录直接从 runs/exp65 读取，用同一个 read_set 核对登记、START、输入、端点和逐题完整性；
   - X 的 EXP63 门槛、EXP65 diag 六类 ≥ 0.80、对 C 的冲突宏增益（case 簇区间下界 > 0）、保护（≥ −0.02），四项都满足才算满足实用条件；
-  - 新 diag 的六类准确率、两视图都对的比例、near / large 分层，以及对 C 的配对比较，都只报告；
+  - 新 diag 的六类准确率、两视图都对的比例、near / large 分层，以及对 C 的配对比较，在分数上只报告；但 X 和 C 的新 diag 都是必需证据，必须完整有效，否则不给路线（见下文第 2 轮修正）；
   - 缺项给 incomplete，不下路线结论。
 - **不加载模型的演练**（/tmp）：START 全部通过，请求数 3,040；C 在 EXP65 diag 上的记录核对通过；没有 X 的结果时，报告给 incomplete。
 - **CPU 夹具**（`scripts/exp68/test_exp68_runner.py`，6 项；加上数据夹具共 12 项，全过；pyright 0 错误）：
   - YAML 改动任一参数就被拒绝；
   - START 重复启动被拒绝，data/exp68 改动后被拒绝；
-  - 报告：X 等于 C 自己的记录时，七项门槛全是 true，但 diag 质量胜 38 / 80、对 C 的增益为 0，判为「不满足」；EXP65 diag 全对时判为「满足」，此时缺新 diag 只影响报告项；没有 X 时给 incomplete；
+  - 报告：X 等于 C 自己的记录时，七项门槛全是 true，但 diag 质量胜 38 / 80、对 C 的增益为 0，判为「不满足」；EXP65 diag 全对、两份新 diag 完整有效时判为「满足」（即使新 diag 分数很低）；没有 X 时给 incomplete。新 diag 缺失或无效的情形见第 2 轮修正；
   - run.sh stub：顺序正确，train 失败时直接 finalize，默认上限 3,600 秒、留 120 秒。
+
+## 第 2 轮修正（评审 EXP68-R2-01；未运行）
+
+- **问题**：原实现中，新 diag 缺失或无效时只记在 states 里，路线仍按实用条件给出，原夹具甚至把「两份新 diag 都缺失」断言为「满足」。
+- **修正**：
+  - 读取失败时区分两种状态：details 文件不存在记为 missing；文件存在但登记、身份或逐题核对不过，记为 invalid: 原因。
+  - new_diag_evidence：X 和 C 的新 diag 都 completed 才是 completed；有一份 invalid 就是 invalid；否则是 incomplete。
+  - 最终路线 = route(new_diag_evidence, practical)：只有证据 completed 时才按原数值条件给出；incomplete / invalid 都不给路线，已算出的指标照常保留。
+  - practical 的计算和全部数值门槛都不变；新 diag 的分数仍然只报告。
+- **夹具**（test_exp68_runner.py 共 10 项，加上数据夹具共 16 项，全过；pyright 0 错误）：
+  - 两份新 diag 完整有效、但 X 的分数很低（全答 "sample B"）：仍判「满足」；
+  - X 的新 diag 缺失、C 的新 diag 缺失：都给 incomplete，没有路线（practical 仍算出为 true）；
+  - X 的新 diag 登记后被改、某条记录的 prediction 换成另一个合法选项但不是 argmax：都给 invalid，没有路线。
