@@ -93,3 +93,4 @@
   - 缺 train_K → incomplete；train_K 登记后被改 → invalid；
   - run.sh stub：顺序 start → decide → report；decide 失败时 finalize；默认 900 秒、留 120 秒。
   - 夹具中发现的一点：equal 类的两种顺序表格文字相同、只差选项顺序，所以按 state 查找必须同时带上选项顺序（只影响假 decider，不影响 runner）。
+- **说明**（评审 EXP70-NOTE-02）：报告调用 check_start(code=False)。所以报告重核的是运行证据、模型、数据和 tokenizer 的身份，不重核代码；代码文件的哈希在 decide 阶段（code=True）加载模型之前核对。只改说明，代码不变。
