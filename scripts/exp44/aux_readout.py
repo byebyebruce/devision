@@ -21,7 +21,10 @@ from devision.model import text_encoder
 from devision.train.rlcd import _Images, aux_example, aux_head, aux_logits, aux_number
 
 SLOTS = 8
-NUMBER = re.compile(r"^\d[\d,]*(?:\.\d+)?$")
+# strict (critic EXP44-FINAL-02): an integer without separators or with correct 3-digit comma groups, optionally a
+# decimal part; "1,", "390,", "1,2", "12,34" are not numbers (the first readout, "loose-v1", accepted them)
+NUMBER_RULE = "strict-v2"
+NUMBER = re.compile(r"^(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?$")
 
 
 def reading(rows):
@@ -73,7 +76,7 @@ def main(argv=None):
         for x in recs:
             fh.write(json.dumps(x) + "\n")
     info = {"checkpoint": ckpt, "data": data, "data_sha256": hashlib.sha256(open(data, "rb").read()).hexdigest(),
-            "device": device, "slots": SLOTS, "head": ident, "questions": len(recs)}
+            "device": device, "slots": SLOTS, "head": ident, "questions": len(recs), "number_rule": NUMBER_RULE}
     json.dump({"run": info, "summary": {"correct": sum(x["correct"] for x in recs), "valid": sum(x["valid"] for x in recs),
                                         "questions": len(recs)}}, open(os.path.join(out, name + ".json"), "w"), indent=1)
     print("%s: %d / %d correct, %d valid" % (name, sum(x["correct"] for x in recs), len(recs), sum(x["valid"] for x in recs)))

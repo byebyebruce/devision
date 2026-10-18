@@ -94,6 +94,7 @@ def aux_case(tmp_path, preds, mutate=None):
     from devision.train.rlcd import aux_example, aux_number
     tok = AutoTokenizer.from_pretrained(os.path.join(ROOT, rep.INIT, "tokenizer"))
     rows = [json.loads(x) for x in open(os.path.join(ROOT, "data", "exp42", "fit_O.jsonl"))][:6]
+    tmp_path.mkdir(parents=True, exist_ok=True)
     data = tmp_path / "set.jsonl"
     data.write_text("".join(json.dumps(r) + "\n" for r in rows))
     run = tmp_path / "run"
@@ -145,3 +146,27 @@ def test_conditions_need_all_four_main_sets():
     assert rep.conditions(out) == {"progress": True, "number_loss_attribution": True}
     del out["readout"]["rl_tune_L"]                                        # rl_tune passes, rl_tune_L missing
     assert rep.conditions(out) == {"progress": "incomplete", "number_loss_attribution": "incomplete"}
+
+
+@pytest.mark.parametrize("text,ok", [("12", True), ("0.75", True), ("1,270", True), ("12,345.6", True), ("1,000,000", True),
+                                     ("1,", False), ("390,", False), ("1,2", False), ("12,34", False), ("1,2345", False),
+                                     (",12", False), ("1.", False), ("abc", False)])
+def test_strict_number_rule(text, ok):
+    assert bool(readout.NUMBER.match(text)) == ok and bool(rep.NUMBER.match(text)) == ok
+
+
+def test_a_first_readout_is_checked_by_its_own_rule_and_counted_strictly(tmp_path):
+    """A record from the first (loose) readout saying "1," is valid passes its own check but is not counted valid;
+    the same record under a readout that declares the strict rule is refused."""
+    loose = lambda x: dict(x, prediction="1,", valid=True, correct=False)  # noqa: E731
+    recs = aux_case(tmp_path / "a", ["GOLD"] * 6, loose)
+    assert rep.aux_summary(recs)["valid"]["valid"] == 5
+    aux_case(tmp_path / "c", ["GOLD"] * 6, loose)
+    p = tmp_path / "c" / "run" / "eval" / "aux_x.json"
+    info = json.load(open(p))
+    info["run"]["number_rule"] = "strict-v2"
+    json.dump(info, open(p, "w"))
+    check = json.load(open(os.path.join(ROOT, "data", "exp44", "CHECK.json")))
+    head = {k: v for k, v in check["head"].items() if k != "file_sha256"}
+    with pytest.raises(SystemExit):
+        rep.aux_records(str(tmp_path / "c" / "run"), "aux_x", str(tmp_path / "c" / "set.jsonl"), rep.INIT, head)

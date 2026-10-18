@@ -56,7 +56,11 @@ C_SHA = {"model.safetensors": "6596907825f0b9c1ba9c0e9eb8dc136a91d6c2a48b331bc50
          "config.json": "e5421f88ff74a665d4730725e56bb49246eed419002ca064d7f308baab0f89f9"}
 M_AUX = "runs/exp44-m-aux"
 AUX_SETS = {"aux_" + n: p for n, p in SETS.items()}
-NUMBER = re.compile(r"^\d[\d,]*(?:\.\d+)?$")       # the parse rule of scripts/exp44/aux_readout.py
+# the readout's parse rules: a readout declares the one it used ("number_rule"; none = the first, loose one) and its
+# records are checked against it; the summary's validity always uses the strict rule (critic EXP44-FINAL-02)
+NUMBER_RULES = {"loose-v1": re.compile(r"^\d[\d,]*(?:\.\d+)?$"),
+                "strict-v2": re.compile(r"^(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?$")}
+NUMBER = NUMBER_RULES["strict-v2"]
 
 
 def j_identity(run: str, check: Dict, manifest: Dict) -> str:
@@ -94,6 +98,7 @@ def aux_records(run: str, name: str, data_path: str, checkpoint: str, head: Dict
         got[k] = g
     rows = r42.load(data_path)
     tok = AutoTokenizer.from_pretrained(os.path.join(checkpoint, "tokenizer"))     # tokenizer only, no model
+    rule = NUMBER_RULES[info.get("number_rule", "loose-v1")]
     out = []
     for r in rows:
         view = r.get("view") or r["id"].split(":")[2]
@@ -106,10 +111,12 @@ def aux_records(run: str, name: str, data_path: str, checkpoint: str, head: Dict
                 raise SystemExit("%s/%s: missing %s %s" % (run, name, r["id"], q))
             gold = next(o for o, p in r["gold"][q]["probabilities"].items() if p == 1.0)
             ids, _ = aux_example(tok, r.get("state_text", ""), v["instructions"], gold, 8)      # the training input rule
-            valid = g["prediction"] is not None and bool(NUMBER.match(g["prediction"]))       # the readout's parse rule
+            declared = g["prediction"] is not None and bool(rule.match(g["prediction"]))     # the readout's own rule
+            valid = g["prediction"] is not None and bool(NUMBER.match(g["prediction"]))      # strict, for the summary
             if g["gold_number"] != aux_number(gold) or g["image_id"] != r["image_id"] or g["image_used"] != r["image"] \
                     or g["aux_input_sha256"] != hashlib.sha256(json.dumps(ids).encode()).hexdigest() \
-                    or bool(g["valid"]) != valid or bool(g["correct"]) != (valid and g["prediction"] == g["gold_number"]):
+                    or bool(g["valid"]) != declared or bool(g["correct"]) != (declared and g["prediction"] == g["gold_number"]) \
+                    or bool(g["correct"]) != (valid and g["prediction"] == g["gold_number"]):
                 raise SystemExit("%s/%s: %s %s does not match its source question (gold, picture, input or validity)"
                                  % (run, name, r["id"], q))
             out.append({"family": r["family"], "case": r["case"], "field": f, "object": b40.object_of(v["instructions"]),
