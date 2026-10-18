@@ -101,6 +101,14 @@ class TrainConfig:
     aux_weight: float = 0.0
     aux_slots: int = 8
     aux_head: str = "answerdotai/ModernBERT-large"
+    # exp45 (docs/experiments/2026-10-18-exp45-region-plan.md): region_file (a sidecar JSONL: per training row id,
+    # the asked field's box [x, y, w, h] and the picture's width / height) makes the training keep the attention of
+    # the question conditioning module (model.QuestionConditioning, needs question_conditioning) and adds
+    # region_weight x KL(target || attention), the target being the box's share of each SigLIP patch mixed 0.9 / 0.1
+    # with the uniform distribution. The same attention path runs whatever the weight (0 = the matched control).
+    # "" = off: nothing loaded, the run is the one before it; decide never uses the boxes.
+    region_file: str = ""
+    region_weight: float = 0.0
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -271,6 +279,37 @@ def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = 
     logp = -(((z - logits.unsqueeze(0)) ** 2) * mask).sum(-1) / (2 * sigma ** 2)
     ce = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
     return -(adv * logp).mean() + ce, ce
+
+REGION_SMOOTH = 0.1     # exp45: the target is 0.9 x the box's patch shares + 0.1 x uniform, fixed before the run
+
+
+def region_targets(path: str, samples: Sequence[Sample], side: int, size: int) -> Dict[str, List[float]]:
+    """Sample id -> the target distribution over the side x side SigLIP patches (box_grid of the sidecar's box on the
+    letterboxed picture); every training sample needs a box inside its picture."""
+    boxes = {}
+    for line in open(path):
+        if line.strip():
+            r = json.loads(line)
+            boxes[r["id"]] = r
+    out = {}
+    for s in samples:
+        r = boxes.get(s.get("id", ""))
+        if r is None:
+            raise ValueError("region: no box for %s in %s" % (s.get("id"), path))
+        x, y, w, h = r["box"]
+        if not (w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= r["width"] and y + h <= r["height"]):
+            raise ValueError("region: box %s of %s is not inside its %dx%d picture" % (r["box"], s.get("id"), r["width"], r["height"]))
+        grid = box_grid([r["box"]], r["width"], r["height"], size, grid=side, smooth=REGION_SMOOTH)
+        if not grid:
+            raise ValueError("region: box of %s covers no patch" % s.get("id"))
+        out[s["id"]] = grid
+    return out
+
+
+def region_kl(weights: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Per-question KL(target || attention) over the patches, averaged over the questions."""
+    return (target * (target.log() - weights.float().clamp_min(1e-12).log())).sum(-1).mean()
+
 
 AUX_NUMBER = re.compile(r"^(\d[\d,]*(?:\.\d+)?) ")
 
@@ -552,7 +591,7 @@ _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
                 "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
-                "aux_head")
+                "aux_head", "region_file", "region_weight")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -610,6 +649,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             raise ValueError("distill_weight > 0 needs distill_teacher and distill_blocks")
         # loaded before the seeds below, so the batch order, LoRA init and RLCD noise are those of a run without it
         teacher = Decider.load(c.distill_teacher, device="cpu").model.to(device).eval().requires_grad_(False)
+    if c.region_file and not c.question_conditioning:
+        raise ValueError("region_file supervises the question conditioning attention: it needs question_conditioning")
     aux, aux_ident, aux_inputs = None, None, {}
     if c.aux_weight > 0:   # built and loaded before the seeds below: the LoRA init, batch order and noise are unchanged
         if c.aux_slots < 1:
@@ -627,6 +668,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if c.question_conditioning and model.condition is None:   # S2: new module, zero output layer
         model.add_question_conditioning()
         decider.cfg.question_conditioning = True
+    regions: Dict[str, List[float]] = {}
+    if c.region_file:   # exp45: the attention is kept during training (both arms), never in decide
+        side = decider.cfg.image_size // int(cast(int, model.vision.config.patch_size))
+        regions = region_targets(c.region_file, samples, side, decider.cfg.image_size)
+        cast(Any, model.condition).keep_weights = True
     if c.grounding_weight > 0:   # S1: training-only head, removed before saving
         model.grounding = GroundingHead(text_encoder(model.decision).config.hidden_size)
     peft_encoder = get_peft_model(text_encoder(model.decision), LoraConfig(
@@ -767,6 +813,15 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 logits = logits.float()
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
                               batch["qtype"].to(device), sigma, c.group_size, c.objective)
+            region = None
+            if regions:   # the same forward's attention; checked finite with the loss below, one backward / step
+                att = cast(Any, model.condition).last_weights
+                tgt = torch.tensor([regions[it["sample_id"]] for it in chunk], device=device)
+                rkl = region_kl(att, tgt)
+                loss = loss + c.region_weight * rkl
+                if not math.isfinite(rkl.item()):
+                    raise RuntimeError("step %d: region KL is %r; no update made" % (len(losses), rkl.item()))
+                region = (rkl.item(), (att.float() * (tgt > REGION_SMOOTH / tgt.size(1) + 1e-9)).sum(-1).mean().item())
             ground = None
             if grounded:
                 idx = torch.tensor(grounded, device=device)
@@ -817,7 +872,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     grad_norm=grad_norm.item(), sigma=sigma,
                     **({"grounding_kl": ground.item()} if ground is not None else {}),
                     **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}),
-                    **({"number_loss": aux_stats[0], "number_accuracy": aux_stats[1]} if aux_stats is not None else {}))
+                    **({"number_loss": aux_stats[0], "number_accuracy": aux_stats[1]} if aux_stats is not None else {}),
+                    **({"region_kl": region[0], "region_mass": region[1]} if region is not None else {}))
             means = log.flush(len(losses), epoch + 1, {name: g["lr"] for name, g in zip(group_names, optimizer.param_groups)})
             if means:
                 print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f%s" % (
@@ -826,13 +882,17 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     " distill_kl %.4f teacher_acc %.3f" % (means["train/distill_kl"], means["train/teacher_accuracy"])
                     if "train/distill_kl" in means else
                     " number_loss %.4f number_acc %.3f" % (means["train/number_loss"], means["train/number_accuracy"])
-                    if "train/number_loss" in means else ""), flush=True)
+                    if "train/number_loss" in means else
+                    " region_kl %.4f region_mass %.3f" % (means["train/region_kl"], means["train/region_mass"])
+                    if "train/region_kl" in means else ""), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:
                 save_state(epoch, b + 1)
         val_accuracy.append(run_eval()["val/accuracy"])
 
+    if regions:
+        cast(Any, model.condition).keep_weights = False      # the merged pass and the saved model: decide's path
     model.decision.encoder = peft_encoder.merge_and_unload()
     if hasattr(model, "grounding"):   # S1's head is a training device, not part of the model that answers
         del model.grounding
@@ -872,4 +932,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             "calibration": {"per_type": bucket_metrics(set_logits["val"], calib, temperature),
                             "by_options": bucket_metrics(set_logits["val"], calib, temperature, by_options)},
             "train_items": len(train_items), "calib_items": len(calib), "objective": c.objective,
-            **({"aux": {"weight": c.aux_weight, "slots": c.aux_slots, "head": aux_ident}} if aux is not None else {})}
+            **({"aux": {"weight": c.aux_weight, "slots": c.aux_slots, "head": aux_ident}} if aux is not None else {}),
+            **({"region": {"weight": c.region_weight, "file": c.region_file, "smooth": REGION_SMOOTH,
+                           "file_sha256": __import__("hashlib").sha256(open(c.region_file, "rb").read()).hexdigest()}}
+               if regions else {})}

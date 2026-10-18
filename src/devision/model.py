@@ -88,12 +88,21 @@ class QuestionConditioning(nn.Module):
         self.out = nn.Linear(text_dim, text_dim)
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
+        # exp45 (training only): when set, forward also keeps where the visual tokens attended -- the attention
+        # weights averaged over heads and the visual-token queries, [B, number of patches] -- in `last_weights`.
+        # Off (the default, and always in decide): the attention runs exactly as before.
+        self.keep_weights = False
+        self.last_weights: Optional[torch.Tensor] = None
 
     def forward(self, visual, patches, word_embeds, question_mask):
         m = question_mask.unsqueeze(-1).to(word_embeds.dtype)
         q = (word_embeds * m).sum(1) / m.sum(1).clamp(min=1)
         query = visual + self.question(q).unsqueeze(1)
         kv = self.patches(patches.to(visual.dtype))
+        if self.keep_weights:
+            out, weights = self.attend(query, kv, kv, need_weights=True, average_attn_weights=True)
+            self.last_weights = weights.mean(1)
+            return visual + self.out(out)
         return visual + self.out(self.attend(query, kv, kv, need_weights=False)[0])
 
 
