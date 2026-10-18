@@ -1,0 +1,30 @@
+# exp63 complete-fact decision CE on text (docs/experiments/2026-10-19-decision-facts-prep.md; critic DECISION-FACTS-IMPL-01).
+# From EXP57's frozen end (962503fb / 09a5b447); data/facts/train.jsonl (38649b91: 9,600 questions, each row's state = its
+# text + its own gold number table + for magnets the caption's pair sizes); one pass = 1,200 updates of micro batch 8
+# (data/facts/PLAN.json: 4,800 two-view units, each question once). text_only: image=None exactly as ordinary decide; only
+# LoRA (r 16) and the decision head train, gold CE. val = the training-internal fit slice (data/facts/fit.jsonl, 100 + 100
+# families). Fixed last step. Run only by scripts/exp63/run.sh.
+name: exp63
+device: mps
+common:
+  log_every: 25
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp57/stage2
+  data: data/facts/train.jsonl
+  val: data/facts/fit.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    text_only: true
+    micro_batch: 8
+    eval_batch: 8
+    lora_r: 16
+    lr_lora: 5.0e-05
+    lr_head: 1.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 0
+    amp: 'off'
+    seed: 1

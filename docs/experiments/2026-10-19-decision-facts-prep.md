@@ -62,10 +62,14 @@
 | 报告 | | < 1 分钟 |
 | **合计** | | **约 45 分钟** |
 
-- 起点在 G / H / P 上的同题记录现在都没有（EXP55 / 56 用的是不同的数据），所以必须新跑。合计接近 50 分钟的上限。送审时可以选择：
-  - 起点只跑 G 和 P，H 只报告新端点：约 41 分钟；
-  - 或者把上限改为 60 分钟。
-  - 这一项留给评审决定，不在这里自行缩减。
+- 起点在新的 G / P 上没有同题记录，所以必须新跑。
+- **评审裁定（DECISION-FACTS-IMPL-01）**：
+  - 硬上限 50 分钟，最后 120 秒报告；
+  - 新端点跑 fit / G / H / P，起点跑 fit / G / P，不跑起点 H：共 **3,800 个文字请求（15,200 题）**；
+  - H 只报告新端点，不算新 − 旧；
+  - 按实测估计约 43 分钟（起点不跑 H 省约 2.1 分钟）；
+  - 优先级：训练 / 导出 → 全部主判定条件 → exist / science → 新端点 H → 收尾。H 没跑完时记为缺项，主判定与全链完整性分开记录。
+- **轴统计的口径**：MANIFEST 里 `axes` 按族统计，用的是该族最后读到的那一行（末视图）的 axis，所以表里没有 equal 这一项。行级的 equal 题仍然存在（温度 139、磁力 204，见比较题金标），报告按每行的 axis 分层。数据不重抽。
 
 ## CPU 夹具（`scripts/facts/test_build.py`，4 项，全过）
 
@@ -73,4 +77,29 @@
 - 选项换序后金标跟随选项。
 - 训练 state = 行文字 + 金标表 +（磁力）事实行，逐行抽样复算；G / H / P 的差别正如定义（H / P 是 EXP56 的实时表，P 没有事实行，三者题目相同）。
 - 隔离、行数 / 题数 / 族数、批计划计数、截断为 0、fit 族属于训练集。
-- 这一环节还没有 runner：等方案和预算获批后再实现，沿用 EXP57 的 runner 结构。
+- runner 已实现（暂称 EXP63，见下一节）。
+
+## EXP63 runner（DECISION-FACTS-IMPL-01；CPU，未运行）
+
+- **文件**：`configs/exp63.yaml`、`scripts/exp63/{exp63.py, run.sh, test_exp63.py}`。没有改共享的 rlcd / reading / EXP57 代码，也没有改任何 EXP62 绑定文件；EXP57 的函数通过模块导入复用。
+- **训练**：配置固定为 EXP57 端点起跑，data/facts/train.jsonl，val = fit.jsonl，text_only CE，LoRA r16 + 决策头，lr 5e-5 / 1e-5，warmup 100，seed 1，micro / eval batch 8，1 个 epoch（1,200 次更新），eval_every / save_every 0，amp off。start 时逐项核对这些参数。
+- **START**（不加载模型）绑定：
+  - EXP57 端点（FROZEN 的权重 / config 必须等于 962503fb / 09a5b447）、tokenizer 的树哈希、EXP57 已记录的 exist / science；
+  - data/facts 的 5 个文件、MANIFEST（含来源哈希的复算）、PLAN（1,200 × 8、4,800 个完整单元、截断 0）；
+  - exp49 questions、EXP54 inputs_P（read_right 集合）、YAML、代码哈希、请求数（3,800 / 15,200）。
+- **freeze**：核对正好 1,200 次更新；导出与 **EXP57 的实际端点** 逐张量比较，冻结部分必须相同；然后写 FROZEN。
+- **decide**：先新端点 fit / G / P，再起点 fit / G / P（起点重跑，因为这些文件的选项顺序是新的）。之后是 exist / science（devision-eval + freeze.py record），最后才是新端点 H。每个集合完成就登记，明细身份绑定集合、模型、输入 state 的哈希、raw、image = None。
+- **报告**：
+  - 比较按语义类别统计：温度 A / B / same，磁力 P1 / P2 / same（weaker in Pair 1 = P2）；按行的 axis 分层；整族两视图同时正确；
+  - 新 − 起点按 case 簇配对；
+  - 读数保留只算 1,800 道字段读数（e54.reading_records 排除比较题），G all ≥ 0.98、P all ≥ 0.866、P_use；
+  - exist / science 用 EXP57-R1-01 / 02 的核对（端点路径、逐题完整、summary 由明细复算），起点是 EXP57 已登记的记录；
+  - 门槛与分支：fit 优先，缺项给 incomplete（不当作通过或失败）；主判定完整性和全链完整性（含 H）分开报告；candidate_eligible 恒为 false。
+- **CPU 夹具**：16 项全过。
+  - 语义类别、按轴、两视图统计；
+  - 10 个门槛 / 分支用例，含缺项；
+  - 条件身份：同一份明细换成另一臂的模型、另一条件的输入、或被改动，都被拒绝；
+  - START 绑定 EXP57 的实际端点（权重不符时不写任何文件）；
+  - START 之后 facts 数据改动，报告给 invalid；
+  - run.sh stub：顺序为 freeze → 主条件 → exist → science → H → 报告；主 decide 失败时直接 finalize，不跑 exist / science / H。
+- **演练**：在真实文件上做了不加载模型的 START（/tmp），请求数 3,800、题数 15,200，缺项时报告给 incomplete；pipeline 的 dry-run 接受这份配置，没有创建任何目录。
