@@ -2,13 +2,15 @@
 candidate's evaluation (release/v0.4/results.json, delivery_vs_v0.3.json). Nothing here is a measured result yet. -->
 ## training
 
-This release continues v0.3 (`r15-vision`) in three stages:
+TBD (filled when a candidate is locked; nothing below describes a trained model yet). The locked candidate's own
+training recipe, steps, seed, trainable parts and input structure go here, read from its configs and train report.
+If the candidate uses fixed local views (devision 0.3+: a full 256×256 picture giving 64 visual tokens, plus 12 local
+views whose SigLIP patches are read by the question-conditioning module), say so and give the minimum package version;
+otherwise describe its actual input. Do not reuse earlier draft recipes (the three-stage exp30-era plan, SigLIP's top
+four layers fine-tuned, "input stays 256×256 with 64 visual tokens") unless the locked candidate is trained that way.
 
-1. **Alignment with real-caption replay** (2,500 steps): masked caption completion on 20,000 synthetic number-reading pictures mixed 1:1 with 20,000 COCO train2014 photos and their captions. Every image used by an evaluation, calibration or monitoring set is excluded by image id (COCO and Visual Genome ids matched) and path.
-2. **Real-layout alignment** (1,500 steps): captions listing the drawn values by label, on 12,000 newly drawn pictures in the layout of two ScienceQA diagram forms (gas samples in jars; pairs of magnets), mixed 1:1 with real COCO captions. The pictures are synthetic; no ScienceQA picture is used, and value combinations of the diagnostic questions are never drawn.
-3. **Decision training** (TBD steps, seed 1): v0.3's decision mix as replay (12,000 questions), reading and ScienceQA-form questions on 1,200 real-layout families (each a picture and a twin that changes only the values), and 2,401 synthetic panel questions. SigLIP2's top four layers are fine-tuned at 5e-6 as in v0.3. LoRA is merged into the released weights. Input stays 256×256 with 64 visual tokens.
-
-Temperatures were fitted on the designated calibration set, by question type and option-count bucket:
+Temperatures are fitted on data/r13b/val.jsonl (3,892 questions) with devision-calibrate before the final freeze
+(docs/experiments/2026-10-18-v04-local-release-prep.md); by question type and option-count bucket:
 
 {{temperature_table}}
 
