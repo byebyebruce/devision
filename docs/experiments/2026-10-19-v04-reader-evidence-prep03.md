@@ -358,3 +358,17 @@
   - 干净安装核验（hf.py verify 在新虚拟环境中从 wheel 安装，再按模块名比对运行身份）：比对函数 code_problems 已有，安装流程本身未接；
   - temperature_by_route：只在 5.3 选中分支 1 后另行送审；
   - rl_calib 用 log p 拟合时的有限性检查：属于拟温工具，跑之前随工具一起实现。
+
+### 5.7 实现第 2 轮（V04-ENTRY-R1-01–03）
+
+- R1-01：新增 devision.reading.bundle_state，判定 bundle 是 none / complete / incomplete。只有完全没有 reading/ 才是普通模型；有 reading/ 但缺清单或缺组件就是 incomplete。devision.load（auto / on）、check_eval freeze 和带读取组合的 build 都用这个判定，遇到 incomplete 一律拒绝；显式 off 照常加载，并标明 mode=off、bundle=incomplete。
+- R1-02：check_eval 的 load_data 按源题的 instructions，用 domain_of 算出每题的期望域。reading_problems 对每对已匹配的「记录—源题」逐题核对：
+  - 明细里的 reading_domain 要等于期望域；
+  - 应读取的题 route=read，其他题 route=ordinary；
+  - routed / read 计数从源题重算，不用明细自报的数。
+- R1-03：
+  - rebind.py source 核对固定来源：EXP71 的 START / registry / report 哈希固定在代码里（PINS），给定的 bundle 和决策目录必须正是 START 记录的 bundles.on，然后写 `<round>/reading_lineage/source.json`；
+  - clone 和 bind 都从 source.json 出发，并重新核对源文件；lineage 记录 source.json 的哈希；
+  - freeze 把 source / lineage 的哈希写进 IDENTITY，preflight / seal / check 每次重新核对；
+  - build 先读 `<round>/eval/IDENTITY.json`，核对候选和记录都与冻结时一致；构建后逐个推理文件对照 IDENTITY 检查。
+- 干净安装核验（PENDING-01）仍是独立的后续项。

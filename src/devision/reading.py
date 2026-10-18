@@ -271,6 +271,23 @@ def tree_sha(path: str) -> str:
     return hashlib.sha256(json.dumps(sorted(items)).encode()).hexdigest()
 
 
+def bundle_state(checkpoint: str) -> str:
+    """The one check of a checkpoint's reading bundle, shared by devision.load, check_eval freeze and the release
+    build: "none" (no reading/ at all: a plain decision checkpoint), "complete" (reading.json and every component it
+    lists are there; their hashes are checked by Reading.load) or "incomplete" (reading/ exists but its manifest or a
+    listed component is missing -- refused everywhere except an explicit reading="off" control)."""
+    d = os.path.join(checkpoint, "reading")
+    if not os.path.lexists(d):
+        return "none"
+    try:
+        ident = json.load(open(os.path.join(d, "reading.json")))
+        listed = [c for c in ("selector.pt", "head.pt", "corrector.pt") if c in ident["sha256"]]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "incomplete"
+    ok = {"selector.pt", "head.pt"} <= set(listed) and all(os.path.isfile(os.path.join(d, c)) for c in listed)
+    return "complete" if ok else "incomplete"
+
+
 def rules() -> Dict[str, Any]:
     """The reading rules in this code, as a bundle's reading.json records them (JSON round trip: tuples -> lists)."""
     return json.loads(json.dumps({"policy": POLICY, "grid": GRID, "templates": TEMPLATES, "domains": DOMAINS, "header": HEADER,
@@ -501,4 +518,4 @@ def write_bundle(out_dir: str, decision_dir: str, selector_pt: str, head_pt: str
     return ident
 
 
-__all__ = ["Reading", "write_bundle", "rules", "check_rules", "reads_for", "domain_of", "TEMPLATES", "UNREADABLE", "fmt", "decode"]
+__all__ = ["Reading", "write_bundle", "bundle_state", "rules", "check_rules", "reads_for", "domain_of", "TEMPLATES", "UNREADABLE", "fmt", "decode"]

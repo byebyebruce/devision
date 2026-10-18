@@ -28,10 +28,16 @@ Reading combination (docs/experiments/2026-10-19-v04-reader-evidence-prep03.md 5
 reading/ bundle is frozen with its reading.json and rules hashes (they are inside the checkpoint tree too) and the
 code a fresh process runs for the evaluation (`evaluate.runtime_code`, by a probe in this interpreter). An output of
 such a checkpoint counts only as evidence of the "on" combination: run.reading.mode "on" with the frozen reading.json
-hash, every question the router covers actually read (route "read", routed == read), a pixel hash on every record
+hash, every question the router covers -- recomputed from the data file's own question text (devision.reading.domain_of)
+of each matched record, never from the record's own reading_domain -- actually read (route "read", the others
+"ordinary", the summary's routed / read counts equal the recomputed ones), a pixel hash on every record
 that is the same for every record of one shown picture (devision-eval itself refuses a request whose decided picture
 is not the file it sent), and run.code_identity matching the frozen code (`evaluate.code_problems`). An "off" or
-fallback output is refused. A checkpoint without reading/ must not report a reading mode other than "none". `--legacy` (historical results without an identity, e.g. v0.3's) runs the
+fallback output is refused. A checkpoint without reading/ must not report a reading mode other than "none". The
+bundle's state is devision.reading.bundle_state (a reading/ without its manifest or a component is refused, never
+treated as a plain checkpoint); a bound checkpoint is frozen only with its <round>/reading_lineage/ source.json and
+lineage.json (scripts/release/rebind.py: EXP71's pinned run -> candidate), whose hashes join the identity and are
+checked again by preflight / seal / check. `--legacy` (historical results without an identity, e.g. v0.3's) runs the
 content checks only and says that identity is not proven.
 
 `--extras <yaml>` adds outputs outside the evaluation YAML to the same frozen identity (critic V04-REL-R2-04): a
@@ -45,6 +51,7 @@ check then cover them like the planned sets; calibration.py and delivery.py read
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -57,10 +64,16 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import yaml
 
+from devision.reading import bundle_state, domain_of
 from devision.train.evaluate import code_problems, picture_pairs
 from devision.train.pipeline import build_plan
 from devision.train.samples import read_decision_jsonl
 
+_spec = importlib.util.spec_from_file_location("release_rebind", os.path.join(os.path.dirname(os.path.abspath(__file__)), "rebind.py"))
+assert _spec is not None and _spec.loader is not None
+rebind = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(rebind)
+SOURCE_PINS: Optional[Dict[str, str]] = None      # the source identity a bound checkpoint's records must name (None: rebind.PINS)
 RAW_TEMPERATURE = {"choice": 1.0, "noul": 1.0, "by_options": {}}   # what devision-eval --no-temperature records
 # what a devision-eval process imports, loaded in a fresh process with this interpreter: the frozen code reference
 PROBE = ("import json; import devision; from devision import load; import devision.reading, devision.infer; "
@@ -140,6 +153,7 @@ def load_data(path: str) -> Dict[Tuple[str, str], List[Dict]]:
             s = json.loads(line)
             for qid, q in s["questions"].items():
                 out[(s["id"], qid)].append({"type": q["type"], "image": s["image"], "image_id": s["image_id"],
+                                            "domain": domain_of(q.get("instructions", "")),
                                             "options": list(q["criteria"]) if q["type"] == "choice" else ["false", "true"],
                                             "gold": s["gold"][qid]["probabilities"]})
     return dict(out)
@@ -165,19 +179,29 @@ def match_copies(recs: List[Dict], want: Dict[Tuple[str, str], List[Dict]], cont
 
 
 def reading_identity(checkpoint: str) -> Optional[Dict]:
-    """The reading bundle a checkpoint carries (reading.json and its declared rules hash), or None."""
-    p = os.path.join(checkpoint, "reading", "reading.json")
-    if not os.path.exists(p):
+    """The reading bundle a checkpoint carries (reading.json, its declared rules hash and the lineage records), or
+    None for a checkpoint without reading/. An incomplete bundle or missing / inconsistent lineage raises."""
+    state = bundle_state(checkpoint)
+    if state == "none":
         return None
-    return {"reading_json_sha256": sha256(p), "rules_sha256": json.load(open(p)).get("rules_sha256")}
+    if state != "complete":
+        raise SystemExit("%s: incomplete reading/ bundle (manifest or component missing)" % checkpoint)
+    bad = rebind.lineage_problems(checkpoint, SOURCE_PINS)
+    if bad:
+        raise SystemExit("%s: reading lineage: %s" % (checkpoint, "; ".join(bad)))
+    p = os.path.join(checkpoint, "reading", "reading.json")
+    meta = rebind.lineage_dir(checkpoint)
+    return {"reading_json_sha256": sha256(p), "rules_sha256": json.load(open(p)).get("rules_sha256"),
+            "lineage": {n: sha256(os.path.join(meta, n)) for n in ("source.json", "lineage.json")}}
 
 
 def frozen_code() -> Dict:
     return json.loads(subprocess.run([sys.executable, "-c", PROBE], check=True, capture_output=True, text=True).stdout)
 
 
-def reading_problems(summary: str, run: Dict, recs: List[Dict], ident: Optional[Dict]) -> List[str]:
-    """An output's reading and code evidence against the frozen identity (module docstring)."""
+def reading_problems(summary: str, run: Dict, recs: List[Dict], ident: Optional[Dict], pairs: Optional[List[Tuple[Dict, Dict]]] = None) -> List[str]:
+    """An output's reading and code evidence against the frozen identity (module docstring). `pairs`: each record
+    with its matched data-file question, whose own text decides whether the record had to be read."""
     want = (ident or {}).get("reading")
     got = run.get("reading") or {}
     out = []
@@ -188,11 +212,13 @@ def reading_problems(summary: str, run: Dict, recs: List[Dict], ident: Optional[
         if got.get("mode") != "on" or got.get("reading_json_sha256") != want["reading_json_sha256"]:
             out.append("%s: not an output of the frozen reading combination (mode %r, reading.json %s)" % (
                 summary, got.get("mode"), got.get("reading_json_sha256")))
-        unread = sum(r.get("reading_domain") is not None and r.get("route") != "read" for r in recs)
-        routed = sum(r.get("reading_domain") is not None for r in recs)
-        if unread or got.get("routed_questions") != routed or got.get("read_questions") != routed:
-            out.append("%s: %d of %d routed questions not read (summary %r / %r)" % (
-                summary, unread, routed, got.get("routed_questions"), got.get("read_questions")))
+        pairs = pairs or []
+        routed = sum(q["domain"] is not None for _, q in pairs)
+        unread = sum(q["domain"] is not None and r.get("route") != "read" for r, q in pairs)
+        wrong = sum(r.get("reading_domain") != q["domain"] or (q["domain"] is None and r.get("route") != "ordinary") for r, q in pairs)
+        if unread or wrong or got.get("routed_questions") != routed or got.get("read_questions") != routed:
+            out.append("%s: %d of %d routed questions (from the data file) not read, %d records with a wrong domain / route "
+                       "(summary %r / %r)" % (summary, unread, routed, wrong, got.get("routed_questions"), got.get("read_questions")))
         seen: Dict[str, set] = defaultdict(set)
         for r in recs:
             seen[r.get("image_used", "")].add(r.get("picture_pixels_sha256"))
@@ -264,7 +290,7 @@ def content(o: Output, checkpoint: str, temperature: Optional[Dict], cache: Dict
             if not ok:
                 bad[k] = bad.get(k, 0) + 1
     problems += ["%s: %d records with wrong %s" % (details, n, k) for k, n in sorted(bad.items())]
-    problems += reading_problems(summary, run, recs, ident)
+    problems += reading_problems(summary, run, recs, ident, pairs)
     if s.get("n") != len(recs):
         problems.append("%s: n %r but %d records" % (summary, s.get("n"), len(recs)))
     elif recs and abs(s.get("accuracy_all", -1) - sum(bool(r.get("correct")) for r in recs) / len(recs)) > 1e-9:
@@ -281,7 +307,14 @@ def identity_problems(p: Plan) -> Tuple[Optional[Dict], List[str]]:
         return ident, ["identity is for %s, the config evaluates %s" % (ident.get("checkpoint"), p.checkpoint)]
     now = tree_hashes(p.checkpoint)
     changed = sorted(k for k in set(now) | set(ident["files"]) if now.get(k) != ident["files"].get(k))
-    return ident, (["checkpoint files differ from IDENTITY.json: %s" % ", ".join(changed[:5])] if changed else [])
+    bad = ["checkpoint files differ from IDENTITY.json: %s" % ", ".join(changed[:5])] if changed else []
+    if ident.get("reading") is not None or bundle_state(p.checkpoint) != "none":
+        try:
+            if reading_identity(p.checkpoint) != ident.get("reading"):
+                bad.append("reading bundle / lineage records differ from IDENTITY.json")
+        except SystemExit as e:
+            bad.append(str(e))
+    return ident, bad
 
 
 def sealed(p: Plan) -> Dict[str, Dict[str, str]]:
@@ -314,7 +347,11 @@ def cmd_freeze(p: Plan) -> int:
     path = p.path("IDENTITY.json")
     ident = {"checkpoint": p.checkpoint, "files": tree_hashes(p.checkpoint), "temperature": temperature_table(p.checkpoint),
              "frozen": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "frozen_epoch": time.time()}
-    reading = reading_identity(p.checkpoint)
+    try:
+        reading = reading_identity(p.checkpoint)
+    except SystemExit as e:
+        print("refusing: %s" % e)
+        return 1
     inside = os.path.realpath(p.eval_dir) + os.sep
     if reading is not None and inside.startswith(os.path.realpath(p.checkpoint) + os.sep):
         print("refusing: results would be written into the bound checkpoint %s (put it in a round directory with run.json)" % p.checkpoint)

@@ -17,6 +17,7 @@ release to answer the same). A missing Hub repository is created private; making
 import argparse
 import hashlib
 import json
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -80,6 +81,46 @@ def sha256(path: str) -> str:
         for chunk in iter(lambda: f.read(1 << 22), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _check_eval():
+    spec = importlib.util.spec_from_file_location("release_check_eval", os.path.join(ROOT, "scripts", "release", "check_eval.py"))
+    assert spec is not None and spec.loader is not None
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def frozen_reading_identity(round_dir: str, ckpt: str) -> Optional[Dict[str, Any]]:
+    """None for a checkpoint without reading/ (the earlier build path). For a bound checkpoint: the frozen identity
+    (<round>/eval/IDENTITY.json, check_eval freeze) after checking that it is this checkpoint's, that the checkpoint
+    still hashes to it, and that its reading bundle and lineage records (EXP71 source -> candidate) are the frozen ones
+    and consistent now; anything else -- an incomplete bundle, no freeze, a rebound or changed checkpoint -- is refused."""
+    from devision.reading import bundle_state
+    state = bundle_state(ckpt)
+    if state == "none":
+        return None
+    if state != "complete":
+        raise SystemExit("%s: incomplete reading/ bundle, not built" % ckpt)
+    path = os.path.join(round_dir, "eval", "IDENTITY.json")
+    if not os.path.exists(path):
+        raise SystemExit("%s: no frozen identity (%s); a reading combination is built only after check_eval freeze" % (ckpt, path))
+    ident = load_json(path)
+    named = ident.get("checkpoint", "")
+    if os.path.realpath(named if os.path.isabs(named) else os.path.join(ROOT, named)) != os.path.realpath(ckpt):
+        raise SystemExit("%s is frozen for %s, not %s" % (path, named, ckpt))
+    ce: Any = _check_eval()
+    setattr(ce, "SOURCE_PINS", SOURCE_PINS)
+    now = ce.tree_hashes(ckpt)
+    changed = sorted(k for k in set(now) | set(ident["files"]) if now.get(k) != ident["files"].get(k))
+    if changed:
+        raise SystemExit("%s differs from its frozen identity: %s" % (ckpt, changed[:5]))
+    if ident.get("reading") is None or ce.reading_identity(ckpt) != ident["reading"]:
+        raise SystemExit("%s: reading bundle / lineage records are not the frozen ones" % ckpt)
+    return ident
+
+
+SOURCE_PINS: Optional[Dict[str, str]] = None      # passed to check_eval (None: rebind.PINS, EXP71)
 
 
 def inference_hashes(path: str) -> Dict[str, str]:
@@ -328,8 +369,9 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
         raise SystemExit("refusing to replace %s: it holds the source checkpoint or the repository" % out)
     if os.path.exists(out):
         shutil.rmtree(out)
+    frozen = frozen_reading_identity(round_dir, ckpt)        # the reading combination: built only as frozen and evaluated
+    bound = frozen is not None
     os.makedirs(os.path.join(out, "evaluation"))
-    bound = os.path.isdir(os.path.join(ckpt, "reading"))     # the reading combination: evaluated files are copied as they are
     for f in CHECKPOINT + (["reading"] if bound else []):
         src, dst = os.path.join(ckpt, f), os.path.join(out, f)
         if os.path.isdir(src):
@@ -347,10 +389,11 @@ def build(release_dir: str, out: Optional[str] = None) -> str:
             raise SystemExit("%s: config model_name %r is not the release's %r; set it before binding the reading bundle"
                              % (ckpt, config.get("model_name"), cfg["model_name"]))
         shutil.copyfile(os.path.join(ckpt, "config.json"), os.path.join(out, "config.json"))
-        changed = [f for f in CHECKPOINT + ["config.json", "reading"]
-                   if inference_hashes(os.path.join(ckpt, f)) != inference_hashes(os.path.join(out, f))]
+        built = {os.path.join(f, k) if k else f: v for f in CHECKPOINT + ["config.json", "reading"]
+                 for k, v in inference_hashes(os.path.join(out, f)).items()}
+        changed = sorted(k for k in set(built) | set(frozen["files"]) if built.get(k) != frozen["files"].get(k))
         if changed:
-            raise SystemExit("built inference files differ from the evaluated checkpoint: %s" % changed)
+            raise SystemExit("built inference files differ from the frozen IDENTITY.json: %s" % changed[:5])
     else:
         config["model_name"] = cfg["model_name"]
         write_json(os.path.join(out, "config.json"), config)
