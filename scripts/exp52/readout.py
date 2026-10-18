@@ -27,6 +27,51 @@ def sha(p: str) -> str:
     return hashlib.sha256(open(p, "rb").read()).hexdigest()
 
 
+def forward_on_off(model, batch, pixels, device):
+    """(option logits with the reader's content, character predictions, option logits without it) for one picture's
+    questions: the picture's full + 12-view features come from ONE visual_inputs call (critic EXP52-R1-01) and feed two
+    ordinary model.forward calls -- the same inputs, masks and markers as rlcd._forward -- the second with reader.off.
+    The intermediate tensors live for this request only (no cache across pictures or sets)."""
+    reader = model.reader
+    patches, visual, geom = model.visual_inputs(pixels.to(device))
+    n = batch["input_ids"].size(0)
+    patches, visual = patches.expand(n, -1, -1), visual.expand(n, -1, -1)
+    geom = None if geom is None else geom.expand(n, -1, -1)
+    args = [batch[k].to(device) for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")]
+    try:
+        reader.off = False
+        on = model(*args, visual=visual, patches=patches, patch_geom=geom).float().cpu()
+        assert reader.last_chars is not None
+        chars = reader.last_chars.argmax(-1).cpu().tolist()
+        reader.off = True
+        off = model(*args, visual=visual, patches=patches, patch_geom=geom).float().cpu()
+    finally:
+        reader.off = False
+    return on, chars, off
+
+
+FILES = ("readout.json", "readout_details.jsonl", "readout_use.jsonl")
+
+
+def record(run: str) -> dict:
+    """The three readout files' sha256 under the arm's frozen identity (scripts/v04b/freeze.py's FROZEN.json, entry
+    "readout"), after checking the weights are still the frozen ones and readout.json binds them (critic EXP52-R1-02)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("v04b_freeze", os.path.join(HERE, "..", "v04b", "freeze.py"))
+    assert spec is not None and spec.loader is not None
+    fz = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fz)
+    fr = fz.check(run)
+    info = json.load(open(os.path.join(run, "eval", "readout.json")))
+    if {k: info["identity"][k] for k in fr["weights"]} != fr["weights"]:
+        raise SystemExit("readout.json is not about %s's frozen weights" % run)
+    if "readout" in fr["evals"]:
+        raise SystemExit("readout already recorded")
+    fr["evals"]["readout"] = {f: sha(os.path.join(run, "eval", f)) for f in FILES}
+    json.dump(fr, open(fz.path(run), "w"), indent=1)
+    return fr
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", required=True)
@@ -34,7 +79,11 @@ def main(argv=None) -> int:
     ap.add_argument("--data-root", default="data")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--families", type=int, default=0, help="CPU smoke tests only: the first N families (0: all)")
+    ap.add_argument("--record", action="store_true", help="record the finished readout under the frozen identity")
     a = ap.parse_args(argv)
+    if a.record:
+        print(json.dumps(record(a.run)["evals"]["readout"], indent=1))
+        return 0
     from laya.common import collate_items
 
     from devision.infer import Decider, best_device
@@ -76,19 +125,11 @@ def main(argv=None) -> int:
             items = rlcd._items(d, samples)
             batch = collate_items([items], d.tok.pad_token_id)
             assert batch is not None
-            px = images(pic)[None]
-            index = torch.zeros(len(items), dtype=torch.long)
-            reader.off = False
-            on = rlcd._forward(model, batch, px, device, index=index).float().cpu()
-            assert reader.last_chars is not None
-            chars = reader.last_chars.argmax(-1).cpu().tolist()
-            reader.off = True
-            off = rlcd._forward(model, batch, px, device, index=index).float().cpu()
-            reader.off = False
+            on, chars, off = forward_on_off(model, batch, images(pic)[None], device)
             for k, i in enumerate(idx):
                 n = len(items[k]["keys"])
                 pred[i] = chars[k]
-                use[i] = {"key": qs[i]["key"], "gold": items[k]["target"].index(max(items[k]["target"])),
+                use[i] = {"key": qs[i]["key"], "options": items[k]["keys"], "gold": items[k]["target"].index(max(items[k]["target"])),
                           "on": on[k, :n].tolist(), "off": off[k, :n].tolist()}
     key_i = {q["key"]: i for i, q in enumerate(qs)}
     donor_idx = [key_i[q["twin"]] if q["twin"] and q["twin"] in key_i else i for i, q in enumerate(qs)]

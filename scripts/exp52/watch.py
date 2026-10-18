@@ -5,7 +5,7 @@ validations (data/exp50/val_quarter.jsonl, 244 questions x 13 images, about 1 mi
 Stop when:
   - the first window (step 100) is slower than 2.7 s / update, or two consecutive windows are (EXP50-T measured 2.31-2.37
     with the same pass; the reader adds two small attentions over 5 slots, estimate about 2.45; above 2.7 the two arms and
-    their required readout no longer fit the 120 minutes);
+    their required readout no longer fit the 130 minutes);
   - any window shows MPS driver memory > 16 GB with system memory available < 2 GB;
   - no new window for 15 minutes before the first one (loading + step-0 validation + 100 updates, about 6 expected),
     15 minutes after the 500 window (the last 76 updates, the end validation, temperatures and saving, about 6

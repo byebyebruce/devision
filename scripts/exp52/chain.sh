@@ -9,7 +9,7 @@
 #   5. exist / science for N, then Z;
 #   6. scripts/exp52/report.py.
 # Every evaluation is devision-eval (raw temperature 1, max 8 questions per request) recorded under the arm's frozen
-# identity. Deadline start + 120 minutes with the last 120 s for the report; each step bounded; fresh only (existing run
+# identity (the readout's three files too). Deadline start + 130 minutes (critic EXP52-R1) with the last 120 s for the report; each step bounded; fresh only (existing run
 # directories are refused), no resume, no retry; at the limit the rest stays missing and the report says so.
 #   nohup bash scripts/exp52/chain.sh > runs/exp52.out 2>&1 &
 set -u
@@ -31,7 +31,7 @@ want() { python3 -c "import json; d = json.load(open('$1')); print(d$2)"; }
 [ "$(shasum -a 256 data/exp48/quads.jsonl | cut -d' ' -f1)" = "$(want data/exp48/MANIFEST.json "['sha256']")" ] || { log "quads changed"; exit 1; }
 [ "$(shasum -a 256 data/exp52/numbers.jsonl | cut -d' ' -f1)" = "$(want data/exp52/MANIFEST.json "['sha256']")" ] || { log "numbers changed"; exit 1; }
 for d in runs/exp52-n runs/exp52-z runs/exp52-base runs/exp52.deadline; do [ ! -e $d ] || { log "$d exists"; exit 1; }; done
-echo $(( $(date +%s) + 120 * 60 )) > runs/exp52.deadline
+echo $(( $(date +%s) + 130 * 60 )) > runs/exp52.deadline
 DEADLINE=$(cat runs/exp52.deadline)
 RESERVE=120
 . scripts/exp38/steps.sh
@@ -74,7 +74,9 @@ for a in n z; do
   STATUS=runs/exp52-$a-status.txt
   [ $STOP = 1 ] && { status readout missing; continue; }
   step readout uv run python scripts/exp52/readout.py --run runs/exp52-$a
-  over $? && STOP=1
+  rc=$?
+  over $rc && STOP=1
+  [ $rc = 0 ] && step readout_record uv run python scripts/exp52/readout.py --record --run runs/exp52-$a
 done
 SQA="sqa_temp=data/exp21/dev_sqa_temp.jsonl sqa_force=data/exp21/dev_sqa_force.jsonl sqa_temp_mism=data/exp21/dev_sqa_temp_mism.jsonl sqa_force_mism=data/exp21/dev_sqa_force_mism.jsonl"
 for a in n z; do

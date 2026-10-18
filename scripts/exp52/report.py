@@ -91,14 +91,57 @@ def accuracy(d: str, name: str, ckpt: str, data: str) -> float:
     return sum(g["correct"] for g in got.values()) / len(got)
 
 
-def readout_of(run: str, weights: Dict) -> Dict:
-    """EXP51's number readout statistics on fit_O / rl_tune from the arm's readout details (identity checked)."""
-    path = os.path.join(run, "eval", "readout_details.jsonl")
-    ident = json.loads(open(path).readline())["identity"]
-    if {k: ident.get(k) for k in weights} != weights or ident.get("questions_sha256") != sha("data/exp49/questions.jsonl"):
-        raise SystemExit("%s: readout of other weights / questions" % path)
-    qs = [q for q in map(json.loads, open("data/exp49/questions.jsonl")) if q["set"] in ("fit_O", "rl_tune")]
-    pred, donor, _ = p49.read_details(path, qs)
+READOUT_SETS = {"fit_O": "data/exp42/fit_O.jsonl", "rl_tune": "data/real_layout/questions_tune.jsonl"}
+READOUT_FILES = ("readout.json", "readout_details.jsonl", "readout_use.jsonl")
+
+
+def readout_checked(run: str, weights: Dict):
+    """(qs, pred, donor, use rows) of an arm's readout after every check (critic EXP52-R1-02): the three files recorded
+    under the arm's frozen identity and unchanged; readout.json's two file sha256 and identity; both files' identity
+    headers equal to it; the frozen weights, the question map and both source sets; the details EXP49-strict (every
+    question once, targets, donor keys); the use file holding every expected question once, with the source question's
+    options in order, its gold index and finite logits with / without the content. Any failure: SystemExit(reason)."""
+    fr = frozen.check(run, ["readout"])                    # recorded, and the files unchanged since
+    ev = os.path.join(run, "eval")
+    info = json.load(open(os.path.join(ev, "readout.json")))
+    ident = info["identity"]
+    if info["details_sha256"] != sha(os.path.join(ev, "readout_details.jsonl")) or info["use_sha256"] != sha(os.path.join(ev, "readout_use.jsonl")):
+        raise SystemExit("readout.json does not bind the details / use files")
+    if {k: ident.get(k) for k in fr["weights"]} != fr["weights"] or fr["weights"] != weights:
+        raise SystemExit("readout of other weights")
+    if ident.get("questions_sha256") != sha("data/exp49/questions.jsonl") or ident.get("sets") != {n: sha(p) for n, p in READOUT_SETS.items()}:
+        raise SystemExit("readout of other questions / source sets")
+    heads = [json.loads(open(os.path.join(ev, f)).readline())["identity"] for f in READOUT_FILES[1:]]
+    if any(h != ident for h in heads):
+        raise SystemExit("a readout file's identity header differs from readout.json")
+    qs = [q for q in map(json.loads, open("data/exp49/questions.jsonl")) if q["set"] in READOUT_SETS]
+    pred, donor, _ = p49.read_details(os.path.join(ev, "readout_details.jsonl"), qs)
+    for q, p in zip(qs, pred):
+        if len(p) != p49.SLOTS or any(not 0 <= c < p49.CLASSES for c in p):
+            raise SystemExit("%s: malformed character prediction" % q["key"])
+    use = [json.loads(x) for x in open(os.path.join(ev, "readout_use.jsonl")) if x.strip()][1:]
+    by = {}
+    for u in use:
+        if u["key"] in by:
+            raise SystemExit("use: %s twice" % u["key"])
+        by[u["key"]] = u
+    if set(by) != {q["key"] for q in qs}:
+        raise SystemExit("use: %d questions missing, %d unknown" % (len({q["key"] for q in qs} - set(by)), len(set(by) - {q["key"] for q in qs})))
+    rows = {n: {r["id"]: r for r in map(json.loads, open(p))} for n, p in READOUT_SETS.items()}
+    import math
+    for q in qs:
+        u, src = by[q["key"]], rows[q["set"]][q["id"]]
+        opts = list(src["questions"][q["qid"]]["criteria"])
+        probs = src["gold"][q["qid"]]["probabilities"]
+        if u["options"] != opts or u["gold"] != opts.index(max(opts, key=lambda o: probs.get(o, 0.0))):
+            raise SystemExit("use: %s options / gold differ from the source question" % q["key"])
+        if len(u["on"]) != len(opts) or len(u["off"]) != len(opts) or not all(math.isfinite(v) for v in u["on"] + u["off"]):
+            raise SystemExit("use: %s logits malformed" % q["key"])
+    return qs, pred, donor, [by[q["key"]] for q in qs]
+
+
+def readout_of(qs, pred, donor) -> Dict:
+    """EXP51's number readout statistics on fit_O / rl_tune (no oracle; donor = the same question on the twin picture)."""
     saved = dict(p49.SET_NAME)
     p49.SET_NAME.clear()
     p49.SET_NAME.update({"fit_O": "fit_O", "rl_tune": "tune_O"})
@@ -110,20 +153,33 @@ def readout_of(run: str, weights: Dict) -> Dict:
     x = ro["tune_O"]
     ref = bool(x["exact"] >= 0.80 and all((x["exact:" + f]["value"] or 0) >= 0.60 for f in p49.FIELDS) and x["both"] >= 0.50
                and x["twin"] >= 0.50 and x["real_minus_donor"] >= 0.20 and x["real_minus_donor_ci"][0] > 0)
-    return {"readout": ro, "exp51_threshold_reference": ref, "note": "no oracle region: a harder task than EXP51"}
+    return {"state": "completed", "readout": ro, "exp51_threshold_reference": ref, "note": "no oracle region: a harder task than EXP51"}
 
 
-def use_of(run: str) -> Dict:
-    rows = [json.loads(x) for x in open(os.path.join(run, "eval", "readout_use.jsonl"))][1:]
+def use_of(qs, use) -> Dict:
     out: Dict = {}
-    for setname in ("fit_O", "rl_tune"):
-        sel = [r for r in rows if r["key"].startswith(setname + "|")]
-        on = [max(range(len(r["on"])), key=r["on"].__getitem__) for r in sel]
-        off = [max(range(len(r["off"])), key=r["off"].__getitem__) for r in sel]
-        out[setname] = {"n": len(sel), "accuracy_with": sum(o == r["gold"] for o, r in zip(on, sel)) / len(sel),
-                        "accuracy_without": sum(o == r["gold"] for o, r in zip(off, sel)) / len(sel),
+    for setname in READOUT_SETS:
+        sel = [u for q, u in zip(qs, use) if q["set"] == setname]
+        on = [max(range(len(u["on"])), key=u["on"].__getitem__) for u in sel]
+        off = [max(range(len(u["off"])), key=u["off"].__getitem__) for u in sel]
+        out[setname] = {"n": len(sel), "accuracy_with": sum(o == u["gold"] for o, u in zip(on, sel)) / len(sel),
+                        "accuracy_without": sum(o == u["gold"] for o, u in zip(off, sel)) / len(sel),
                         "changed": sum(a != b for a, b in zip(on, off)) / len(sel)}
     return out
+
+
+def readout_evidence(run: str, weights: Dict, step_state) -> tuple:
+    """(numbers, use) for the report: the checked readout, or {"state": missing / invalid, "reason"} for both -- never an
+    exception that would drop the verified decisions."""
+    if step_state != "completed":
+        why = {"state": "missing", "reason": "readout step %s" % (step_state or "not run")}
+        return why, why
+    try:
+        qs, pred, donor, use = readout_checked(run, weights)
+        return readout_of(qs, pred, donor), {"state": "completed", **use_of(qs, use)}
+    except (SystemExit, OSError, ValueError, KeyError, IndexError) as e:
+        why = {"state": "invalid", "reason": str(e)}
+        return why, why
 
 
 def build() -> Dict:
@@ -148,9 +204,9 @@ def build() -> Dict:
         out["runs"][arm] = {"completed": names, "readout": st.get("readout"), "missing": [n for n in list(SETS) + list(RISK) + list(SQA) if n not in names]}
         for n in names:
             src[(arm, n)] = (run, os.path.join(run, "stage2"))
-        if st.get("readout") == "completed":
-            out["numbers"][arm] = readout_of(run, fr["weights"])
-            out["use"][arm] = use_of(run)
+        out["numbers"][arm], out["use"][arm] = readout_evidence(run, fr["weights"],
+                                                                "completed" if st.get("readout") == "completed" and st.get("readout_record") == "completed"
+                                                                else st.get("readout_record") or st.get("readout"))
     recs: Dict = {}
     for (who, n), (d, ck) in src.items():
         if n in SETS:
@@ -203,7 +259,7 @@ def conditions(out: Dict) -> Dict:
         bool(nz["both"]["value"] >= 0.10 and nz["both"]["ci95"][0] > 0 and res["progress_N"] is True)
     notes: List[str] = []
     for arm, v in out["numbers"].items():
-        if v["exp51_threshold_reference"] and res.get("progress_" + arm) is False:
+        if v.get("state") == "completed" and v["exp51_threshold_reference"] and res.get("progress_" + arm) is False:
             notes.append("%s: the number readout reaches EXP51's thresholds but the decision did not progress: the use by "
                          "the decision is not connected yet" % arm)
     res["notes"] = notes
@@ -221,6 +277,9 @@ def main() -> int:
     for k, v in out["differences"].items():
         print("%s %s" % (k, {s: "%+.3f [%+.3f, %+.3f]" % (x["value"], *x["ci95"]) for s, x in v.items()}))
     for arm, v in out["numbers"].items():
+        if v.get("state") != "completed":
+            print("numbers %s %s: %s" % (arm, v["state"], v["reason"]))
+            continue
         x = v["readout"]["tune_O"]
         print("numbers %s tune_O exact %.3f %s both %.3f twin %.3f real-donor %+.3f %s (EXP51 thresholds as reference: %s)" % (
             arm, x["exact"], {f: round(x["exact:" + f]["value"] or 0, 3) for f in p49.FIELDS}, x["both"], x["twin"],
