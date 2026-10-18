@@ -145,7 +145,20 @@ def check_start(out: str = OUT, code: bool = True) -> Dict:
         raise SystemExit("data/facts differs from START")
     if fz.weights(E57) != E57_SHA:
         raise SystemExit("EXP57's end changed")
+    check_aux(st)
     return st
+
+
+def check_aux(st: Dict) -> None:
+    """The auxiliary sources START recorded, before they are used (critic EXP63-R1-02): exp49's questions (targets /
+    twins: read_right and the twin statistics), EXP54's P table (the read-right set), EXP57's tokenizer."""
+    from devision.reading import tree_sha
+    if sha(e54.QUESTIONS) != st["exp49_questions"]:
+        raise SystemExit("data/exp49/questions.jsonl differs from START")
+    if sha(os.path.join(e54.OUT, "inputs_P.jsonl")) != st["exp54_inputs_P"]:
+        raise SystemExit("EXP54's inputs_P differs from START")
+    if tree_sha(os.path.join(E57, "stage2", "tokenizer")) != st["start_model"]["tokenizer"]:
+        raise SystemExit("EXP57's tokenizer differs from START")
 
 
 # ------------------------------------------------------------------ train / freeze
@@ -196,21 +209,26 @@ def set_inputs(cond: str):
     return rows, {rid: {"state": r["state_text"]} for rid, r in rows.items()}
 
 
-def run_sets(out: str, plan: List[tuple], device: str = "auto") -> Dict:
-    """plan: [(model label, checkpoint run, weights, [conditions])], each model loaded after its weights check."""
+def run_sets(out: str, plan: List[tuple], stage: str, device: str = "auto") -> Dict:
+    """plan: [(model label, checkpoint run, weights, [conditions])], each model loaded after its weights and tokenizer
+    checks; progress lines go to progress-<stage>.txt (critic EXP63-R1-01: H has its own file)."""
     from devision.infer import Decider, best_device
+    from devision.reading import tree_sha
     s_sha = sha(os.path.join(out, "START.json"))
+    tok = json.load(open(os.path.join(out, "START.json")))["start_model"]["tokenizer"]
     dev = best_device() if device == "auto" else device
     total = sum(len(set_inputs(c)[0]) for _, _, _, cs in plan for c in cs)
     done, t0 = 0, time.time()
     for who, run, weights, conds in plan:
         if fz.weights(run) != weights:                                   # before any load
             raise SystemExit("%s's weights / config are not the bound ones" % who)
+        if tree_sha(os.path.join(run, "stage2", "tokenizer")) != tok:
+            raise SystemExit("%s's tokenizer is not START's" % who)
         d = Decider.load(os.path.join(run, "stage2"), device=dev)
         d.cfg.temperature, d.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}
         for c in conds:
             rows, inputs = set_inputs(c)
-            recs = e54.decide_condition(d, rows, inputs, on_request=lambda n, b=done: e54.progress(out, "decide", b + n, total))
+            recs = e54.decide_condition(d, rows, inputs, on_request=lambda n, b=done: e54.progress(out, stage, b + n, total))
             done += len(rows)
             name = c if who == "new" else "start_" + c
             ident = {"set": name, "model_of": who, "start_sha256": s_sha, "inputs_sha256": e57.hash_inputs(inputs), "model": weights,
@@ -224,13 +242,13 @@ def run_sets(out: str, plan: List[tuple], device: str = "auto") -> Dict:
 def stage_decide(out: str = OUT) -> Dict:
     check_start(out)
     new = fz.check(out, [])["weights"]
-    return run_sets(out, [("new", out, new, list(MAIN)), ("start", E57, E57_SHA, list(MAIN))])
+    return run_sets(out, [("new", out, new, list(MAIN)), ("start", E57, E57_SHA, list(MAIN))], "decide")
 
 
 def stage_decide_h(out: str = OUT) -> Dict:
     check_start(out)
     new = fz.check(out, [])["weights"]
-    return run_sets(out, [("new", out, new, ["H"])])
+    return run_sets(out, [("new", out, new, ["H"])], "decide_h")
 
 
 # ------------------------------------------------------------------ report

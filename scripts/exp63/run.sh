@@ -45,7 +45,7 @@ run_all() {
     rc=$?; codes="$codes ${s%%=*}=$rc"; [ $rc = 0 ] || return $rc
     uv run python scripts/v04b/freeze.py record runs/exp63 "${s%%=*}" || { status "eval:${s%%=*}" failed; codes="$codes record=1"; return 1; }
   done
-  step decide_h $WATCH --progress runs/exp63/progress-decide.txt --log runs/exp63/watch-decide-h.txt -- $PY decide_h
+  step decide_h $WATCH --progress runs/exp63/progress-decide_h.txt --log runs/exp63/watch-decide-h.txt -- $PY decide_h
   rc=$?; codes="$codes decide_h=$rc"; return $rc
 }
 run_all

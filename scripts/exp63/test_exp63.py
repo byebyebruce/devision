@@ -188,3 +188,106 @@ def test_failed_main_decide_finalizes_without_screens_or_h(tmp_path):
     joined = "\n".join(calls)
     assert p.returncode == 5 and "devision-eval" not in joined and "decide_h" not in joined and "report --finalize" in joined
     assert (root / "runs/exp63.started").exists()
+
+
+# ---------------------------------------------------------------- EXP63-R1-01 / 02
+
+class FakeDecider:
+    class cfg:
+        temperature, temperature_by_options = [1.0, 1.0, 1.0], {}
+
+    def decide(self, state, questions, image=None):
+        return {"answers": {k: ({"type": "choice", "probabilities": {o: 1 / len(q["criteria"]) for o in q["criteria"]}}
+                                if q["type"] == "choice" else {"type": "noul", "noul": 0.5}) for k, q in questions.items()}}
+
+
+@pytest.fixture
+def started(tmp_path, monkeypatch):
+    if not has:
+        pytest.skip("data / runs not here")
+    out = str(tmp_path / "out")
+    st = m.stage_start(0, out=out)
+    return out, st
+
+
+def test_h_writes_its_own_progress_and_leaves_the_main_file(started, monkeypatch):
+    import time
+    out, st = started
+    stale = os.path.join(out, "progress-decide.txt")
+    open(stale, "w").write("%.3f 2000 2000\n" % (time.time() - 400))                 # the main decide, long finished
+    before = open(stale).read()
+    import devision.infer as inf
+    import devision.reading as R
+    monkeypatch.setattr(m.fz, "check", lambda run, names: {"weights": {"w": "new"}, "evals": {}})
+    monkeypatch.setattr(m.fz, "weights", lambda run: m.E57_SHA if run == m.E57 else {"w": "new"})
+    monkeypatch.setattr(R, "tree_sha", lambda p: st["start_model"]["tokenizer"])
+    monkeypatch.setattr(inf.Decider, "load", classmethod(lambda cls, *a, **k: FakeDecider()))
+    t0 = time.time()
+    m.stage_decide_h(out)
+    rows = [x.split() for x in open(os.path.join(out, "progress-decide_h.txt")).read().splitlines()]
+    assert rows[-1][1:] == ["600", "600"] and float(rows[0][0]) >= t0                  # H's own total and times
+    assert open(stale).read() == before
+
+
+def test_real_watch_does_not_stop_h_on_the_stale_main_file(tmp_path):
+    import subprocess
+    import sys
+    import time
+    stale, own = tmp_path / "progress-decide.txt", tmp_path / "progress-decide_h.txt"
+    stale.write_text("%.3f 2000 2000\n" % (time.time() - 400))
+    script = ("import time\nf = open(%r, 'a')\nfor n in (1, 300, 600):\n"
+              "    f.write('%%.3f %%d 600\\n' %% (time.time(), n)); f.flush(); time.sleep(0.3)\n") % str(own)
+    watch = os.path.join(ROOT, "scripts", "exp53", "watch.py")
+    base = [sys.executable, watch, "--deadline", str(time.time() + 120), "--grace", "2"]
+    ok = subprocess.run(base + ["--progress", str(own), "--log", str(tmp_path / "w1.txt"), "--", sys.executable, "-c", script], timeout=60)
+    assert ok.returncode == 0                                                           # H's own file: completes
+    old = subprocess.run(base + ["--progress", str(stale), "--log", str(tmp_path / "w2.txt"), "--", sys.executable, "-c", "import time; time.sleep(30)"],
+                         timeout=60)
+    assert old.returncode == 124 and "no progress for" in (tmp_path / "w2.txt").read_text()   # the old wiring would stop H
+
+
+def test_changed_exp49_questions_after_start_give_no_verdict(started, tmp_path, monkeypatch):
+    out, st = started
+    q = tmp_path / "q.jsonl"
+    lines = open(m.e54.QUESTIONS).read().splitlines()
+    r = json.loads(lines[0])
+    r["twin_changed"] = not r["twin_changed"]
+    lines[0] = json.dumps(r)
+    q.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(m.e54, "QUESTIONS", str(q))
+    with pytest.raises(SystemExit, match="exp49"):
+        m.check_start(out, code=False)
+    assert m.report(out)["branch"].startswith("invalid")
+
+
+def test_changed_exp54_p_table_is_refused_even_when_reregistered(started, tmp_path, monkeypatch):
+    import shutil
+    out, st = started
+    d = tmp_path / "exp54"
+    shutil.copytree(os.path.join(ROOT, m.e54.OUT), d, ignore=shutil.ignore_patterns("details_*", "*.npz"))
+    f = d / "inputs_P.jsonl"
+    lines = f.read_text().splitlines()
+    r = json.loads(lines[0])
+    r["table"][0][2] = "999"
+    lines[0] = json.dumps(r)
+    f.write_text("\n".join(lines) + "\n")
+    m.e54.register(str(d), "inputs", {**json.load(open(d / "registry.json"))["inputs"], "inputs_P.jsonl": m.sha(str(f))})
+    monkeypatch.setattr(m.e54, "OUT", str(d))
+    m.e54.load_inputs(str(d), "P")                                                      # its own registry accepts it ...
+    with pytest.raises(SystemExit, match="EXP54"):
+        m.check_start(out, code=False)                                                  # ... START does not
+
+
+def test_changed_tokenizer_is_refused_before_any_load(started, monkeypatch):
+    out, st = started
+    import devision.infer as inf
+    import devision.reading as R
+    monkeypatch.setattr(R, "tree_sha", lambda p: "0" * 64)
+    with pytest.raises(SystemExit, match="tokenizer"):
+        m.check_start(out, code=False)
+    monkeypatch.setattr(m, "check_start", lambda out, code=True: st)
+    monkeypatch.setattr(m.fz, "check", lambda run, names: {"weights": {"w": "new"}, "evals": {}})
+    monkeypatch.setattr(m.fz, "weights", lambda run: {"w": "new"})
+    monkeypatch.setattr(inf.Decider, "load", classmethod(lambda cls, *a, **k: (_ for _ in ()).throw(AssertionError("loaded"))))
+    with pytest.raises(SystemExit, match="tokenizer"):
+        m.stage_decide_h(out)
