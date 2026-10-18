@@ -72,10 +72,11 @@ def pictures_digest(qs: List[Dict], root: str = "data") -> str:
 
 
 def check_variants(root: str = "data") -> Dict:
+    """The variant list against its MANIFEST, and (with root) every picture's bytes against the MANIFEST digest."""
     m = json.load(open(V_MANIFEST))
     if sha(V_QUESTIONS) != m["questions_sha256"]:
         raise SystemExit("data/exp61/questions.jsonl differs from its MANIFEST")
-    if pictures_digest(jsonl(V_QUESTIONS), root) != m["pictures_sha256"]:
+    if root and pictures_digest(jsonl(V_QUESTIONS), root) != m["pictures_sha256"]:
         raise SystemExit("data/exp61 pictures differ from their MANIFEST")
     return {"manifest": sha(V_MANIFEST), "questions": m["questions_sha256"], "pictures": m["pictures_sha256"]}
 
@@ -136,7 +137,7 @@ def check_start(out: str, data_root: str = "data", code: bool = True) -> Dict:
             raise SystemExit("code differs from START: %s" % bad)
     if bound_e53() != st["exp53"] or bound_e60() != st["exp60"] or sha(QUESTIONS) != st["exp49_questions"]:
         raise SystemExit("EXP53 / EXP60 / exp49 identities differ from START")
-    if data_root and check_variants(data_root) != st["variants"]:
+    if check_variants(data_root) != st["variants"]:              # the list / MANIFEST always; the pictures with data_root
         raise SystemExit("data/exp61 differs from START")
     st58 = e58.check_run(e59.E58, data_root=data_root, code=False)
     if st58["model"] != st["model"] or st58["bundle"] != st["bundle"]:
@@ -271,6 +272,32 @@ def stage_train(out: str = OUT, steps: int = STEPS) -> Dict:
 
 # ------------------------------------------------------------------ reads
 
+def new_selector_sha(out: str) -> str:
+    """The trained selector's sha256, after checking that the file, train.json, the new bundle's selector and the
+    registry all name the same file (critic EXP61-R1-02)."""
+    reg = e54.check_registered(out, "selector")
+    actual = sha(os.path.join(out, "selector.pt"))
+    tj = json.load(open(os.path.join(out, "train.json")))
+    bundle = json.load(open(os.path.join(out, "bundle", "reading.json")))["sha256"]
+    if not (actual == reg["selector.pt"] == tj["selector_sha256"] == bundle["selector.pt"] == sha(os.path.join(out, "bundle", "selector.pt"))):
+        raise SystemExit("selector.pt / train.json / bundle / registry do not name one selector")
+    if tj["bundle_reading_json"] != sha(os.path.join(out, "bundle", "reading.json")):
+        raise SystemExit("the bundle's reading.json is not the one train.json recorded")
+    return actual
+
+
+def read_identity(out: str, name: str, new_sha: str, st: Dict) -> Dict:
+    """What a read file is about: START, the set, the selector endpoint (old = EXP53's, new = this run's end) or, for
+    oracle, the fixed boxes of the variant list START bound."""
+    who = name.rsplit("_", 1)[1]
+    ident = {"start_sha256": sha(os.path.join(out, "START.json")), "set": name}
+    if who == "oracle":
+        ident["boxes"] = "data/exp61/questions.jsonl " + st["variants"]["questions"]
+    else:
+        ident["selector_sha256"] = SELECTOR_SHA if who == "old" else new_sha
+    return ident
+
+
 def templates_of(qs: List[Dict]) -> List[str]:
     from devision.reading import TEMPLATES
     ts = {q["text"] for q in qs}
@@ -284,13 +311,11 @@ def stage_reads(out: str = OUT, data_root: str = "data") -> Dict:
 
     from devision.reading import Selector, reads_for
     st = check_start(out, data_root)
-    e54.check_registered(out, "selector")
+    new_sha = new_selector_sha(out)                                               # before any load
     reading, st58, pics58 = e58.load_reading(e59.E58, data_root=data_root)      # EXP57 end + EXP58 bundle, verified
     old_sel = reading.selector
     new_sel = copy.deepcopy(old_sel)
     new_sel.load_state_dict(torch.load(os.path.join(out, "selector.pt"), map_location="cpu"), strict=True)
-    if sha(os.path.join(out, "selector.pt")) != json.load(open(os.path.join(out, "train.json")))["selector_sha256"]:
-        raise SystemExit("selector.pt is not the trained one")
     assert isinstance(new_sel, Selector)
     tune = {r["id"]: r for r in jsonl(e54.TUNE)}
     vq = [q for q in jsonl(V_QUESTIONS) if q["set"] == "tune_V"]
@@ -330,12 +355,12 @@ def stage_reads(out: str = OUT, data_root: str = "data") -> Dict:
     for name, recs in results.items():
         f = "%s.jsonl" % name
         with open(os.path.join(out, f), "w") as fh:
-            fh.write(json.dumps({"identity": {"start_sha256": sha(os.path.join(out, "START.json")), "set": name}}) + "\n")
+            fh.write(json.dumps({"identity": read_identity(out, name, new_sha, st)}) + "\n")
             fh.write("".join(json.dumps(x) + "\n" for x in recs))
         register(out, "reads_" + name, {f: sha(os.path.join(out, f))})
     f = "details_dev24_new.jsonl"
     ident = {"condition": "dev24_new", "start_sha256": sha(os.path.join(out, "START.json")), "model": st["model"],
-             "selector_sha256": sha(os.path.join(out, "selector.pt")), "temperature": "none (raw)", "path": "Reading.decide(image=actual picture)"}
+             "selector_sha256": new_sha, "temperature": "none (raw)", "path": "Reading.decide(image=actual picture)"}
     with open(os.path.join(out, f), "w") as fh:
         fh.write(json.dumps({"identity": ident}) + "\n" + "".join(json.dumps(r) + "\n" for r in dev))
     register(out, "decide_dev24_new", {f: sha(os.path.join(out, f))})
@@ -348,49 +373,122 @@ def exact(read: Dict, target: str) -> bool:
     return bool(read["valid"] and read["decoded"] == target)
 
 
-def stats(qrecs: List[Dict]) -> Dict:
-    """EXP53-style statistics over question records {key, family, field, object, picture, target, twin, twin_changed,
-    read: the decoded string or None, right}: all, per field, both objects (picture + field), changed-value twins,
-    true - donor (changed-value questions: read = own target minus read = the twin's target) with a family-bootstrap
-    95% interval."""
+FIELDS = ("mass", "speed", "distance")
+
+
+def _cells(qrecs: List[Dict]):
+    """exp49 probe.readout's per-family cells on decoded strings (critic EXP61-R1-01): exact per field; for changed-value
+    questions real - donor (own read right minus the twin picture's read equal to THIS question's target) and donor
+    follows (the twin picture's read equal to the twin's target); both objects only where the two golds differ; same;
+    changed-value twins once per pair (view v0)."""
     by = {q["key"]: q for q in qrecs}
-    out: Dict[str, Any] = {"n": len(qrecs), "all": sum(q["right"] for q in qrecs) / len(qrecs)}
-    for f in ("mass", "speed", "distance"):
-        xs = [q for q in qrecs if q["field"] == f]
-        out["all:" + f] = sum(q["right"] for q in xs) / len(xs) if xs else None
+    fam: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
+
+    def add(f, k, v):
+        fam[f][k][0] += float(v)
+        fam[f][k][1] += 1
+    hit = lambda q, t: bool(q["read"] is not None and q["read"] == t)  # noqa: E731
+    for q in qrecs:
+        add(q["family"], "exact:" + q["field"], q["right"])
+        if q["twin_changed"]:
+            d = by.get(q["twin"])
+            if d is None:
+                raise SystemExit("%s: its twin %s is not in the set" % (q["key"], q["twin"]))
+            add(q["family"], "real_minus_donor:" + q["field"], float(q["right"]) - float(hit(d, q["target"])))
+            add(q["family"], "donor_follows:" + q["field"], hit(d, d["target"]))
     pairs = defaultdict(list)
     for q in qrecs:
-        pairs[(q["picture"], q["field"])].append(q["right"])
-    two = [v for v in pairs.values() if len(v) == 2]
-    out["both"] = sum(all(v) for v in two) / len(two) if two else None
-    ch = [q for q in qrecs if q["twin_changed"] and q["twin"] in by]
-    out["twin"] = sum(q["right"] and by[q["twin"]]["right"] for q in ch) / len(ch) if ch else None
-    fam = defaultdict(list)
-    for q in ch:
-        fam[q["family"]].append((float(q["right"]), float(q["read"] == by[q["twin"]]["target"])))
-    keys = sorted(fam)
-    fn = lambda ks: sum(a - b for k in ks for a, b in fam[k]) / max(1, sum(len(fam[k]) for k in ks))  # noqa: E731
-    out["true_minus_donor"] = r41.interval(fn, keys, lambda ks: list(ks)) if keys else None
-    return out
+        pairs[(q["picture"], q["field"])].append(q)
+    for (_, f), v in pairs.items():
+        if len(v) == 2 and v[0]["target"] != v[1]["target"]:
+            add(v[0]["family"], "both:" + f, v[0]["right"] and v[1]["right"])
+            add(v[0]["family"], "same:" + f, v[0]["read"] == v[1]["read"])
+    for q in qrecs:
+        d = by.get(q["twin"])
+        if q["twin_changed"] and d is not None and q["view"] == "v0":
+            add(q["family"], "twin:" + q["field"], q["right"] and d["right"])
+    return fam
 
 
-def paired(new: List[Dict], old: List[Dict], key: str = "all") -> Dict:
-    o = {q["key"]: q for q in old}
-    fam = defaultdict(list)
-    for q in new:
-        if key == "all" or q["field"] == key:
-            fam[q["family"]].append(float(q["right"]) - float(o[q["key"]]["right"]))
-    keys = sorted(fam)
-    fn = lambda ks: sum(x for k in ks for x in fam[k]) / max(1, sum(len(fam[k]) for k in ks))  # noqa: E731
-    return r41.interval(fn, keys, lambda ks: list(ks))
+def _macro(fam, fs, stat) -> Optional[float]:
+    vals = []
+    for f in FIELDS:
+        k = "%s:%s" % (stat, f)
+        d = sum(fam[x][k][1] for x in fs if k in fam[x])
+        if d:
+            vals.append(sum(fam[x][k][0] for x in fs if k in fam[x]) / d)
+    return sum(vals) / len(vals) if vals else None
 
 
-def slice_records(out: str, name: str, qs: List[Dict], by_pic_key, old_from: Optional[str] = None) -> List[Dict]:
+def _clusters(qrecs: List[Dict]) -> Dict[str, set]:
+    """Families linked through a shared case (exp49's union-find), keyed by the component root."""
+    parent: Dict[str, str] = {}
+
+    def find(a):
+        while parent.setdefault(a, a) != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    for q in qrecs:
+        a, b = find("f:" + q["family"]), find("c:" + q["case"])
+        if a != b:
+            parent[max(a, b)] = min(a, b)
+    cl: Dict[str, set] = defaultdict(set)
+    for q in qrecs:
+        cl[find("f:" + q["family"])].add(q["family"])
+    return cl
+
+
+def stats(qrecs: List[Dict]) -> Dict:
+    """exp49 probe.readout's statistics (macro over the three fields; per-field values with their denominators; the
+    real - donor interval by case-linked clusters). A statistic with no legal sample is None (missing, never 0)."""
+    fam = _cells(qrecs)
+    fams = sorted(fam)
+    res: Dict[str, Any] = {s: _macro(fam, fams, s) for s in ("exact", "both", "twin", "same", "real_minus_donor", "donor_follows")}
+    for st in ("exact", "both", "twin", "real_minus_donor", "donor_follows"):
+        for f in FIELDS:
+            k = "%s:%s" % (st, f)
+            d = sum(fam[x][k][1] for x in fams if k in fam[x])
+            res[k] = {"value": sum(fam[x][k][0] for x in fams if k in fam[x]) / d if d else None, "n": d}
+    cl = _clusters(qrecs)
+    keys = sorted(cl)
+    expand = lambda ks: [f for k in ks for f in sorted(cl[k])]  # noqa: E731
+    res["real_minus_donor_ci"] = r41.interval(lambda fs: _macro(fam, fs, "real_minus_donor") or float("nan"), keys, expand)["ci95"] \
+        if res["real_minus_donor"] is not None else None
+    res["clusters"] = len(keys)
+    return res
+
+
+def paired(new: List[Dict], old: List[Dict], field: Optional[str] = None) -> Dict:
+    """new - old exact (macro over the fields, or one field) on the same questions, case-linked clusters resampled."""
+    if {q["key"] for q in new} != {q["key"] for q in old} or len(new) != len(old):
+        raise SystemExit("new and old are not on the same questions")
+    fn_, fo = _cells(new), _cells(old)
+    cl = _clusters(new)
+    keys = sorted(cl)
+    expand = lambda ks: [f for k in ks for f in sorted(cl[k])]  # noqa: E731
+
+    def val(fam, fs):
+        if field is None:
+            return _macro(fam, fs, "exact")
+        k = "exact:" + field
+        d = sum(fam[x][k][1] for x in fs if k in fam[x])
+        return sum(fam[x][k][0] for x in fs if k in fam[x]) / d if d else None
+    fn = lambda fs: (lambda a, b: float("nan") if a is None or b is None else a - b)(val(fn_, fs), val(fo, fs))  # noqa: E731
+    res = r41.interval(fn, keys, expand)
+    res["clusters"] = len(keys)
+    return res
+
+
+def slice_records(out: str, name: str, qs: List[Dict], by_pic_key, ident: Optional[Dict] = None) -> List[Dict]:
+    """A read file's records after its checks: registered and unchanged; identity = `ident` (START, set, the selector
+    endpoint or the oracle boxes; at least START); every question's read present once."""
     f = os.path.join(out, "%s.jsonl" % name)
     if e54.check_registered(out, "reads_" + name).get("%s.jsonl" % name) != sha(f):
         raise SystemExit("%s not registered" % name)
     lines = jsonl(f)
-    if lines[0]["identity"].get("start_sha256") != sha(os.path.join(out, "START.json")):
+    want = ident or {"start_sha256": sha(os.path.join(out, "START.json"))}
+    if any(lines[0]["identity"].get(k) != v for k, v in want.items()):
         raise SystemExit("%s: identity does not bind" % name)
     got = {}
     for x in lines[1:]:
@@ -443,19 +541,38 @@ def box_validity(out: str) -> Dict:
                           **({"text_inside": round(sum(inside[k]) / len(inside[k]), 4)} if k in inside else {})} for k, v in sorted(acc.items())}
 
 
+def invest(x: Dict) -> Any:
+    """EXP53's investment line (exp49 probe.conditions): exact >= 0.80, every field >= 0.60, both >= 0.50, twin >= 0.50,
+    real - donor >= 0.20 with its lower bound > 0. A missing statistic -> "incomplete" (never a pass)."""
+    need = [x.get("exact"), x.get("both"), x.get("twin"), x.get("real_minus_donor"), x.get("real_minus_donor_ci")] + \
+        [(x.get("exact:" + f) or {}).get("value") for f in FIELDS]
+    if any(v is None for v in need):
+        return "incomplete"
+    return bool(x["exact"] >= 0.80 and all(x["exact:" + f]["value"] >= 0.60 for f in FIELDS) and x["both"] >= 0.50
+                and x["twin"] >= 0.50 and x["real_minus_donor"] >= 0.20 and x["real_minus_donor_ci"][0] > 0)
+
+
 def gates(res: Dict) -> Dict:
     g: Dict[str, Any] = {}
-    nv = res.get("tune_V", {}).get("new")
-    if nv:
-        g["new_layout"] = bool(nv["all"] >= 0.80 and all((nv["all:" + f] or 0) >= 0.60 for f in ("mass", "speed", "distance"))
-                               and (nv["both"] or 0) >= 0.50 and (nv["twin"] or 0) >= 0.50 and nv["true_minus_donor"]["value"] >= 0.20
-                               and nv["true_minus_donor"]["ci95"][0] > 0 and res["tune_V"]["new_minus_old"]["all"]["ci95"][0] > 0)
+    tv = res.get("tune_V") or {}
+    if tv.get("new") and tv.get("new_minus_old"):
+        inv = invest(tv["new"])
+        lo = tv["new_minus_old"]["all"]["ci95"][0]
+        g["new_layout"] = inv if inv == "incomplete" or lo != lo else bool(inv and lo > 0)
     else:
         g["new_layout"] = "incomplete"
-    rn, ro = res.get("rl_tune", {}).get("new"), res.get("rl_tune", {}).get("old")
-    g["old_layout"] = "incomplete" if not (rn and ro) else bool(all(rn[k] >= ro[k] - 0.03 for k in ("all", "all:mass", "all:speed", "all:distance")))
-    orc = res.get("tune_V", {}).get("oracle")
-    g["oracle_new_layout"] = "incomplete" if not orc else bool(orc["all"] >= 0.80 and all((orc["all:" + f] or 0) >= 0.60 for f in ("mass", "speed", "distance")))
+    rn, ro = (res.get("rl_tune") or {}).get("new"), (res.get("rl_tune") or {}).get("old")
+    if rn and ro:
+        pairs = [(rn["exact"], ro["exact"])] + [(rn["exact:" + f]["value"], ro["exact:" + f]["value"]) for f in FIELDS]
+        g["old_layout"] = "incomplete" if any(a is None or b is None for a, b in pairs) else bool(all(a >= b - 0.03 for a, b in pairs))
+    else:
+        g["old_layout"] = "incomplete"
+    orc = tv.get("oracle")
+    if orc:
+        vals = [orc.get("exact")] + [(orc.get("exact:" + f) or {}).get("value") for f in FIELDS]
+        g["oracle_new_layout"] = "incomplete" if any(v is None for v in vals) else bool(vals[0] >= 0.80 and all(v >= 0.60 for v in vals[1:]))
+    else:
+        g["oracle_new_layout"] = "incomplete"
     dv = res.get("dev24")
     g["dev24_speed"] = "incomplete" if not dv else bool(dv["speed_new"] >= 18 and dv["speed_new_minus_old"]["ci95"][0] > 0)
     return g
@@ -465,7 +582,7 @@ def branch(g: Dict) -> str:
     if any(v == "incomplete" for v in g.values()):
         return "incomplete: %s -- missing is not a low score" % [k for k, v in g.items() if v == "incomplete"]
     if g["oracle_new_layout"] is False:
-        return "the frozen head does not read the new layout even from the right boxes: region reading unresolved (not the selector)"
+        return "the frozen head does not read the new layout even from the right boxes: region reading unresolved, the selector's part not yet located"
     if g["old_layout"] is False:
         return "old-layout regression beyond 0.03: this selector is not usable"
     if g["new_layout"] is False:
@@ -488,8 +605,9 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
     except (SystemExit, OSError, ValueError, KeyError) as e:
         res["branch"] = "invalid: the run's identity does not verify (%s) -- no verdict" % e
         return write_report(out, res)
+    new_sha = None
     try:
-        e54.check_registered(out, "selector")
+        new_sha = new_selector_sha(out)
         res["train"] = json.load(open(os.path.join(out, "train.json")))
         res["box_validity"] = box_validity(out)
         res["states"]["train"] = "completed"
@@ -502,7 +620,9 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
         key = (lambda x: x["id"]) if slice_ == "rl_tune" else (lambda x: x["picture"])
         for who, name in names.items():
             try:
-                recs[who] = slice_records(out, name, sets[slice_], key)
+                if new_sha is None:
+                    raise SystemExit("no verified trained selector")
+                recs[who] = slice_records(out, name, sets[slice_], key, read_identity(out, name, new_sha, st))
                 res[slice_][who] = stats(recs[who])
                 res["states"][name] = "completed"
             except (SystemExit, OSError, ValueError, KeyError) as e:
@@ -511,7 +631,7 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
             recs["old"] = old_rl_tune(sets["rl_tune"])
             res[slice_]["old"] = stats(recs["old"])
         if "new" in recs and "old" in recs:
-            res[slice_]["new_minus_old"] = {k: paired(recs["new"], recs["old"], k) for k in ("all", "mass", "speed", "distance")}
+            res[slice_]["new_minus_old"] = {k: paired(recs["new"], recs["old"], None if k == "all" else k) for k in ("all",) + FIELDS}
     try:
         its = e59.items()
         f = os.path.join(out, "details_dev24_new.jsonl")
@@ -519,7 +639,7 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
             raise SystemExit("dev24 not registered")
         dl = jsonl(f)
         if dl[0]["identity"].get("start_sha256") != sha(os.path.join(out, "START.json")) or \
-                dl[0]["identity"].get("selector_sha256") != (res.get("train") or {}).get("selector_sha256"):
+                new_sha is None or dl[0]["identity"].get("selector_sha256") != new_sha:
             raise SystemExit("dev24: identity does not bind")
         e57.r41.check_details("exp61/dev24", [it["row"] for it in its], dl[1:])
         lines = {r["sample_id"]: r for r in dl[1:]}
@@ -552,9 +672,10 @@ def write_report(out: str, res: Dict) -> Dict:
     for s in ("rl_tune", "tune_V"):
         for who, v in (res.get(s) or {}).items():
             if who != "new_minus_old":
-                text += "\n%s %s: all %.3f mass %s speed %s distance %s both %s twin %s true-donor %s" % (
-                    s, who, v["all"], *[None if v["all:" + f] is None else round(v["all:" + f], 3) for f in ("mass", "speed", "distance")],
-                    v["both"] and round(v["both"], 3), v["twin"] and round(v["twin"], 3), v["true_minus_donor"])
+                r3 = lambda x: None if x is None else round(x, 3)  # noqa: E731
+                text += "\n%s %s: exact %s mass %s speed %s distance %s both %s twin %s real-donor %s %s clusters %s" % (
+                    s, who, r3(v["exact"]), *[r3(v["exact:" + f]["value"]) for f in FIELDS], r3(v["both"]), r3(v["twin"]),
+                    r3(v["real_minus_donor"]), v["real_minus_donor_ci"], v["clusters"])
         if (res.get(s) or {}).get("new_minus_old"):
             text += "\n%s new-old %s" % (s, {k: "%+.3f [%+.3f, %+.3f]" % (x["value"], *x["ci95"]) for k, x in res[s]["new_minus_old"].items()})
     if res.get("dev24"):
