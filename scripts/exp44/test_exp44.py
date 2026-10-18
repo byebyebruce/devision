@@ -28,8 +28,8 @@ readout = load("exp44_aux_readout", os.path.join(HERE, "aux_readout.py"))
 
 
 def test_number_readout_end_to_end_on_a_tiny_checkpoint(tmp_path):
-    from conftest import tiny_decider
-    from test_number_aux import number_samples
+    from conftest import tiny_decider  # type: ignore
+    from test_number_aux import number_samples  # type: ignore
     rows = number_samples(tmp_path / "data", 6)
     rows = [dict(r, questions={"q": dict(r["questions"]["q"])}) for r in rows]
     path = tmp_path / "set.jsonl"
