@@ -6,8 +6,12 @@ digit ink height at 256 in the full picture and in the best view that holds the 
 drawn size x scale); the share of numbers wholly inside at least one view, cut by every view's edge, or missing; per field
 median and >= 12 / >= 16 px shares. Boxes are used only here, for the audit; no rule depends on them. The rule is chosen
 by a criterion written before looking: among candidates with n <= 16 that keep >= 99.5% of the original numbers whole in
-some view, the largest share of original numbers with >= 16 px ink in their best view; ties -> fewer views.
-Writes data/exp50/geometry.json and runs/exp50-preview/{sheet.png, notes.json}.
+some view, the largest share of original numbers with >= 16 px ink in their best view; ties -> fewer views. That rule
+picked n16 / 0.5 ("rule_choice"); the critic's round-1 review (EXP50-R1-01, before any run) fixed n12 / 0.25 by hand
+instead ("chosen", "chosen_by"): every mass / speed number whole and 72% >= 16 px against 7%, at the cost of 15
+original distance numbers (0.55%) that no single view holds whole. Those numbers' questions are written as a
+report-only slice ("cut_slice": set, id, qid); the main sets and their denominators keep them. No other grid searched.
+Writes data/exp50/geometry.json and runs/exp50-preview/{sheet.png, notes.json} (the chosen grid).
 
     uv run python scripts/exp50/geometry.py --root data
 """
@@ -33,6 +37,7 @@ assert _s is not None and _s.loader is not None
 b45 = importlib.util.module_from_spec(_s)
 _s.loader.exec_module(b45)
 CANDIDATES = [(8, 0.25), (12, 0.25), (12, 0.5), (16, 0.25), (16, 0.5)]
+CHOSEN = (12, 0.25)          # critic EXP50-R1-01 (round-1 review, before any run)
 
 
 def digit_ink(size: int) -> int:
@@ -84,7 +89,8 @@ def measure(pictures: List[Dict], n: int, overlap: float) -> Dict:
                 touch = [r for r in rects if min(r[2], x1) > max(r[0], x0) and min(r[3], y1) > max(r[1], y0)]
                 best = max((256 / max(r[2] - r[0], r[3] - r[1]) for r in whole), default=None)
                 rows.append({"field": num["field"], "global": num["ink"] * g, "local": num["ink"] * best if best else None,
-                             "state": "whole" if whole else "cut" if touch else "missing"})
+                             "state": "whole" if whole else "cut" if touch else "missing",
+                             "picture": p["picture"], "object": num["object"]})
         res: Dict = {"numbers": len(rows), "whole": sum(r["state"] == "whole" for r in rows) / max(1, len(rows)),
                      "cut": sum(r["state"] == "cut" for r in rows), "missing": sum(r["state"] == "missing" for r in rows)}
         for f in ("mass", "speed", "distance", "all"):
@@ -96,8 +102,19 @@ def measure(pictures: List[Dict], n: int, overlap: float) -> Dict:
                           "global_ge16": sum(x >= 16 for x in glo) / len(glo),
                           "local_median": statistics.median(loc) if loc else None,
                           "local_ge12": sum(x >= 12 for x in loc) / len(sel), "local_ge16": sum(x >= 16 for x in loc) / len(sel)}
+        res["not_whole"] = [{"picture": r["picture"], "object": r["object"], "field": r["field"], "state": r["state"]}
+                            for r in rows if r["state"] != "whole"]
         stats[layout] = res
     return stats
+
+
+def cut_slice(root: str, not_whole: List[Dict]) -> List[Dict]:
+    """The readout questions (exp49's map: set, id, qid) asking an original number no view holds whole."""
+    want = {(x["picture"], x["object"], x["field"]) for x in not_whole}
+    qs = [json.loads(x) for x in open(os.path.join(root, "exp49", "questions.jsonl"))]
+    return sorted(({"set": q["set"], "id": q["id"], "qid": q["qid"], "family": q["family"], "field": q["field"]}
+                   for q in qs if q["layout"] == "original" and (q["picture"], q["object"], q["field"]) in want),
+                  key=lambda x: (x["set"], x["id"], x["qid"]))
 
 
 def pictures_of(root: str) -> List[Dict]:
@@ -143,10 +160,14 @@ def main(argv=None) -> int:
     pics = pictures_of(a.root)
     cands: Dict[str, Dict] = {"n%d_o%.2f" % c: dict(measure(pics, *c), n=c[0], overlap=c[1]) for c in CANDIDATES}
     ok = {k: v for k, v in cands.items() if v["n"] <= 16 and v["original"]["whole"] >= 0.995}
-    chosen = max(ok, key=lambda k: (ok[k]["original"]["all"]["local_ge16"], -ok[k]["n"])) if ok else None
+    rule_choice = max(ok, key=lambda k: (ok[k]["original"]["all"]["local_ge16"], -ok[k]["n"])) if ok else None
+    chosen = "n%d_o%.2f" % CHOSEN
+    sl = cut_slice(a.root, cands[chosen]["original"]["not_whole"])
     out = {"pictures": {"original": sum(p["layout"] == "original" for p in pics), "L": sum(p["layout"] == "L" for p in pics)},
            "criterion": "n <= 16 and >= 99.5% original numbers whole in a view; max original share >= 16 px; ties fewer views",
-           "candidates": cands, "chosen": chosen}
+           "candidates": cands, "rule_choice": rule_choice, "chosen": chosen,
+           "chosen_by": "critic EXP50-R1-01 (round-1 review, before any run): n12 / 0.25 by hand, not by the criterion above",
+           "cut_slice": sl}
     os.makedirs(os.path.join(a.root, "exp50"), exist_ok=True)
     json.dump(out, open(os.path.join(a.root, "exp50", "geometry.json"), "w"), indent=1)
     if chosen:
@@ -158,7 +179,8 @@ def main(argv=None) -> int:
             o["all"]["local_ge12"], o["all"]["local_ge16"],
             {f: (round(o[f]["local_median"], 1), round(o[f]["local_ge16"], 2)) for f in ("mass", "speed", "distance")},
             l_["whole"], l_["all"]["local_ge16"]))
-    print("chosen:", chosen)
+    print("rule choice:", rule_choice, "| chosen (critic EXP50-R1-01):", chosen, "| cut slice:", len(sl), "questions",
+          sorted({x["family"] for x in sl}), {x["set"] for x in sl}, {x["field"] for x in sl})
     return 0
 
 

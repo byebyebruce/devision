@@ -27,9 +27,10 @@ def checker(w=120, h=80, cell=1) -> Image.Image:
     return Image.fromarray(np.stack([a] * 3, -1))
 
 
-@pytest.mark.parametrize("w,h,n", [(560, 405, 16), (650, 140, 16), (560, 405, 12), (300, 300, 4)])
-def test_views_cover_the_picture_and_depend_only_on_its_size(w, h, n):
-    rects = view_rects(w, h, n, 0.5)
+@pytest.mark.parametrize("w,h,n,o", [(560, 405, 12, 0.25), (650, 140, 12, 0.25), (522, 409, 12, 0.25), (700, 180, 12, 0.25),
+                                     (560, 405, 16, 0.5), (300, 300, 4, 0.5)])
+def test_views_cover_the_picture_and_depend_only_on_its_size(w, h, n, o):
+    rects = view_rects(w, h, n, o)
     assert len(rects) == n and len(set(rects)) == n
     assert min(r[0] for r in rects) == 0 and min(r[1] for r in rects) == 0
     assert max(r[2] for r in rects) == w and max(r[3] for r in rects) == h
@@ -38,7 +39,19 @@ def test_views_cover_the_picture_and_depend_only_on_its_size(w, h, n):
         cover[y0:y1, x0:x1] = True
     assert cover.all()
     a, b = Image.new("RGB", (w, h), "red"), checker(w, h)
-    assert local_views(a, 256, n, 0.5, "T")[1] == local_views(b, 256, n, 0.5, "C")[1] == rects   # no content, box or text input
+    assert local_views(a, 256, n, o, "T")[1] == local_views(b, 256, n, o, "C")[1] == rects   # no content, box or text input
+
+
+def test_the_experiment_grid_12_views_overlap_quarter():
+    """exp50's grid (critic EXP50-R1-01): temperature pictures 4 x 3, force pictures 6 x 2; 40 packed channels whose
+    full branch is the same in both arms and whose rectangles round-trip."""
+    assert len({r[0] for r in view_rects(560, 405, 12, 0.25)}) == 4 and len({r[1] for r in view_rects(560, 405, 12, 0.25)}) == 3
+    assert len({r[0] for r in view_rects(650, 140, 12, 0.25)}) == 6 and len({r[1] for r in view_rects(650, 140, 12, 0.25)}) == 2
+    img = checker(560, 405, cell=2)
+    t, c = local_pixels(img, 256, 12, 0.25, "T"), local_pixels(img, 256, 12, 0.25, "C")
+    assert t.shape == c.shape == (40, 256, 256) and torch.equal(t[:3], c[:3]) and torch.equal(t[-1], c[-1])
+    assert unpack_local(t[None], 12)[2][0] == (560, 405, view_rects(560, 405, 12, 0.25))
+    assert float(t[3:-1].std()) > float(c[3:-1].std())
 
 
 def test_t_crops_the_original_c_the_reduced_picture_full_branch_identical():

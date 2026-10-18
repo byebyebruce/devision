@@ -3,7 +3,10 @@ the reduced picture, both from EXP48-X's frozen end (runs/exp48-x, whose tempera
 exist / science are reused after their frozen check); ordinary decide, original question and picture, temperature 1 --
 fit_O / fit_L / rl_tune / rl_tune_L with exp42's statistics (different, both, twin, same answer; field-equal macros;
 case-linked clusters, 2,000 resamples, seed 0) and EXP48's strict four-corner quads (scripts/exp48/report.quad_units;
-quads that do not qualify are counted and left out). Differences T - X, C - X, T - C. exist / science: risk only.
+quads that do not qualify are counted and left out). Differences T - X, C - X, T - C. exist / science: risk only
+(their summaries checked as the main sets': checkpoint, temperature 1, no control, data sha). Report-only slice: the 15
+rl_tune distance questions no single view holds whole under n12 / 0.25 (data/exp50/geometry.json "cut_slice"; critic
+EXP50-R1-01) -- each model's accuracy on them; they stay in rl_tune and in every condition's denominator.
 Identity checks as before (START / run.json / train_report / checkpoint config of each arm); anything missing
 "incomplete". A baseline or arm on other questions is refused.
 
@@ -41,7 +44,8 @@ X_SHA = {"model.safetensors": "a8b92cb93a56aa4653f516cbf2a4a38e88fbd64d69ac0f820
          "config.json": "c017a469b35fcccf7e2fb2953dcd334be345bfd4fac493d64f4fd302155140df"}
 RUNS = {"X": X_RUN, "T": "runs/exp50-t", "C": "runs/exp50-c"}
 QUADS = "data/exp48/quads.jsonl"
-VIEWS, OVERLAP = 16, 0.5
+VIEWS, OVERLAP = 12, 0.25
+GEOMETRY = "data/exp50/geometry.json"
 
 
 def arm_identity(arm: str, run: str, man: Dict, quads_sha: str) -> str:
@@ -100,6 +104,10 @@ def build(runs: Dict[str, str] = RUNS) -> Dict:
             if n in SETS:
                 recs[(who, n)] = r48.records(runs[who], n, ckpt[who])
             else:
+                info = json.load(open(os.path.join(runs[who], "eval", n + ".json")))["run"]
+                if os.path.normpath(info.get("checkpoint", "")) != os.path.normpath(ckpt[who]) or info.get("temperature") != "none (raw)" \
+                        or info.get("control") != "none" or info.get("data_sha256") != r41.sha(RISK[n]):
+                    raise SystemExit("%s/%s: not %s at temperature 1, no control, on %s" % (runs[who], n, ckpt[who], RISK[n]))
                 rows = r42.load(RISK[n])
                 got = r41.check_details("%s/%s" % (runs[who], n), rows, r42.load(os.path.join(runs[who], "eval", n + ".details.jsonl")))
                 out["risk"].setdefault(n, {})[who] = sum(g["correct"] for g in got.values()) / len(got)
@@ -125,7 +133,21 @@ def build(runs: Dict[str, str] = RUNS) -> Dict:
                 qa, qb = qfams[(a, n)]["units"], qfams[(b, n)]["units"]
                 d["quad"] = r41.interval(lambda fs, qa=qa, qb=qb: r48.quad_value(qa, fs) - r48.quad_value(qb, fs), keys, expand)
                 out["differences"]["%s|%s-%s" % (n, a, b)] = d
+    out["cut_slice"] = cut_slice(recs)
     out["conditions"] = conditions(out)
+    return out
+
+
+def cut_slice(recs: Dict) -> Dict:
+    """Per model, right / of on the rl_tune questions of the geometry's cut slice (report only)."""
+    keys = {(x["id"], x["qid"]) for x in json.load(open(GEOMETRY))["cut_slice"] if x["set"] == "rl_tune"}
+    out = {}
+    for (who, n), rs in recs.items():
+        if n == "rl_tune":
+            got = [r["right"] for r in rs if tuple(r["key"]) in keys]
+            if len(got) != len(keys):
+                raise SystemExit("%s: %d of the %d cut-slice questions in rl_tune" % (who, len(got), len(keys)))
+            out[who] = {"right": sum(got), "of": len(got)}
     return out
 
 
@@ -158,6 +180,7 @@ def main() -> int:
                 {f: "%d/%d" % (qd[f]["right"], qd[f]["of"]) for f in ("mass", "speed", "distance")}, qd["excluded"]))
     for k, v in out["differences"].items():
         print("%s %s" % (k, {s: "%+.3f [%+.3f, %+.3f]" % (x["value"], *x["ci95"]) for s, x in v.items()}))
+    print("cut slice (report only, in rl_tune) %s" % out["cut_slice"])
     print("risk %s\nconditions %s" % (out["risk"], out["conditions"]))
     return 0
 

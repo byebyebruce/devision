@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # exp50 on one Mac (docs/experiments/2026-10-18-exp50-local-views-plan.md; critic EXP50-PREP-01..05). Only after the
-# critic's model permission. Arm T (configs/exp50-t.yaml, local views from the original picture) then arm C
+# critic's model permission. Grid n12 / overlap 0.25 (critic EXP50-R1-01). Arm T (configs/exp50-t.yaml, local views from the original picture) then arm C
 # (configs/exp50-c.yaml, from the reduced picture), both from EXP48-X's frozen end, each: training under
 # scripts/exp50/watch.py, weights / config frozen (scripts/v04b/freeze.py), the four main decision sets at temperature 1,
 # exist / science -- every file recorded under the arm's frozen identity, all through ordinary decide (devision-eval);
@@ -47,7 +47,7 @@ arm() {   # t|c T|C
   local run=runs/exp50-$1 rc
   STATUS=$run-status.txt
   mkdir -p "$run"
-  python3 -c "import json; json.dump({'arm': '$2', 'objective': 'ce', 'interaction_weight': 1.0, 'quads_sha256': '$Q_SHA', 'local_views': 16, 'local_overlap': 0.5, 'local_source': '$2', 'init': '$INIT', 'init_sha256': {'model.safetensors': '$INIT_SHA', 'config.json': '$INIT_CFG'}, 'data': 'data/exp42/train.jsonl', 'data_sha256': '$(shasum -a 256 data/exp42/train.jsonl | cut -d' ' -f1)', 'git_commit': '$(git rev-parse HEAD)', 'started': '$(date '+%F %T')'}, open('$run/START.json', 'w'), indent=1)"
+  python3 -c "import json; json.dump({'arm': '$2', 'objective': 'ce', 'interaction_weight': 1.0, 'quads_sha256': '$Q_SHA', 'local_views': 12, 'local_overlap': 0.25, 'local_source': '$2', 'init': '$INIT', 'init_sha256': {'model.safetensors': '$INIT_SHA', 'config.json': '$INIT_CFG'}, 'data': 'data/exp42/train.jsonl', 'data_sha256': '$(shasum -a 256 data/exp42/train.jsonl | cut -d' ' -f1)', 'git_commit': '$(git rev-parse HEAD)', 'started': '$(date '+%F %T')'}, open('$run/START.json', 'w'), indent=1)"
   log "arm $2 (local views from $([ "$2" = T ] && echo the original picture || echo the reduced picture))"
   step train uv run python scripts/exp50/watch.py "$run/stage2" "$run-watch.txt" -- uv run devision-pipeline configs/exp50-$1.yaml || return 1
   uv run python scripts/v04b/freeze.py freeze "$run" || { status freeze failed; return 1; }

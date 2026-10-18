@@ -2,7 +2,7 @@
 EXP48-X's tokenizer and config (the arms' start) -- data/exp42/train.jsonl -> rlcd._items -> random.seed(1) ->
 plan_batches(8); every batch two complete four-corner quads (one original, one L), no quad split, 576 updates -- and the
 plan must be EXP48's batch for batch (local views are enabled before the seeds and change no item). Also the distinct
-pictures per batch (each encoded once with its 16 views). Writes data/exp50/PLAN.json.
+pictures per batch (each encoded once with its 12 views). Writes data/exp50/PLAN.json.
 
     HF_HUB_OFFLINE=1 uv run python scripts/exp50/plan_check.py --root data
 """

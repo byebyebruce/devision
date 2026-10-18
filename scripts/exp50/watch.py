@@ -1,10 +1,10 @@
 """exp50 resource watch (critic EXP50-PREP-03; rules written before the run): candidate B's watch (scripts/v04b/watch.py
 -- process group ownership, cache reading, memory rule) for each 576-update arm, the vision tower frozen, each micro
-batch's 4 pictures encoded with their 16 views (68 images, no gradient). A window every 100 updates (100 .. 500);
-validations (data/exp50/val_quarter.jsonl, 244 questions x 17 images, about 1-1.5 minutes) at step 0 and at the end.
+batch's 4 pictures encoded with their 12 views (52 images, no gradient). A window every 100 updates (100 .. 500);
+validations (data/exp50/val_quarter.jsonl, 244 questions x 13 images, about 1 minute) at step 0, at the end and after merging.
 Stop when:
-  - the first window (step 100) is slower than 2.6 s / update, or two consecutive windows are (estimate 2.2: EXP48-X's
-    1.43 plus 4 pictures x 16 views x about 12 ms; above 2.6 the two arms no longer fit the 90 minutes);
+  - the first window (step 100) is slower than 2.6 s / update, or two consecutive windows are (estimate about 2.1: EXP48-X's
+    1.43 plus 4 pictures x 12 views x about 12 ms plus the 3,328-patch keys / values' projection and attention backward; above 2.6 the two arms no longer fit the 90 minutes);
   - any window shows MPS driver memory > 16 GB with system memory available < 2 GB;
   - no new window for 15 minutes before the first one (loading + step-0 validation + 100 updates, about 6 expected),
     15 minutes after the 500 window (the last 76 updates, the end validation, temperatures and saving, about 6
