@@ -281,7 +281,7 @@ def test_region_budget_refuses_before_any_allocation(tmp_path, qs, monkeypatch):
     finally:
         os.chdir(cwd)
     b = json.load(open(os.path.join(out, "local_budget.json")))
-    assert not b["within"] and b["tokens"]["auto"] > 4752 * 1000 and not os.path.exists(os.path.join(out, "auto.npz"))
+    assert not b["within"] and b["questions_done"] < b["questions"] == 4752 and not os.path.exists(os.path.join(out, "auto.npz"))
     ok = st.region_budget([{"index": [1] * 10}], [{"index": [1] * 10}], limit=10 ** 6)
     assert ok["within"] and ok["bytes"] == 20 * 768 * 2
 
@@ -384,3 +384,138 @@ def test_run_finalizes_within_the_limit(tmp_path):
 def test_a_failed_report_fails_the_run(tmp_path):
     p, _, _ = run_stub(tmp_path, REPORT_RC="1", EXP53_LIMIT="90")
     assert p.returncode == 1, p.stdout + p.stderr                           # all stages 0, report 1 -> not exit 0
+
+
+# ---- critic EXP53-R2-01 / 02
+
+
+@pytest.mark.parametrize("damaged", ["auto.npz", "auto_regions.json.gz"])
+def test_damaged_automatic_products_do_not_take_the_oracle_down(tmp_path, qs, damaged):
+    run = fake_run(str(tmp_path / damaged.split(".")[0]), qs)
+    open(os.path.join(run, damaged), "ab").write(b"x")
+    r = run_report(run)
+    assert r["states"]["oracle"]["state"] == "completed" and r["states"]["auto"]["state"] == "invalid"
+    assert r["branch"].startswith("incomplete")
+
+
+def test_automatic_regions_stop_as_soon_as_the_budget_is_exceeded(qs):
+    calls = []
+
+    def big(box, w, h):
+        calls.append(1)
+        return {"index": list(range(3328)), "view": [0] * 3328, "rel": [[0, 0]] * 3328, "geom": [[0, 0, 1, 1]] * 3328}
+    bx = {q["key"]: {"box": q["box"]} for q in qs}
+    regs, budget = st.auto_regions(qs, bx, oracle_tokens=713844, limit=st.BUDGET_BYTES, region_fn=big)
+    assert regs is None and not budget["within"] and len(calls) == budget["questions_done"] < len(qs)
+    assert len(calls) < 500                                                 # stopped early, not after the whole list
+    small = lambda box, w, h: {"index": [1], "view": [0], "rel": [[0, 0]], "geom": [[0, 0, 1, 1]]}  # noqa: E731
+    regs, budget = st.auto_regions(qs, bx, oracle_tokens=10, region_fn=small)
+    assert regs is not None and len(regs) == len(qs) and budget["within"]
+
+
+STAGE = """import os, signal, subprocess, sys, time
+child = subprocess.Popen([sys.executable, '-c', 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)'])
+open(sys.argv[1] + '.child', 'w').write(str(child.pid))
+if len(sys.argv) > 2 and sys.argv[2] == 'one':
+    open(sys.argv[1], 'a').write('%.3f 1 10\\n' % time.time())
+time.sleep(300)
+"""
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def test_watch_forwards_term_and_cleans_its_group(tmp_path):
+    import signal
+    import subprocess
+    import time
+    stage = tmp_path / "stage.py"
+    stage.write_text(STAGE)
+    prog, log = str(tmp_path / "p.txt"), str(tmp_path / "w.txt")
+    bystander = subprocess.Popen(["sleep", "60"])
+    w = subprocess.Popen([sys.executable, os.path.join(HERE, "watch.py"), "--deadline", str(time.time() + 300), "--progress", prog,
+                          "--log", log, "--grace", "2", "--", sys.executable, str(stage), prog])
+    for _ in range(50):
+        if os.path.exists(prog + ".child"):
+            break
+        time.sleep(0.1)
+    child = int(open(prog + ".child").read())
+    time.sleep(0.5)
+    w.send_signal(signal.SIGTERM)                                            # the outer bound's TERM
+    assert w.wait(timeout=15) == 124
+    time.sleep(0.3)
+    assert not alive(child) and "signal 15" in open(log).read() and "KILL" in open(log).read()
+    assert bystander.poll() is None
+    bystander.kill()
+
+
+def test_watch_cleans_up_on_an_exception_and_does_not_invent_an_eta(tmp_path):
+    import time
+    stage = tmp_path / "stage.py"
+    stage.write_text(STAGE)
+    prog, log = str(tmp_path / "p.txt"), str(tmp_path / "w.txt")
+    n = {"calls": 0}
+
+    def broken():
+        n["calls"] += 1
+        if n["calls"] > 5:
+            raise RuntimeError("monitor failed")
+        return 99.0
+    with pytest.raises(RuntimeError):
+        wt.watch([sys.executable, str(stage), prog], deadline=time.time() + 300, progress=prog, logpath=log, grace=2, poll=0.2, mem=broken)
+    time.sleep(0.3)
+    assert not alive(int(open(prog + ".child").read())) and "abnormally" in open(log).read()
+    prog2, log2 = str(tmp_path / "p2.txt"), str(tmp_path / "w2.txt")          # one progress point only: no ETA stop
+    rc = wt.watch([sys.executable, str(stage), prog2, "one"], deadline=time.time() + 5, progress=prog2, logpath=log2, stall=60,
+                  grace=2, check=0.3, poll=0.2, mem=lambda: 99.0)
+    text = open(log2).read()
+    assert rc == 124 and "stopping: deadline" in text and "two checks" not in text and "first window" not in text
+
+
+CHAIN_STUB = """#!/bin/bash
+echo "uv $*" >> "${MARK}"
+case "$*" in
+  *"watch.py"*) shift 2; exec python3 "$@";;
+  *"stages.py start"*) exit 0;;
+  *"stages.py global"*) exit 0;;
+  *"stages.py train"*) exec python3 "${STAGE}" runs/exp53/progress-train.txt;;
+  *"stages.py report --finalize"*) mkdir -p runs/exp53; echo final > runs/exp53/report.txt; exit 0;;
+esac
+exit 9
+"""
+
+
+def test_chain_with_the_real_watch_stops_at_its_deadline_and_finalizes(tmp_path):
+    import shutil
+    import stat
+    import subprocess
+    import time
+    root = tmp_path / "repo"
+    for rel in ("scripts/exp53/run.sh", "scripts/exp53/watch.py", "scripts/exp35/guard.sh", "scripts/exp38/steps.sh"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(os.path.join(ROOT, rel), root / rel)
+    (tmp_path / "stage.py").write_text(STAGE)
+    b = tmp_path / "bin"
+    b.mkdir()
+    for name, body in {"uv": CHAIN_STUB, "pgrep": '#!/bin/bash\n[ "$1" = "-fl" ] && exit 1\nexec /usr/bin/pgrep "$@"\n'}.items():
+        (b / name).write_text(body)
+        (b / name).chmod((b / name).stat().st_mode | stat.S_IEXEC)
+    bystander = subprocess.Popen(["sleep", "120"])
+    env = {**os.environ, "PATH": "%s:%s" % (b, os.environ["PATH"]), "MARK": str(tmp_path / "calls"), "STAGE": str(tmp_path / "stage.py"),
+           "EXP53_LIMIT": "70", "EXP53_RESERVE": "4"}
+    t = time.time()
+    p = subprocess.run(["bash", str(root / "scripts/exp53/run.sh")], env=env, capture_output=True, text=True, timeout=120)
+    took = time.time() - t
+    assert p.returncode == 124 and took < 70, p.stdout + p.stderr        # inside the run's limit
+    calls = (tmp_path / "calls").read_text()
+    assert "report --finalize" in calls and "stages.py local" not in calls
+    wlog = (root / "runs/exp53/watch-train.txt").read_text()
+    assert "stopping: deadline" in wlog and "KILL" in wlog                 # the watch, not the outer bound, ended it
+    child = int((root / "runs/exp53/progress-train.txt.child").read_text())
+    assert not alive(child) and bystander.poll() is None
+    bystander.kill()

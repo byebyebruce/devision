@@ -45,7 +45,7 @@ HEAD, EXP51_REGISTRY, EXP51_DETAILS = "runs/exp51/head_T.pt", "runs/exp51/regist
 HEAD_SHA = "0b548142ed3697742ca9efaec7498e3aaa37d2872415d6c8c77f6f2ba9d0e3fa"
 RUN, T_SHA = "runs/exp50-t", {"model.safetensors": "1a8e5439d5c4f64fd1dbce551f9c2df55152b2aea7cc3a93fc01eb5d364ca007",
                               "config.json": "99c6246e201c5c38c7f62c6831050792858b5aecf2b4be352c5cb7cbc3231fc6"}
-FILES = ["scripts/exp53/selector.py", "scripts/exp53/stages.py", "scripts/exp53/run.sh", "scripts/exp51/regions.py",
+FILES = ["scripts/exp53/selector.py", "scripts/exp53/stages.py", "scripts/exp53/run.sh", "scripts/exp53/watch.py", "scripts/exp51/regions.py",
          "scripts/exp51/probe.py", "scripts/exp51/vision_identity.py", "scripts/exp49/probe.py", "scripts/exp41/report.py",
          "src/devision/image.py", "src/devision/model.py", "src/devision/infer.py"]
 
@@ -120,11 +120,16 @@ def register(out: str, name: str, files: Dict[str, str]) -> None:
     write_json(path, r)
 
 
-def check_registered(out: str, name: str) -> Dict[str, str]:
+def check_registered(out: str, name: str, only: Optional[List[str]] = None) -> Dict[str, str]:
+    """The registered files of `name` (or only those in `only`), each still with its registered sha256."""
     r = json.load(open(os.path.join(out, "registry.json")))
     if name not in r:
         raise SystemExit("%s not registered" % name)
+    if only is not None and any(f not in r[name] for f in only):
+        raise SystemExit("%s: %s not registered" % (name, [f for f in only if f not in r[name]]))
     for f, h in r[name].items():
+        if only is not None and f not in only:
+            continue
         if sha(os.path.join(out, f)) != h:
             raise SystemExit("%s changed after it was registered" % f)
     return r[name]
@@ -292,8 +297,21 @@ def boxes(out: str = OUT) -> Dict[str, Dict]:
 
 # ------------------------------------------------------------------ local
 
-def auto_regions(qs: List[Dict], bx: Dict[str, Dict]) -> List[Dict]:
-    return [reg51.region(bx[q["key"]]["box"], q["width"], q["height"]) for q in qs]
+def auto_regions(qs: List[Dict], bx: Dict[str, Dict], oracle_tokens: int, limit: int = BUDGET_BYTES, dim: int = 768,
+                 region_fn=None):
+    """(automatic regions, budget): question by question, the predicted box's region (exp51 regions.region), its tokens
+    added to a running total with the oracle's; as soon as oracle + automatic float16 features would exceed `limit`,
+    stop -- no later question's geometry is built (critic R2-02)."""
+    region_fn = region_fn or reg51.region
+    out, total = [], 0
+    for n, q in enumerate(qs):
+        r = region_fn(bx[q["key"]]["box"], q["width"], q["height"])
+        total += len(r["index"])
+        if (oracle_tokens + total) * dim * 2 > limit:
+            return None, {"tokens": {"oracle": oracle_tokens, "auto_so_far": total}, "questions_done": n + 1, "questions": len(qs),
+                          "bytes_so_far": (oracle_tokens + total) * dim * 2, "limit": limit, "within": False}
+        out.append(r)
+    return out, {"tokens": {"oracle": oracle_tokens, "auto": total}, "bytes": (oracle_tokens + total) * dim * 2, "limit": limit, "within": True}
 
 
 def memory_now() -> Dict:
@@ -324,12 +342,11 @@ def stage_local(out: str = OUT, data_root: str = "data", device: str = "auto", b
     qs = questions()
     bx = boxes(out)
     oracle = json.load(gzip.open(ORACLE_REGIONS, "rt"))
-    auto = auto_regions(qs, bx)
-    budget = region_budget(oracle, auto)                  # before any large allocation or model load (R1-04)
+    auto, budget = auto_regions(qs, bx, sum(len(r["index"]) for r in oracle))   # stops early when over (R1-04 / R2-02)
     write_json(os.path.join(out, "local_budget.json"), budget)
-    if not budget["within"]:
-        raise SystemExit("resource incomplete: region features would need %.2f GiB > %.2f GiB" % (
-            budget["bytes"] / 2 ** 30, BUDGET_BYTES / 2 ** 30))
+    if auto is None:
+        raise SystemExit("resource incomplete: region features would exceed %.2f GiB after %d of %d questions" % (
+            BUDGET_BYTES / 2 ** 30, budget["questions_done"], budget["questions"]))
     check_pictures(qs, out, data_root)
     with gzip.open(os.path.join(out, "auto_regions.json.gz"), "wt") as fh:
         json.dump([{"key": q["key"], **r} for q, r in zip(qs, auto)], fh)
@@ -391,20 +408,29 @@ def frozen_head(path: str = HEAD):
 
 def stage_readout(out: str = OUT) -> Dict:
     s_sha = started(out)
-    check_registered(out, "local")
     qs = questions()
     if sha(QUESTIONS) != start_record(out)["questions_sha256"]:
         raise SystemExit("questions differ from START")
     oracle = json.load(gzip.open(ORACLE_REGIONS, "rt"))
-    auto = [r for r in json.load(gzip.open(os.path.join(out, "auto_regions.json.gz"), "rt"))]
-    if [r["key"] for r in auto] != [q["key"] for q in qs]:
-        raise SystemExit("auto regions are not in question order")
     head = frozen_head()
     key_i = {q["key"]: i for i, q in enumerate(qs)}
     twin = [key_i[q["twin"]] if q["twin"] else i for i, q in enumerate(qs)]
     allq = list(range(len(qs)))
     reg = {}
-    for name, regs in (("oracle", oracle), ("auto", auto)):
+    failed = []
+    for name in ("oracle", "auto"):
+        try:                                     # each path from its own registered local products (R2-01)
+            check_registered(out, "local", LOCAL_FILES[name])
+        except SystemExit as e:
+            failed.append("%s: %s" % (name, e))
+            continue
+        if name == "oracle":
+            regs = oracle
+        else:
+            regs = json.load(gzip.open(os.path.join(out, "auto_regions.json.gz"), "rt"))
+            if [r["key"] for r in regs] != [q["key"] for q in qs]:
+                failed.append("auto: regions are not in question order")
+                continue
         z = np.load(os.path.join(out, name + ".npz"))
         tok = p51.Tokens(z["x"], z["offsets"], regs)
         pred = p51.predict(head, tok, allq)
@@ -421,10 +447,15 @@ def stage_readout(out: str = OUT) -> Dict:
         reg["details_%s.jsonl" % name] = dsha
         progress(out, "readout", len(reg), 2)
         del tok, z
+    if failed:                                   # the other path's details are written and registered already
+        raise SystemExit("readout incomplete: %s" % "; ".join(failed))
     return reg
 
 
 # ------------------------------------------------------------------ report
+
+LOCAL_FILES = {"oracle": ["oracle.npz"], "auto": ["auto.npz", "auto_regions.json.gz"]}
+
 
 def collect(out: str = OUT):
     """(qs, {path: (pred, donor)}, states): each path from its own registry entry and identity, checked against START
@@ -438,7 +469,7 @@ def collect(out: str = OUT):
             if check_registered(out, "readout_" + name).get(os.path.basename(path)) != sha(path):
                 raise SystemExit("details not registered")
             pred, donor, ident = p49.read_details(path, qs)
-            local = check_registered(out, "local")
+            local = check_registered(out, "local", LOCAL_FILES[name])        # only this path's own products (R2-01)
             want = {"path": name, "start_sha256": started(out), "head_sha256": HEAD_SHA, "questions_sha256": st["questions_sha256"],
                     "features_sha256": local[name + ".npz"], "model": T_SHA,
                     "regions_sha256": st["oracle_regions_sha256"] if name == "oracle" else local["auto_regions.json.gz"],
