@@ -98,6 +98,8 @@ EXP42-C 在原图 tune 上异值两对象同时对只有 0.013，fit_L 也只有
 - **启动前检查**：没有其他模型进程；exp42-C 冻结检查和 sha 正确；6 份数据的 sha 与 MANIFEST 一致；runs/exp43 原本不存在。
 - **截止**：启动后 15 分钟，最后 90 秒留给报告。每个 devision-eval 都是有界运行（到点 TERM，15 秒后 KILL）。
 - **顺序**：tune_transcript → tune_spatial_O → tune_spatial_L → fit_spatial_O → fit_spatial_L → fit_transcript。
+- **每个请求最多 8 题**（`--max-questions 8`，评论家 EXP43-R1-01）。转录都用同一张空白图，转录相同的图会被合并成一个请求，默认上限 32 下 tune_transcript 最大组会到 32 题；改为 8 后共 405 个请求。其余五集每请求最多 4 题。
+- 三个 tune 主项（转录、空间 O、空间 L）中任何一个缺失，证据模式都记为 incomplete；已完成项的筛查保留（EXP43-R1-02）。
 - 不训练，不拟合温度，不重试，跑完不接任何别的运行。
 - **预算**：EXP42 起点的 4 集共约 5,400 题、5.7 分钟，约 0.064 秒 / 题（含加载）。按此估计 7,128 题约 7.6 分钟，加 6 次加载约 9 分钟，在 15 分钟上限内。
 

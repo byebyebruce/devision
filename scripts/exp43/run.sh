@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # exp43 oracle reference diagnosis (docs/experiments/2026-10-18-exp43-reference-plan.md; critic EXP43-PREP-01..04).
 # Only after the critic's permission: the one fixed endpoint exp42-C on the six new sets at temperature 1 (7,128
-# questions; main tune sets first), each a bounded devision-eval, then scripts/exp43/report.py (which reuses
-# exp42-C's frozen name records). Hard deadline start + 15 minutes with the last 90 s for the report; no training,
+# questions; main tune sets first; at most 8 questions per request -- the transcripts share the blank picture, so
+# pictures with the same transcript would otherwise merge up to the default 32), each a bounded devision-eval, then
+# scripts/exp43/report.py (which reuses exp42-C's frozen name records). Hard deadline start + 15 minutes with the last 90 s for the report; no training,
 # no temperature fit, no retry, nothing started after it.
 #   nohup bash scripts/exp43/run.sh > runs/exp43.out 2>&1 &
 set -u
@@ -30,7 +31,7 @@ RESERVE=90
 log "exp43: exp42-C on six sets; deadline $(date -r "$DEADLINE" '+%F %T')"
 for n in $SETS; do
   step "eval:$n" uv run devision-eval --checkpoint runs/exp42-c/stage2 --data data/exp43/$n.jsonl --data-root data \
-    --out runs/exp43/eval/$n.json --role monitoring --no-temperature
+    --out runs/exp43/eval/$n.json --role monitoring --no-temperature --max-questions 8
   rc=$?
   { [ "$rc" = 124 ] || [ "$rc" = 125 ]; } && break
 done

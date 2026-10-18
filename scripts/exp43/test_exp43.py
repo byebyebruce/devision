@@ -137,3 +137,27 @@ def test_report_refuses_pictures_for_transcripts_and_reports_missing(tmp_path, m
     out = fake(tmp_path / "b", monkeypatch, missing=("tune_transcript",))
     res = rep.build(out)
     assert res["missing"] == ["tune_transcript"] and res["screens"]["text_usable"] == "incomplete" and res["pattern"] == "incomplete"
+
+
+def test_pattern_incomplete_when_only_spatial_L_is_missing(tmp_path, monkeypatch):
+    out = fake(tmp_path, monkeypatch, right=lambda n, r, q: "spatial" in n or "transcript" in n, missing=("tune_spatial_L",))
+    res = rep.build(out)
+    assert res["missing"] == ["tune_spatial_L"] and res["pattern"] == "incomplete"
+    assert res["screens"]["text_usable"] is True and res["screens"]["spatial_rescue_O"] is True      # kept
+    assert res["screens"]["spatial_rescue_L"] == "incomplete"
+
+
+def test_requests_of_at_most_8_cover_every_question_once():
+    """The real request grouping (evaluate._requests) at run.sh's --max-questions 8: no request over 8 (the
+    transcripts share the blank picture, so same-text pictures would merge up to 32 by default), every question once."""
+    from devision.train.evaluate import _requests
+    run_sh = open(os.path.join(HERE, "run.sh")).read()
+    assert "--max-questions 8" in run_sh
+    for n in rep.NEW:
+        samples = rows(n)
+        reqs = _requests(samples, {}, "none", 8)
+        asked = [(samples[i]["id"], q) for _, _, qs in reqs for i, q, _ in qs]
+        assert max(len(qs) for _, _, qs in reqs) <= 8
+        assert sorted(asked) == sorted((r["id"], q) for r in samples for q in r["questions"])
+        if n == "tune_transcript":
+            assert len(asked) == 1800 and max(len(qs) for _, _, qs in _requests(samples, {}, "none", 32)) == 32

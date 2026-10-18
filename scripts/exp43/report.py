@@ -19,7 +19,8 @@ Screens (diagnostic, pre-written):
   spatial_rescue_O / _L: tune spatial both macro >= 0.20 and spatial - name both >= 0.10 with lower bound > 0, per
     drawing; only L passing does not count as the real input fixed; fit is supporting only.
 Evidence pattern for the critic (no automatic next step): 1 = text usable and O rescued; 2 = text usable, O not
-rescued; 3 = text not usable; incomplete otherwise.
+rescued; 3 = text not usable; "incomplete" when any of the three tune sets (transcript, spatial O, spatial L) is
+missing (critic EXP43-R1-02; the screens of the completed ones are kept, a missing fit set is listed in "missing").
 
     uv run python scripts/exp43/report.py
 """
@@ -155,7 +156,8 @@ def build(out_dir: str = OUT, manifest_path: str = "data/exp43/MANIFEST.json") -
         res["screens"]["spatial_rescue_" + k] = "incomplete" if key not in d else bool(
             rd[n]["both"] >= 0.20 and d[key]["both"]["value"] >= 0.10 and d[key]["both"]["ci95"][0] > 0)
     s = res["screens"]
-    res["pattern"] = ("incomplete" if "incomplete" in (s["text_usable"], s["spatial_rescue_O"]) else
+    main_missing = [n for n in ("tune_transcript", "tune_spatial_O", "tune_spatial_L") if n in res["missing"]]
+    res["pattern"] = ("incomplete" if main_missing or "incomplete" in (s["text_usable"], s["spatial_rescue_O"]) else
                       1 if s["text_usable"] and s["spatial_rescue_O"] else 2 if s["text_usable"] else 3)
     return res
 
