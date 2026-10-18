@@ -130,6 +130,11 @@ class TrainConfig:
     # string, e.g. "1360") gives number_weight x the strict character CE of the reader's character head (digits, ".",
     # EOS; per question the mean over its valid slots, then the mean over the batch's questions that have a target),
     # computed for monitoring whatever the weight. lr_reader: the reader's learning rate.
+    # exp57 (docs/experiments/2026-10-18-decision-cmp-plan.md): text_only trains and validates the decision on the text
+    # alone -- every question with image=None exactly as ordinary decide(..., image=None) scores it: no picture is
+    # loaded, the vision tower / projector / conditioning are never called and are frozen, only LoRA and the decision
+    # head train. The JSONL's image fields stay as source identity only. False: the picture path, unchanged.
+    text_only: bool = False
     number_reader: bool = False
     number_file: str = ""
     number_weight: float = 0.0
@@ -280,6 +285,9 @@ def _vision_params(vision, top: int) -> List[nn.Parameter]:
 def _forward(model, batch, pixels, device, return_hidden: bool = False, index: Optional[torch.Tensor] = None):
     """Option logits of `batch`; `pixels` one per question, or (exp50) one per distinct picture with `index` giving
     each question's picture."""
+    if pixels is None:                    # exp57 text_only: ordinary decide(image=None)'s scoring, no vision call
+        return model(*(batch[k].to(device) for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
+                     return_hidden=return_hidden)
     trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
     patches, visual, geom = model.visual_inputs(pixels.to(device), grad_vision=trains_vision)
     if index is not None:
@@ -569,7 +577,7 @@ def fit_temperatures(logits, items, previous: Optional[ModelConfig] = None,
     return temperature, dict(sorted(by_options.items()))
 
 
-def _val_logits(model, items, images, pad_id, device, per: int = 32):
+def _val_logits(model, items, images, pad_id, device, per: int = 32, text_only: bool = False):
     """Temperature-free option logits for each item, in eval mode; `per` questions per forward pass."""
     was_training = model.training
     model.eval()
@@ -579,7 +587,7 @@ def _val_logits(model, items, images, pad_id, device, per: int = 32):
             chunk = items[b:b + per]
             batch = collate_items([chunk], pad_id)
             assert batch is not None
-            logits = _forward(model, batch, torch.stack([images(it["image"]) for it in chunk]), device)
+            logits = _forward(model, batch, None if text_only else torch.stack([images(it["image"]) for it in chunk]), device)
             out.extend(row[:len(it["markers"])].tolist() for row, it in zip(logits.float().cpu(), chunk))
     model.train(was_training)
     model.vision.eval()
@@ -710,7 +718,7 @@ _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
                 "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
                 "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
-                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader")
+                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -762,6 +770,10 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         raise ValueError("objective must be rlcd or ce, got %r" % c.objective)
     if c.start_check and not (c.monitor_details and out_dir):
         raise ValueError("start_check compares step-0 records: it needs monitor_details and an out directory")
+    if c.text_only and (c.local_views or c.number_reader or c.region_file or c.grounding_weight > 0 or c.aux_weight > 0
+                        or c.distill_weight > 0 or c.vision_unfreeze_top or c.unfreeze_top or c.interaction_file or c.question_conditioning):
+        raise ValueError("text_only trains LoRA and the decision head only: no local views / reader / region / grounding / "
+                         "number / distillation / interaction loss, no vision or encoder unfreezing, no new conditioning")
     teacher = None
     if c.distill_weight > 0:
         if not c.distill_teacher or not distill_blocks:
@@ -853,15 +865,19 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             raise ValueError("distill_blocks %s not in the training data (blocks: %s)"
                              % (sorted(distill_blocks - found), sorted(b for b in found if b)))
 
+    if c.text_only:    # exp57: nothing the text never reaches is trained (projector, conditioning, reader, vision)
+        for mod in (model.projector, getattr(model, "condition", None), getattr(model, "reader", None)):
+            if mod is not None:
+                mod.requires_grad_(False)
     groups = [
-        {"params": list(model.projector.parameters()), "lr": c.lr_new},
+        {"params": [] if c.text_only else list(model.projector.parameters()), "lr": c.lr_new},
         {"params": [p for n, p in model.decision.named_parameters()
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
         {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},
     ] + ([{"params": unfrozen, "lr": c.lr_encoder}] if unfrozen else []) \
       + ([{"params": vision_params, "lr": c.lr_vision}] if vision_params else [])
-    extra = [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
-             for p in getattr(model, name).parameters()]
+    extra = [] if c.text_only else [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
+                                    for p in getattr(model, name).parameters()]
     if extra:
         groups.append({"params": extra, "lr": c.lr_cond})
     reader_params = list(cast(Any, model.reader).parameters()) if getattr(model, "reader", None) is not None else []
@@ -919,7 +935,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             return evals[-1]
         row: Dict[str, float] = {}
         for name, its in sets.items():
-            logits = _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch)
+            logits = _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch, c.text_only)
             row.update(_set_metrics(name, logits, its))
             if c.monitor_details and out_dir:
                 _write_records(os.path.join(str(out_dir), "monitor", "step%d" % len(losses),
@@ -958,7 +974,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
             index = None
-            if c.local_views:   # exp50: each distinct picture of the micro batch encoded once
+            if c.text_only:      # exp57: no picture at all
+                pixels = None
+            elif c.local_views:   # exp50: each distinct picture of the micro batch encoded once
                 names = sorted({it["image"] for it in chunk})
                 pixels = torch.stack([images(n) for n in names])
                 index = torch.tensor([names.index(it["image"]) for it in chunk])
@@ -1009,6 +1027,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 idx = torch.tensor(kept, device=device)
                 sub = {k: batch[k].to(device)[idx] for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")}
                 with torch.no_grad():
+                    assert pixels is not None    # text_only refuses distill
                     t_logits = _forward(teacher, sub, pixels[kept], device).float()
                 mask = sub["marker_mask"]
                 kl = _distill_kl(logits[idx], t_logits, mask)
@@ -1075,7 +1094,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if hasattr(model, "grounding"):   # S1's head is a training device, not part of the model that answers
         del model.grounding
     model.eval()
-    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch) for name, its in sets.items()}
+    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch, c.text_only) for name, its in sets.items()}
     temperature, by_options = fit_temperatures(set_logits["val"], calib)
     decider.cfg.temperature, decider.cfg.temperature_by_options = temperature, by_options
     print("temperatures (choice, score, noul):", [round(t, 3) for t in temperature])
