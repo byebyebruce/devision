@@ -76,3 +76,19 @@
 | test-2054 | Pair 1: a solid circular magnet and a ring magnet. Pair 2: a solid circular magnet and a ring magnet. The two solid circular magnets are the same size, and the two ring magnets are the same size. |
 | test-4157 | Pair 1: a diamond-shaped magnet and a bar magnet. Pair 2: a diamond-shaped magnet and a bar magnet. The two diamond-shaped magnets are the same size, and the two bar magnets are the same size. |
 | test-3665 | Pair 1: two bar magnets. Pair 2: two bar magnets. All four magnets are the same size. |
+
+## 第 1 轮修正（EXP59-R1-01 / 02；CPU，未运行）
+
+- **R1-01**：新增 `check_diagnostics`，P 登记后立即检查，report 读取 P 时再查一次。逐题核对：
+  - reads 正好是 reads_for 要求的模板，按顺序，各一次；
+  - 每个读取有字段和 4 个数字的框；
+  - valid 时解码串是严格数字且 value = fmt(解码串)；invalid 时 value = unreadable，真实的解码失败保留；
+  - table 由 reads 按顺序构成；state = 行自己的文字 + serialise(table)。
+  - 结构缺失 / 重复 / 链条不符：P 判为 invalid，不做读取或消费的归因；真实的 unreadable 计为读数失败。
+- **R1-02**：branches 只统计明确的 True / False。G_num 或 G_facts 缺失 / 无效的题不进入转移，所以 G_num 无效而 G_facts 有效时，不会报「补事实改对」。
+- **夹具**（13 项）：
+  - 成功夹具改为结构完整的 72 个字段（temp 48 / 48、force 24 / 24 exact）；
+  - 真实的 unreadable 计为读数失败（exact 47，invalid 1），P 仍是 completed；
+  - 缺模板、重复模板、表不符、state 不符、把 invalid 修成数字，这五种都在「合法写出并登记」之后仍被拒绝，P 记为 invalid，不出读取统计；
+  - G_num 无效而 G_facts 有效时，没有「facts」分支；
+  - branches 单元用例：缺 G_num 不计，G_num False → G_facts True 照常计数，缺 G_facts 不计 still。

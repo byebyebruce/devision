@@ -260,6 +260,7 @@ def stage_run(out: str = OUT, data_root: str = "data") -> Dict:
     prog = lambda base: (lambda n: e54.progress(out, "run", base + n, 60))  # noqa: E731
     p = p_condition(reading, its, data_root, pics, on_request=prog(0))
     write_cond(out, "P", p, st)
+    check_diagnostics(p, its)                                             # invalid evidence stops before G
     rep = reproduction(p, st58)
     write_json(os.path.join(out, "reproduction.json"), rep)
     register(out, "reproduction", {"reproduction.json": sha(os.path.join(out, "reproduction.json"))})
@@ -282,6 +283,42 @@ def stage_run(out: str = OUT, data_root: str = "data") -> Dict:
 
 # ------------------------------------------------------------------ report
 
+def check_diagnostics(p_lines: List[Dict], its: List[Dict]) -> None:
+    """P's intermediate evidence is the evidence actually consumed (critic EXP59-R1-01), else SystemExit (P invalid, no
+    reading / consumption attribution): per question the reads are exactly reads_for's templates, in order, once each;
+    each read has its fields and a 4-number box; valid -> the decoded string is a strict number and value = fmt(decoded),
+    invalid -> value = "unreadable" (a real decoding failure, counted as a reading failure later, never repaired); the
+    table is the reads in that order; the state is the row's own text + serialise(table)."""
+    from devision.reading import TEMPLATES, UNREADABLE, VALID, fmt, reads_for, serialise
+    by = {it["row"]["id"]: it for it in its}
+    for r in p_lines:
+        it = by[r["sample_id"]]
+        d = r.get("diagnostics") or {}
+        reads, table, state = d.get("reads"), d.get("table"), d.get("state")
+        if not isinstance(reads, list) or not isinstance(table, list) or not isinstance(state, str):
+            raise SystemExit("%s: diagnostics incomplete" % r["sample_id"])
+        want = reads_for(it["row"]["questions"])
+        if [x.get("question") for x in reads] != want:
+            raise SystemExit("%s: reads %s, the question needs %s (each once, in order)" % (r["sample_id"], [x.get("question") for x in reads], want))
+        for x in reads:
+            box = x.get("box")
+            if not all(k in x for k in ("decoded", "valid", "value")) or not (isinstance(box, list) and len(box) == 4
+                                                                                and all(isinstance(v, (int, float)) for v in box)):
+                raise SystemExit("%s: a read lacks its fields / box" % r["sample_id"])
+            if x["valid"] is True:
+                ok = bool(VALID.match(x["decoded"])) and x["value"] == fmt(x["decoded"])
+            elif x["valid"] is False:
+                ok = x["value"] == UNREADABLE
+            else:
+                ok = False
+            if not ok:
+                raise SystemExit("%s: a read's value is not its decoded string's format" % r["sample_id"])
+        if table != [[*TEMPLATES[x["question"]], x["value"]] for x in reads]:
+            raise SystemExit("%s: the table is not the reads" % r["sample_id"])
+        if state != serialise(it["row"].get("state_text") or "", table):
+            raise SystemExit("%s: the state is not the row's text + the table" % r["sample_id"])
+
+
 def cond_records(out: str, c: str, st: Dict, its: List[Dict]) -> Dict[str, Dict]:
     f = "details_%s.jsonl" % c
     if e54.check_registered(out, "decide_" + c).get(f) != sha(os.path.join(out, f)):
@@ -294,7 +331,9 @@ def cond_records(out: str, c: str, st: Dict, its: List[Dict]) -> Dict[str, Dict]
         raise SystemExit("%s: identity does not bind" % f)
     rows = [it["row"] for it in its if c != "G_facts" or it["kind"] == "force"]
     got = e57.r41.check_details("exp59/%s" % c, rows, lines[1:])
-    if c != "P":
+    if c == "P":
+        check_diagnostics(lines[1:], its)
+    else:
         inp = e54.load_inputs(out, c)
         if any(r["state"] != inp[r["sample_id"]]["state"] for r in lines[1:]):
             raise SystemExit("%s: a record's state is not its registered input" % f)
@@ -400,8 +439,9 @@ def branches(res: Dict) -> List[str]:
     """The pre-written readings (several can hold; 12 questions per kind: wide intervals, no difference is not absence)."""
     out = []
     pq = res["per_question"]
-    wrong_numbers_fixed = [q for q in pq if not q["numbers_right"] and not q.get("P") and q.get("G_num")]
-    right_numbers_wrong = [q for q in pq if q["numbers_right"] and not q.get("P")]
+    # a condition missing / invalid for a question is undecided: only explicit True / False values count (EXP59-R1-02)
+    wrong_numbers_fixed = [q for q in pq if not q["numbers_right"] and q.get("P") is False and q.get("G_num") is True]
+    right_numbers_wrong = [q for q in pq if q["numbers_right"] and q.get("P") is False]
     gnum_wrong = [q for q in pq if q.get("G_num") is False]
     if wrong_numbers_fixed:
         out.append("reading-side repair has value: %d questions wrong with wrong numbers became right with gold numbers "
@@ -409,9 +449,9 @@ def branches(res: Dict) -> List[str]:
     if right_numbers_wrong or gnum_wrong:
         out.append("text consumption / rule problem stays: %d questions wrong with every number read right, %d wrong with gold "
                    "numbers -- same-kind supervision in training sources, not reading-only training" % (len(right_numbers_wrong), len(gnum_wrong)))
-    mag = [q for q in pq if q["kind"] == "force" and "G_facts" in q]
-    fixed_by_facts = [q for q in mag if not q.get("G_num") and q["G_facts"]]
-    still = [q for q in mag if not q["G_facts"]]
+    mag = [q for q in pq if q["kind"] == "force"]
+    fixed_by_facts = [q for q in mag if q.get("G_num") is False and q.get("G_facts") is True]
+    still = [q for q in mag if q.get("G_facts") is False]
     if fixed_by_facts:
         out.append("magnets: %d wrong with gold numbers became right with the picture's facts -- the fact path to the decision first" % len(fixed_by_facts))
     if still:

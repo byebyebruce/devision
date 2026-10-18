@@ -55,8 +55,10 @@ def test_diagnostics_do_not_change_the_answer():
 
 class FakeReading:
     """Records what the P path receives; answers from a fixed table (EXP58's probabilities, or not)."""
-    def __init__(self, answers):
-        self.answers, self.seen = answers, []
+    def __init__(self, answers, unreadable=()):
+        self.answers, self.seen, self.unreadable = answers, [], set(unreadable)      # (row id, template) read as unreadable
+        self.gold = m.gold_numbers(m.items())
+        self.by_key = {it["key"]: it["row"]["id"] for it in m.items()}
         outer = self
 
         class D:
@@ -71,8 +73,17 @@ class FakeReading:
     def decide(self, text, questions, image=None, diagnostics=None):
         self.seen.append(("P", text, image is not None))
         (k, q), = questions.items()
-        if diagnostics is not None:
-            diagnostics.update(reads=[{"question": "x", "decoded": "1", "valid": True, "value": "1", "box": [0, 0, 1, 1]}], table=[], state=text)
+        if diagnostics is not None:            # the structure Reading.read returns, numbers from the transcribed gold
+            from devision.reading import TEMPLATES, UNREADABLE, fmt, reads_for, serialise
+            rid, reads = self.by_key[k], []
+            for t in reads_for(questions):
+                if (rid, t) in self.unreadable:
+                    reads.append({"question": t, "box": [0.1, 0.1, 0.2, 0.2], "degenerate": False, "decoded": "12", "valid": False, "value": UNREADABLE})
+                else:
+                    d = m.e54.number_of(self.gold[rid][t])
+                    reads.append({"question": t, "box": [0.1, 0.1, 0.2, 0.2], "degenerate": False, "decoded": d, "valid": True, "value": fmt(d)})
+            table = [[*TEMPLATES[x["question"]], x["value"]] for x in reads]
+            diagnostics.update(reads=reads, table=table, state=serialise(text, table))
         return {"answers": {k: {"type": "choice", "probabilities": self.answers(k, q)}}}
 
 
@@ -117,6 +128,65 @@ def test_reproduced_p_then_g_inputs_only_offline(tmp_path, monkeypatch):
     assert json.load(open(os.path.join(out, "reproduction.json")))["reproduced"]
     rep = m.report(out)
     assert rep["states"] == {c: "completed" for c in m.CONDS} and rep["candidate_eligible"] is False
+    assert {k: (v["fields"], v["exact"], v["invalid"]) for k, v in rep["reading"].items()} == {"temp": (48, 48, 0), "force": (24, 24, 0)}
+
+
+def test_a_real_unreadable_is_a_reading_failure_not_invalid_evidence(tmp_path, monkeypatch):
+    it = m.items()[0]
+    from devision.reading import reads_for
+    t = reads_for(it["row"]["questions"])[0]
+    out = started(tmp_path, monkeypatch, FakeReading(exp58_answers(), unreadable=[(it["row"]["id"], t)]))
+    m.stage_run(out)
+    rep = m.report(out)
+    assert rep["states"]["P"] == "completed" and rep["reading"]["temp"]["invalid"] == 1 and rep["reading"]["temp"]["exact"] == 47
+    assert [q for q in rep["per_question"] if q["id"] == it["row"]["id"]][0]["numbers_right"] is False
+
+
+def edit_p(out, fn):
+    f = os.path.join(out, "details_P.jsonl")
+    lines = [json.loads(x) for x in open(f) if x.strip()]
+    lines[1] = fn(json.loads(json.dumps(lines[1])))
+    open(f, "w").write("".join(json.dumps(x) + "\n" for x in lines))
+    m.register(out, "decide_P", {"details_P.jsonl": m.sha(f)})           # written and registered as if legitimately
+
+
+def _missing(r):
+    r["diagnostics"]["reads"] = r["diagnostics"]["reads"][1:]
+    return r
+
+
+def _duplicate(r):
+    r["diagnostics"]["reads"] = r["diagnostics"]["reads"] + r["diagnostics"]["reads"][:1]
+    return r
+
+
+def _table(r):
+    r["diagnostics"]["table"][0][2] = "999"
+    return r
+
+
+def _state(r):
+    r["diagnostics"]["state"] = r["diagnostics"]["state"] + " "
+    return r
+
+
+def _repaired(r):                       # an invalid decode turned into a number
+    r["diagnostics"]["reads"][0].update(valid=False, value="14")
+    return r
+
+
+@pytest.mark.parametrize("change", [_missing, _duplicate, _table, _state, _repaired])
+def test_inconsistent_p_evidence_is_invalid_not_a_low_reading(tmp_path, monkeypatch, change):
+    out = started(tmp_path, monkeypatch, FakeReading(exp58_answers()))
+    m.stage_run(out)
+    edit_p(out, change)
+    st = json.load(open(os.path.join(out, "START.json")))
+    with pytest.raises(SystemExit) as e:
+        m.cond_records(out, "P", st, m.items())
+    print("REFUSED", change.__name__, e.value)
+    rep = m.report(out)
+    assert rep["states"]["P"].startswith("missing / invalid") and "reading" not in rep
+    assert rep["branch"].startswith("invalid / incomplete")
 
 
 @pytest.mark.parametrize("change", ["edited", "missing_question"])
@@ -135,4 +205,14 @@ def test_changed_products_are_refused(tmp_path, monkeypatch, change):
     st = json.load(open(os.path.join(out, "START.json")))
     with pytest.raises(SystemExit):
         m.cond_records(out, "G_num", st, m.items())
-    assert m.report(out)["states"]["G_num"].startswith("missing / invalid")
+    rep = m.report(out)
+    assert rep["states"]["G_num"].startswith("missing / invalid") and rep["states"]["G_facts"] == "completed"
+    assert not any("picture's facts" in b for b in rep["branch"])        # no G_num, no "facts fixed it" (EXP59-R1-02)
+
+
+def test_facts_fix_counts_only_against_a_valid_g_num():
+    base = {"kind": "force", "numbers_right": True, "P": False}
+    assert not any("picture's facts" in b for b in m.branches({"per_question": [dict(base, G_facts=True)]}))           # G_num missing
+    assert any(b.startswith("magnets: 1 wrong with gold numbers became right")
+               for b in m.branches({"per_question": [dict(base, G_num=False, G_facts=True)]}))
+    assert not any("still wrong" in b for b in m.branches({"per_question": [dict(base, G_num=False)]}))           # G_facts missing
