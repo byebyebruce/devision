@@ -42,7 +42,7 @@ EXP55 中，给足正确数字（金标数值表 G）后，读数题达 0.992，
 
 ## 预写判据与分支（R1-02 已裁定）
 
-- **fit（训练内学会）**：G 文字比较在 fit 切片上总体 ≥ 0.95，A / B / neither 的召回各 ≥ 0.90（raw 温度 1，不拟温）。
+- **fit（训练内学会）**：G 文字比较在 fit 切片上总体 ≥ 0.95，A / B / neither 的召回各 ≥ 0.90（raw 温度 1；训练末仍拟合 fit 温度，但不使用，见 EXP57-NOTE-01）。
 - **G-tune（比较泛化）**：
   - 总体 ≥ 0.80，三类召回各 ≥ 0.60；
   - 相对同题冻结起点的 case 簇区间下界 > 0；
@@ -79,6 +79,7 @@ EXP55 中，给足正确数字（金标数值表 G）后，读数题达 0.992，
   - `_forward(pixels=None)` 调用的是 `model(input_ids, attention_mask, marker_pos, marker_mask, qtype)`，与 `Decider.decide(image=None)` 是同一个调用；序列仍由 `question_item` / `collate_items` 构造；
   - 不打开图片，不调用视觉塔 / `visual_inputs`，也不插入空白或零视觉 token。JSONL 里的 image 字段只作来源标识。
 - 验证集评测（`_val_logits`）和训练末的温度拟合也走同一条通路。
+- **拟温（EXP57-NOTE-01，评审已接受的偏离）**：rlcd 训练末仍在 fit 行上拟合温度，并存进 checkpoint 的 config。本轮全部判据都用 raw 温度 1：decide 在内存里把温度设为 1，exist / science 用 `--no-temperature`。这份温度不用于择优、改权重或任何门槛，不是独立的校准证据，以后部署也不能拿它代替正式校准。训练主干不为此改动，耗时计入原 45 分钟。
 - **冻结**：projector、question conditioning（含局部视图几何）和 reader 都 `requires_grad(False)`；projector 参数组为空，conditioning 不进优化器；视觉塔照旧冻结，词嵌入在 LoRA 下冻结。**只训练**决策 LoRA 和决策头。
 - **拒绝组合**：与 local_views、number_reader、region、grounding、aux、distill、vision / encoder 解冻、interaction、新的 question_conditioning 同用时直接报错。
 - `text_only` 写进续跑键。默认的带图通路不变，起点模型的 local views / conditioning 配置原样保存。
@@ -121,6 +122,12 @@ EXP55 中，给足正确数字（金标数值表 G）后，读数题达 0.992，
     - 新模型依次跑 fit（200）、G（EXP55 inputs_G，600）、P（EXP56 inputs_P，600），再用 EXP50-T 跑 fit（200）；
     - 每个集合完成后立即登记，明细的身份里绑定输入 state 的哈希。
   - exist / science：devision-eval，`--no-temperature --max-questions 8`，与 EXP50-T 的设置相同；结束后 freeze.py record。
+  - **保护成绩的身份（EXP57-R1-01）**：report 对新旧两份成绩分别核对以下各项，任何一项不符就拒绝，该保护记为缺项（incomplete），不算通过：
+    - summary 的 checkpoint 是各自的 stage2（runs/exp57/stage2 和 runs/exp50-t/stage2）；
+    - raw 温度、无对照、数据 sha；
+    - 明细用 exp41 的 check_details 对源题单逐题核对：唯一、完整，gold / 图片、概率、correct 都一致；
+    - 从核过的明细重算的 n / 准确率等于 summary 的 n / accuracy_all。
+    点差和按图片的区间都从核过的明细算。EXP50-T 复算为 exist 697 / 736 = 0.9470108696、science 354 / 577 = 0.6135181976。
   - `report`（不加载模型）：
     - 温度比较：总体、A / B / neither 召回、分轴、两视图同时正确、预测分布；磁铁比较另报；
     - G / P 相对起点（EXP55 / EXP56 的冻结记录，经 read_condition 核对）、fit 相对 EXP50-T，都按 case 簇自助法给 95% 区间；
@@ -146,7 +153,7 @@ EXP55 中，给足正确数字（金标数值表 G）后，读数题达 0.992，
 |---|---|---|
 | 加载、step 0 验证（fit 1,000 题） | 文字前向 | 约 1 分钟 |
 | 训练 1,000 次更新 | 文字前向和反传，0.3–0.5 秒 / 步（未实测，watch 按 ETA 管控） | 5–8 分钟 |
-| 末尾验证、拟温、合并、保存 | | 约 1–2 分钟 |
+| 末尾验证、拟温（不使用）、合并、保存 | | 约 1–2 分钟 |
 | freeze（逐张量比较） | 两个约 1.6 GB 的文件 | < 1 分钟 |
 | decide：1,600 次文字请求 | EXP55 实测约 6 个请求 / 秒 | 约 5 分钟 |
 | exist / science | EXP50-T 实测 3:16 + 1:51 | 约 5 分钟 |

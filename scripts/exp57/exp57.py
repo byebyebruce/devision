@@ -393,30 +393,42 @@ def fit_reading(recs: List[Dict], rows: Dict[str, Dict]) -> Dict:
     return {"n": len(rr), "accuracy": sum(r["correct"] for r in rr) / len(rr) if rr else None}
 
 
-def screen(out: str, name: str, start_eval: Dict[str, str]) -> Dict:
-    """The new checkpoint's recorded screen against EXP50-T's recorded one: accuracy, difference, image-bootstrap
-    interval on the paired questions."""
+def screen_side(run: str, name: str, data: str) -> tuple:
+    """One endpoint's recorded screen, checked (critic EXP57-R1-01): the summary is the raw / no-control evaluation of
+    the screen file made on THIS run's stage2 checkpoint; its details answer every question of the source file exactly
+    once (gold, picture, valid probabilities, prediction = argmax, correct consistent: exp41's check_details); the
+    accuracy recomputed from those details equals the summary's n / accuracy_all. Returns (accuracy, {key: record})."""
+    summ = json.load(open(os.path.join(run, "eval", name + ".json")))
+    s = summ.get("run") or {}
+    if os.path.normpath(s.get("checkpoint", "")) != os.path.normpath(os.path.join(run, "stage2")):
+        raise SystemExit("%s of %s was evaluated on %r, not this run's stage2" % (name, run, s.get("checkpoint")))
+    if s.get("temperature") != "none (raw)" or s.get("control") != "none" or s.get("data_sha256") != sha(data):
+        raise SystemExit("%s of %s: not the raw / no-control evaluation of %s" % (name, run, data))
+    recs = jsonl(os.path.join(run, "eval", name + ".details.jsonl"))
+    got = r41.check_details("%s/%s" % (run, name), jsonl(data), recs)
+    acc = sum(bool(r["correct"]) for r in got.values()) / len(got)
+    if summ.get("n") != len(got) or abs(summ.get("accuracy_all", -1) - acc) > 1e-9:
+        raise SystemExit("%s of %s: summary n %s / accuracy %s, details %d / %.10f" % (
+            name, run, summ.get("n"), summ.get("accuracy_all"), len(got), acc))
+    return acc, got
+
+
+def screen(out: str, name: str, start_eval: Dict[str, str], start_run: str = e54.RUN, data: Optional[str] = None) -> Dict:
+    """The new checkpoint's recorded screen against EXP50-T's recorded one, both checked by screen_side: accuracy and
+    difference from the checked details, image-bootstrap interval on the paired questions."""
+    data = data or SCREENS[name]
     fz.check(out, [name])
-    fz.check(e54.RUN, [name])
-    if fz.check(e54.RUN, [name])["evals"][name] != start_eval:
+    if fz.check(start_run, [name])["evals"][name] != start_eval:
         raise SystemExit("EXP50-T's %s is not the one START bound" % name)
-    a = json.load(open(os.path.join(out, "eval", name + ".json")))
-    b = json.load(open(os.path.join(e54.RUN, "eval", name + ".json")))
-    for s in (a, b):
-        if s["run"].get("temperature") != "none (raw)" or s["run"].get("control") != "none" or s["run"].get("data_sha256") != sha(SCREENS[name]):
-            raise SystemExit("%s: not the raw / no-control evaluation of %s" % (name, SCREENS[name]))
-    da = {(r["sample_id"], r["qid"]): r for r in jsonl(os.path.join(out, "eval", name + ".details.jsonl"))}
-    db = {(r["sample_id"], r["qid"]): r for r in jsonl(os.path.join(e54.RUN, "eval", name + ".details.jsonl"))}
-    if set(da) != set(db):
-        raise SystemExit("%s: different questions" % name)
+    new, da = screen_side(out, name, data)
+    old, db = screen_side(start_run, name, data)
     by_img = defaultdict(list)
     for k, r in da.items():
         by_img[r["image_id"]].append(k)
     keys = sorted(by_img)
     expand = lambda ks: [q for k in ks for q in by_img[k]]  # noqa: E731
-    fn = lambda qs: sum(da[q]["correct"] - db[q]["correct"] for q in qs) / len(qs)  # noqa: E731
-    return {"new": a["accuracy_all"], "start": b["accuracy_all"], "difference": a["accuracy_all"] - b["accuracy_all"],
-            "paired": r41.interval(fn, keys, expand), "n": len(da)}
+    fn = lambda qs: sum(bool(da[q]["correct"]) - bool(db[q]["correct"]) for q in qs) / len(qs)  # noqa: E731
+    return {"new": new, "start": old, "difference": new - old, "paired": r41.interval(fn, keys, expand), "n": len(da)}
 
 
 def gates(res: Dict) -> Dict:

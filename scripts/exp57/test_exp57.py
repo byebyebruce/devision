@@ -212,3 +212,99 @@ def test_failed_stage_starts_nothing_after_it(tmp_path):
     calls = (tmp_path / "calls").read_text()
     assert p.returncode == 3, p.stdout + p.stderr
     assert "exp57.py decide" not in calls and "devision-eval" not in calls and "report --finalize  start=0 train=0 freeze=3" in calls
+
+
+# ---------------------------------------------------------------- screens (critic EXP57-R1-01)
+
+def screen_fixture(tmp_path, name="exist"):
+    """A 6-question screen file, EXP50-T-like start and EXP57-like new run (dummy weights), each with its own summary /
+    details made on its own stage2, recorded under its frozen identity."""
+    data = tmp_path / "panel.jsonl"
+    rows = [{"id": "s%d" % i, "image_id": "img%d" % (i // 2), "image": "x.jpg", "questions": {"q": {"type": "noul", "instructions": "?"}},
+             "gold": {"q": {"probabilities": {"false": float(i % 2), "true": float(1 - i % 2)}}}} for i in range(6)]
+    data.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    runs = {}
+    for who, right in (("start", 4), ("new", 5)):
+        run = tmp_path / who
+        (run / "stage2").mkdir(parents=True)
+        (run / "stage2" / "model.safetensors").write_bytes(who.encode())
+        (run / "stage2" / "config.json").write_text("{}")
+        m.fz.freeze(str(run))
+        write_screen(run, name, rows, right, str(run / "stage2"), m.sha(str(data)))
+        m.fz.record(str(run), name)
+        runs[who] = run
+    return data, rows, runs
+
+
+def write_screen(run, name, rows, right, checkpoint, data_sha, recs=None, accuracy=None):
+    if recs is None:
+        recs = []
+        for i, r in enumerate(rows):
+            gold = r["gold"]["q"]["probabilities"]
+            g = max(gold, key=gold.__getitem__)
+            pred = g if i < right else ("true" if g == "false" else "false")
+            recs.append({"sample_id": r["id"], "qid": "q", "image_id": r["image_id"], "options": ["false", "true"], "gold": gold,
+                         "gold_answer": g, "probabilities": {"false": float(pred == "false"), "true": float(pred == "true")},
+                         "prediction": pred, "correct": pred == g})
+    (run / "eval").mkdir(exist_ok=True)
+    (run / "eval" / (name + ".details.jsonl")).write_text("".join(json.dumps(r) + "\n" for r in recs))
+    acc = sum(r["correct"] for r in recs) / len(recs) if accuracy is None else accuracy
+    (run / "eval" / (name + ".json")).write_text(json.dumps({"n": len(recs), "accuracy_all": acc, "run": {
+        "checkpoint": checkpoint, "temperature": "none (raw)", "control": "none", "data_sha256": data_sha}}))
+
+
+def rerecord(run, name="exist"):
+    """Record the run's current files for `name` (the fixture rewrote them after a first record)."""
+    fr = json.load(open(m.fz.path(str(run))))
+    fr["evals"].pop(name, None)
+    json.dump(fr, open(m.fz.path(str(run)), "w"))
+    m.fz.record(str(run), name)
+
+
+def start_eval(runs, name="exist"):
+    return m.fz.check(str(runs["start"]), [name])["evals"][name]
+
+
+def test_screen_normal_endpoints_pass(tmp_path):
+    data, rows, runs = screen_fixture(tmp_path)
+    r = m.screen(str(runs["new"]), "exist", start_eval(runs), start_run=str(runs["start"]), data=str(data))
+    assert r["new"] == 5 / 6 and r["start"] == 4 / 6 and r["n"] == 6 and r["difference"] == pytest.approx(1 / 6)
+
+
+def test_screen_refuses_the_start_report_recorded_under_the_new_run(tmp_path):
+    import shutil
+    data, rows, runs = screen_fixture(tmp_path)
+    for f in ("exist.json", "exist.details.jsonl"):           # the start's results copied into the new run, then recorded
+        shutil.copy(runs["start"] / "eval" / f, runs["new"] / "eval" / f)
+    rerecord(runs["new"])
+    with pytest.raises(SystemExit, match="not this run's stage2"):
+        m.screen(str(runs["new"]), "exist", start_eval(runs), start_run=str(runs["start"]), data=str(data))
+
+
+@pytest.mark.parametrize("change,why", [("duplicate", "duplicate"), ("missing", "differ in questions"),
+                                        ("summary_accuracy", "summary n"), ("summary_n", "summary n")])
+def test_screen_refuses_incomplete_or_inconsistent_details(tmp_path, change, why):
+    data, rows, runs = screen_fixture(tmp_path)
+    new = runs["new"]
+    recs = m.jsonl(str(new / "eval" / "exist.details.jsonl"))
+    ck = str(new / "stage2")
+    if change == "duplicate":
+        write_screen(new, "exist", rows, 0, ck, m.sha(str(data)), recs=recs + recs[:1])
+    elif change == "missing":
+        write_screen(new, "exist", rows, 0, ck, m.sha(str(data)), recs=recs[:-1])
+    elif change == "summary_accuracy":
+        write_screen(new, "exist", rows, 0, ck, m.sha(str(data)), recs=recs, accuracy=1.0)
+    else:
+        write_screen(new, "exist", rows, 0, ck, m.sha(str(data)), recs=recs)
+        summ = json.load(open(new / "eval" / "exist.json"))
+        (new / "eval" / "exist.json").write_text(json.dumps(dict(summ, n=7)))
+    rerecord(new)
+    with pytest.raises(SystemExit, match=why):
+        m.screen(str(new), "exist", start_eval(runs), start_run=str(runs["start"]), data=str(data))
+
+
+def test_failed_screen_is_not_a_pass():
+    res = result()
+    del res["screens"]["exist"]                                   # report() leaves a refused screen out (state missing)
+    g = m.gates(res)
+    assert g["screens"] == "incomplete" and g["fit"] is True and m.branch(g).startswith("incomplete")
