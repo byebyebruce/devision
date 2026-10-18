@@ -76,10 +76,10 @@ def registered(s):
 
 def calibrated(s, name="devision-v9.9", **extra):
     """source + clone + what calibration and naming change in the candidate's config."""
-    tmp, _ = s
+    tmp, pins = s
     registered(s)
     cand = tmp / "round" / "cand"
-    rb.clone(str(tmp / "round"), str(cand))
+    rb.clone(str(tmp / "round"), str(cand), pins)
     c = json.loads((cand / "config.json").read_text())
     c.update(temperature=[1.3, 1.0, 1.1], temperature_by_options={"choice:2": 1.2}, model_name=name, **extra)
     (cand / "config.json").write_text(json.dumps(c))
@@ -89,7 +89,7 @@ def calibrated(s, name="devision-v9.9", **extra):
 def test_calibrated_copy_binds_and_loads_on(src):
     tmp, pins = src
     cand = calibrated(src)
-    lineage = rb.bind(str(cand))
+    lineage = rb.bind(str(cand), src[1])
     assert set(lineage["config_changes"]) == {"temperature", "temperature_by_options", "model_name"}
     assert lineage["source_json_sha256"] == R.sha(str(tmp / "round" / "reading_lineage" / "source.json"))
     rd = devision.load(str(cand), device="cpu")
@@ -108,13 +108,13 @@ def test_another_self_consistent_source_is_refused(src):
         rb.source(str(tmp / "exp71"), str(tmp / "exp57"), str(tmp / "bundle_on"), str(tmp / "round"), pins=dict(pins, **{"START.json": "0" * 64}))
 
 
-@pytest.mark.parametrize("damage,why", [("old_config", "does not bind"), ("component", "changed since source.json"),
+@pytest.mark.parametrize("damage,why", [("old_config", "does not bind"), ("component", "records as bundles.on"),
                                         ("config_key", "not allowed"), ("weight", "differs from the source")])
 def test_bind_refusals(src, damage, why):
     tmp, _ = src
     if damage == "old_config":                     # calibrated again after binding: the bundle binds the old config
         cand = calibrated(src)
-        rb.bind(str(cand))
+        rb.bind(str(cand), src[1])
         c = json.loads((cand / "config.json").read_text())
         c["temperature"] = [2.0, 1.0, 2.0]
         (cand / "config.json").write_text(json.dumps(c))
@@ -129,7 +129,7 @@ def test_bind_refusals(src, damage, why):
         with open(cand / "model.safetensors", "ab") as fh:
             fh.write(b"x")
     with pytest.raises(SystemExit, match=why):
-        rb.bind(str(cand))
+        rb.bind(str(cand), src[1])
     assert not (cand / "reading").exists()
 
 
@@ -158,7 +158,7 @@ def plan_for(tmp, cand, data):
 def frozen(src):
     tmp, _ = src
     cand = calibrated(src)
-    rb.bind(str(cand))
+    rb.bind(str(cand), src[1])
     data = samples(tmp)
     conf = plan_for(tmp, cand, data)
     assert ce.main(["freeze", conf]) == 0
@@ -252,7 +252,7 @@ def test_lineage_changes_after_the_freeze_are_refused(frozen, damage):
         c = json.loads((cand / "config.json").read_text())
         c["temperature"] = [1.7, 1.0, 1.7]
         (cand / "config.json").write_text(json.dumps(c))
-        rb.bind(str(cand))
+        rb.bind(str(cand), ce.SOURCE_PINS)
     assert ce.main(["preflight", conf]) == 1 and ce.main(["check", conf]) == 1
     _, bad = ce.identity_problems(ce.Plan(conf))
     assert bad
@@ -263,7 +263,7 @@ def test_lineage_changes_after_the_freeze_are_refused(frozen, damage):
 def test_incomplete_bundle_is_refused_everywhere(src):
     tmp, _ = src
     cand = calibrated(src)
-    rb.bind(str(cand))
+    rb.bind(str(cand), src[1])
     os.remove(cand / "reading" / "reading.json")                 # components kept, manifest gone
     assert R.bundle_state(str(cand)) == "incomplete"
     for mode in ("auto", "on"):
@@ -291,7 +291,7 @@ def build(tmp, name, out="build"):
 def test_build_only_after_freeze_and_exactly_the_frozen_files(src):
     tmp, _ = src
     cand = calibrated(src)
-    rb.bind(str(cand))
+    rb.bind(str(cand), src[1])
     with pytest.raises(SystemExit, match="no frozen identity"):
         build(tmp, "devision-v9.9")
     conf = plan_for(tmp, cand, samples(tmp))
@@ -307,3 +307,44 @@ def test_build_only_after_freeze_and_exactly_the_frozen_files(src):
         fh.write(b"x")
     with pytest.raises(SystemExit, match="differs from its frozen identity"):
         build(tmp, "devision-v9.9", "build3")
+
+
+@pytest.mark.parametrize("swap", ["other_run", "other_bundle", "pinned_file_changed"])
+def test_source_replaced_or_changed_before_the_freeze_is_refused(src, swap):
+    """V04-ENTRY-R2: source.json is checked against the pinned run every time it is used -- a record replaced after
+    `source` by another self-consistent one, or a pinned run file changed, stops clone, bind and freeze."""
+    tmp, pins = src
+    registered(src)
+    path = tmp / "round" / "reading_lineage" / "source.json"
+    R.write_bundle(str(tmp / "bundle_other"), str(tmp / "exp57"), str(tmp / "sel2.pt"), str(tmp / "head.pt"), {},
+                   dims={"selector": [32, 64], "head": 32}, corrector_pt=str(tmp / "corr.pt"))
+    other = rb.files_of(str(tmp / "exp57"), str(tmp / "bundle_other"))
+    rec = json.loads(path.read_text())
+    if swap == "other_run":                  # a run of its own whose START names the other bundle; record self-consistent
+        run2 = tmp / "exp71b"
+        run2.mkdir()
+        (run2 / "START.json").write_text(json.dumps({"bundles": {"on": other}}))
+        for k in ("registry.json", "report.json"):
+            (run2 / k).write_text("{}")
+        rec.update(run=str(run2), bundle=str(tmp / "bundle_other"), bundle_on=other,
+                   pins={k: R.sha(str(run2 / k)) for k in ("START.json", "registry.json", "report.json")})
+    elif swap == "other_bundle":             # the pinned run kept, the record pointed at another bundle
+        rec.update(bundle=str(tmp / "bundle_other"), bundle_on=other)
+    path.write_text(json.dumps(rec))
+    if swap == "pinned_file_changed":
+        with open(tmp / "exp71" / "registry.json", "a") as fh:
+            fh.write(" ")
+    cand = tmp / "round" / "cand"
+    with pytest.raises(SystemExit, match="refusing to clone"):
+        rb.clone(str(tmp / "round"), str(cand), pins)
+    shutil.copytree(tmp / "exp57", cand, ignore=shutil.ignore_patterns("reading"))    # a candidate made by hand
+    with pytest.raises(SystemExit, match="refusing to bind"):
+        rb.bind(str(cand), pins)
+    assert rb.lineage_problems(str(cand), pins)
+    if swap == "pinned_file_changed":        # bound before the change: freeze still refuses
+        with open(tmp / "exp71" / "registry.json", "w") as fh:
+            fh.write("{}")
+        rb.bind(str(cand), pins)
+        with open(tmp / "exp71" / "registry.json", "a") as fh:
+            fh.write(" ")
+        assert ce.main(["freeze", plan_for(tmp, cand, samples(tmp))]) == 1

@@ -56,23 +56,40 @@ def files_of(decision: str, bundle: str) -> Dict[str, str]:
     return out
 
 
-def check_source(rec: Dict) -> List[str]:
-    """The source record's files are still the ones it names."""
-    now = files_of(rec["decision"], rec["bundle"])
-    return ["source %s changed since source.json" % k for k in sorted(set(now) | set(rec["bundle_on"])) if now.get(k) != rec["bundle_on"].get(k)]
-
-
-def source(run: str, decision: str, bundle: str, round_dir: str, pins: Optional[Dict[str, str]] = None) -> Dict:
+def verify_source(run: str, decision: str, bundle: str, pins: Optional[Dict[str, str]] = None) -> List[str]:
+    """The one read-only check of a source (used when source.json is written and every time it is used): the run's
+    pinned files (default PINS, EXP71) have exactly their pinned sha256 on disk now, and the bundle and decision
+    checkpoint are the files its START records as bundles.on."""
     pins = PINS if pins is None else pins
     problems = ["%s/%s is not the pinned source (%s)" % (run, k, v[:12]) for k, v in pins.items()
                 if not os.path.exists(os.path.join(run, k)) or sha(os.path.join(run, k)) != v]
     if problems:
-        raise SystemExit("refusing the source:\n  " + "\n  ".join(problems))
+        return problems
     want = json.load(open(os.path.join(run, "START.json")))["bundles"]["on"]
     got = files_of(decision, bundle)
     diff = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
-    if diff:
-        raise SystemExit("refusing the source: %s / %s are not the files %s/START.json records as bundles.on (%s)" % (bundle, decision, run, diff))
+    return ["%s / %s are not the files %s/START.json records as bundles.on (%s)" % (bundle, decision, run, diff)] if diff else []
+
+
+def check_source(rec: Dict, pins: Optional[Dict[str, str]] = None) -> List[str]:
+    """A source.json as it is consumed: written for the required pins, its run / bundle / decision verified again
+    (`verify_source`, the pinned files' actual hashes), and its own bundle_on equal to that START's bundles.on (and so
+    to the files now) -- a record replaced by another self-consistent source, or a changed pinned run, is refused."""
+    pins = PINS if pins is None else pins
+    if rec.get("pins") != pins:
+        return ["source.json pins %r, not the required source" % rec.get("pins")]
+    out = verify_source(rec["run"], rec["decision"], rec["bundle"], pins)
+    if not out and rec.get("bundle_on") != json.load(open(os.path.join(rec["run"], "START.json")))["bundles"]["on"]:
+        out.append("source.json bundle_on is not %s/START.json bundles.on" % rec["run"])
+    return out
+
+
+def source(run: str, decision: str, bundle: str, round_dir: str, pins: Optional[Dict[str, str]] = None) -> Dict:
+    pins = PINS if pins is None else pins
+    problems = verify_source(run, decision, bundle, pins)
+    if problems:
+        raise SystemExit("refusing the source:\n  " + "\n  ".join(problems))
+    got = files_of(decision, bundle)
     rec = {"run": os.path.abspath(run), "pins": pins, "decision": os.path.abspath(decision), "bundle": os.path.abspath(bundle), "bundle_on": got}
     os.makedirs(os.path.join(round_dir, LINEAGE_DIR), exist_ok=True)
     path = os.path.join(round_dir, LINEAGE_DIR, "source.json")
@@ -83,9 +100,9 @@ def source(run: str, decision: str, bundle: str, round_dir: str, pins: Optional[
     return rec
 
 
-def clone(round_dir: str, candidate: str) -> None:
+def clone(round_dir: str, candidate: str, pins: Optional[Dict[str, str]] = None) -> None:
     rec = json.load(open(os.path.join(round_dir, LINEAGE_DIR, "source.json")))
-    bad = check_source(rec)
+    bad = check_source(rec, pins)
     if bad:
         raise SystemExit("refusing to clone:\n  " + "\n  ".join(bad))
     if os.path.normpath(os.path.dirname(os.path.normpath(candidate))) != os.path.normpath(round_dir) or os.path.exists(candidate):
@@ -103,7 +120,7 @@ def config_diff(a: Dict, b: Dict) -> List[str]:
     return sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
 
 
-def bind(candidate: str) -> Dict:
+def bind(candidate: str, pins: Optional[Dict[str, str]] = None) -> Dict:
     meta = lineage_dir(candidate)
     src_path = os.path.join(meta, "source.json")
     if not os.path.exists(src_path):
@@ -111,7 +128,7 @@ def bind(candidate: str) -> Dict:
     rec = json.load(open(src_path))
     decision, bundle = rec["decision"], rec["bundle"]
     ident = json.load(open(os.path.join(bundle, "reading.json")))
-    problems = check_source(rec)
+    problems = check_source(rec, pins)
     problems += ["source bundle's rules differ from this code: %s" % x for x in check_rules(ident)]
     problems += ["candidate %s differs from the source decision checkpoint" % f for f in SAME
                  if digest(os.path.join(candidate, f)) != digest(os.path.join(decision, f))]
@@ -151,9 +168,7 @@ def lineage_problems(candidate: str, pins: Optional[Dict[str, str]] = None) -> L
     out = []
     if lin.get("source_json_sha256") != sha(paths["source.json"]):
         out.append("lineage.json names source.json %s, it is %s" % (lin.get("source_json_sha256"), sha(paths["source.json"])))
-    if rec.get("pins") != (PINS if pins is None else pins):
-        out.append("source.json pins %r, not the required source" % rec.get("pins"))
-    out += check_source(rec)
+    out += check_source(rec, pins)
     rj = os.path.join(candidate, "reading", "reading.json")
     if not os.path.exists(rj) or lin.get("reading_json_sha256") != sha(rj):
         out.append("candidate reading/reading.json is not the one lineage.json bound")

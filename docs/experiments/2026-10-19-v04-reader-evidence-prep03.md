@@ -372,3 +372,7 @@
   - freeze 把 source / lineage 的哈希写进 IDENTITY，preflight / seal / check 每次重新核对；
   - build 先读 `<round>/eval/IDENTITY.json`，核对候选和记录都与冻结时一致；构建后逐个推理文件对照 IDENTITY 检查。
 - 干净安装核验（PENDING-01）仍是独立的后续项。
+- 第 3 轮（V04-ENTRY-R2）：rebind.verify_source 是唯一的只读来源核验，核两件事：
+  - 固定运行文件在磁盘上的实际哈希等于 PINS；
+  - bundle 和决策目录正是该 START 的 bundles.on。
+  source 写入时、clone / bind 使用 source.json 时、lineage_problems（freeze / preflight / seal / check / build）每次都调用它。check_source 另外要求记录的 pins 等于规定来源，记录自己的 bundle_on 等于 START.bundles.on。
