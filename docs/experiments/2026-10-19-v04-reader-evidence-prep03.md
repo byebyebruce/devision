@@ -387,3 +387,7 @@
      - 带读取组合的 checkpoint 以 on 加载。
   - 夹具 tests/release/test_install_check.py（8 项）：一次真实的隔离安装；模块被改、从源码树导入、表不同、off 与 Decider 不符、概率超差、没有以 on 加载，六种情况都会被报告。
   - 尚未接入 hf.py verify：发布时以候选的 IDENTITY 和固定 cases 单独调用。
+- 干净安装第 2 轮（V04-INSTALL-R1-01–03）：
+  - 答案按 Jev 约定核对：题目集合、题型、概率有限且在 [0, 1] 内、选择题概率归一、所选项是 arg-max；所选项也必须一致。
+  - 固定 smoke 在安装之前预检：角色齐全（ordinary 至少 2 题，温度、磁力、配错图）、名称唯一、每题属于对应域、配错图与对应温度题同 state 同题但像素不同。比较时要求每种模式的 case 完整、route 等于预期，reads 也必须一致。
+  - 正式核验必须给完整的 IDENTITY（files / reading / code）：冻结候选本身用 check_eval 的树、bundle 和来源核验；发布副本按推理文件内容比对。核验在安装之前进行，结果记录到 --record。只带 code 的身份不能做正式核验；不给身份时是开发自检，记录里写明不算发布证据。
