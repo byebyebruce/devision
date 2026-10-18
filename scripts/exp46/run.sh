@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # exp46 causal diagnosis of the frozen EXP45-G (docs/experiments/2026-10-18-exp46-causal-plan.md; critic EXP46-PREP-01..03).
 # Only after the critic's permission. One bounded run of scripts/exp46/diagnose.py (48 units, 96 questions, six modes; no
-# training, no weight written), hard deadline start + 10 minutes with the last 60 s for the report; no retry.
+# training, no weight written), hard deadline start + 10 minutes with the last 60 s for the model-free report; no retry.
 #   nohup bash scripts/exp46/run.sh > runs/exp46.out 2>&1 &
 set -u
 cd "$(dirname "$0")/../.."
@@ -22,4 +22,9 @@ log "exp46: deadline $(date -r "$DEADLINE" '+%F %T')"
 run_capped $(( DEADLINE - $(date +%s) - 60 - 15 )) 15 uv run python scripts/exp46/diagnose.py
 rc=$?
 log "diagnosis exit $rc"
-exit "$rc"
+# always, without a model: the report from what was written -- "incomplete" with each mode's missing questions unless
+# all six modes covered all 96 (critic EXP46-R1-03)
+uv run python scripts/exp46/diagnose.py --finalize "$rc"
+frc=$?
+log "final report (exit $frc)"
+exit "$frc"

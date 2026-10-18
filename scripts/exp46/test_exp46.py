@@ -42,7 +42,7 @@ def test_baseline_is_the_modules_own_computation_and_no_residual_keeps_v():
         ref = cond(v, pt, w, qm)
         base, rec = dg.conditioned(cond, v, pt, w, qm, "baseline")
         none, _ = dg.conditioned(cond, v, pt, w, qm, "no_residual")
-    assert torch.allclose(ref, base, atol=1e-6) and rec["residual_rms"] > 0
+    assert torch.allclose(ref, base, atol=1e-6) and rec["residual_rms_computed"] > 0
     assert torch.equal(none, v)
 
 
@@ -117,7 +117,7 @@ def tiny_run(tmp_path, tamper=None, dup=False):
                      "gold": {"q1": {"probabilities": {"red": 1.0, "blue": 0.0}}, "q2": {"probabilities": {"red": 0.0, "blue": 1.0}}}})
         for q, obj, x in (("q1", "A", 0), ("q2", "B", 30)):
             regs.append({"set": "s", "id": "r%d" % i, "qid": q, "box": [x, 10, 30, 20], "width": 60, "height": 40})
-        units.append({"key": "s|%d" % i, "set": "s", "split": "fit", "layout": "original", "field": "mass", "first_side": "left",
+        units.append({"key": "s|%d" % i, "set": "s", "split": "fit", "layout": "original", "field": "mass", "first_side": "left", "picture": "images/%d.png" % i,
                       "questions": [{"id": "r%d" % i, "qid": "q1", "object": "A", "side": "left", "gold": "red"},
                                     {"id": "r%d" % i, "qid": "q2", "object": "B", "side": "right", "gold": "blue"}]})
     if dup:
@@ -125,6 +125,10 @@ def tiny_run(tmp_path, tamper=None, dup=False):
     (tmp_path / "set.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     (tmp_path / "regs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in regs))
     (tmp_path / "units.jsonl").write_text("".join(json.dumps(u) + "\n" for u in units))
+    sha = lambda p: __import__("hashlib").sha256(open(p, "rb").read()).hexdigest()  # noqa: E731
+    json.dump({"sha256": sha(tmp_path / "units.jsonl"), "sources": {"s": sha(tmp_path / "set.jsonl"), "regions_readout": sha(tmp_path / "regs.jsonl")},
+               "pictures_sha256": {"images/%d.png" % i: sha(tmp_path / "data" / "images" / ("%d.png" % i)) for i in range(2)}},
+              open(tmp_path / "manifest.json", "w"))
     images = _Images(tmp_path / "data", d)
     (run / "eval").mkdir(parents=True)
     with open(run / "eval" / "s.details.jsonl", "w") as fh:
@@ -135,11 +139,13 @@ def tiny_run(tmp_path, tamper=None, dup=False):
                 pr = dg.probs_of(_forward(d.model, batch, torch.stack([images(it["image"]) for it in items]), "cpu"), items)
                 for it, p in zip(items, pr):
                     probs = dict(zip(it["keys"], p))
-                    if tamper:
+                    if tamper == "probability":
                         probs["red"] += 1e-3
-                    fh.write(json.dumps({"sample_id": r["id"], "qid": it["qid"], "probabilities": probs,
+                    gold = next(o for o, x in r["gold"][it["qid"]]["probabilities"].items() if x == 1.0)
+                    fh.write(json.dumps({"sample_id": r["id"], "qid": it["qid"], "probabilities": probs, "options": it["keys"],
+                                         "gold_answer": "green" if tamper == "gold" else gold, "image_used": r["image"],
                                          "prediction": max(probs, key=lambda k: probs[k])}) + "\n")
-    return ["--units", str(tmp_path / "units.jsonl"), "--regions", str(tmp_path / "regs.jsonl"), "--out", str(tmp_path / "out"),
+    return ["--units", str(tmp_path / "units.jsonl"), "--manifest", str(tmp_path / "manifest.json"), "--regions", str(tmp_path / "regs.jsonl"), "--out", str(tmp_path / "out"),
             "--run", str(run), "--data-root", str(tmp_path / "data"), "--device", "cpu", "--expect-sha", "0",
             "--sets", json.dumps({"s": str(tmp_path / "set.jsonl")})]
 
@@ -147,15 +153,83 @@ def tiny_run(tmp_path, tamper=None, dup=False):
 def test_full_diagnosis_on_a_tiny_checkpoint(tmp_path):
     assert dg.main(tiny_run(tmp_path)) == 0
     rep = json.load(open(tmp_path / "out" / "report.json"))
-    assert rep["questions"] == 4 and rep["baseline_vs_frozen_max_diff"] <= 1e-5 and rep["instrumented_vs_plain_max_diff"] < 1e-5
-    assert set(rep["summary"]) == set(dg.MODES) and rep["summary"]["baseline"]["all"]["prediction_changed"] == 0
+    st = rep["state"]
+    assert st["questions"] == 4 and st["max_plain_vs_frozen"] <= 1e-5 and st["max_instrumented_vs_plain"] < 1e-5
+    assert rep["status"] == "complete" and set(rep["summary"]) == set(dg.MODES)
+    assert rep["summary"]["baseline"]["all"]["prediction_changed"] == 0
     det = [json.loads(x) for x in open(tmp_path / "out" / "details.jsonl")]
     ot = [r for r in det if r["mode"] == "oracle_target"]
     assert all(abs(r["mass_target"] - 1) < 1e-4 and r["mass_other"] < 1e-4 for r in ot)
 
 
-def test_refuses_a_wrong_baseline_and_repeated_questions(tmp_path):
-    with pytest.raises(SystemExit):
-        dg.main(tiny_run(tmp_path / "a", tamper=True))
+def test_refuses_a_wrong_frozen_record_and_repeated_questions(tmp_path):
+    assert dg.main(tiny_run(tmp_path / "a", tamper="probability")) == 2                  # plain vs frozen > 1e-5: stopped
+    assert json.load(open(tmp_path / "a" / "out" / "report.json"))["status"] == "incomplete"
     with pytest.raises(SystemExit):
         dg.main(tiny_run(tmp_path / "b", dup=True))
+    with pytest.raises(SystemExit):                                                     # the frozen record's gold differs
+        dg.main(tiny_run(tmp_path / "c", tamper="gold"))
+
+
+def test_instrumented_baseline_must_match_and_stops_the_unit(tmp_path, monkeypatch):
+    """Only the instrumented baseline's probabilities move (by 1e-3; the tiny model barely reacts to its visual tokens,
+    so the probabilities are shifted directly): the diagnosis stops before any other mode of that unit."""
+    real_cond, real_probs, state = dg.conditioned, dg.probs_of, {"mode": None}
+
+    def cond(c, visual, patches, words, qmask, mode, support=None):
+        state["mode"] = mode
+        return real_cond(c, visual, patches, words, qmask, mode, support)
+
+    def probs(logits, items):
+        pr = real_probs(logits, items)
+        return [[p[0] + 1e-3, p[1] - 1e-3] + p[2:] for p in pr] if state["mode"] == "baseline" else pr
+    monkeypatch.setattr(dg, "conditioned", cond)
+    monkeypatch.setattr(dg, "probs_of", probs)
+    assert dg.main(tiny_run(tmp_path)) == 2
+    rep = json.load(open(tmp_path / "out" / "report.json"))
+    assert rep["status"] == "incomplete" and "instrumented" in rep["state"]["reason"]
+    assert rep["completed_questions_by_mode"] == {m: 0 for m in dg.MODES}                # no other mode of that unit ran
+
+
+def test_baseline_check_rejects_a_flipped_prediction_or_non_finite():
+    keys = [["red", "blue"]]
+    frozen = [{"probabilities": {"red": 0.5000004, "blue": 0.4999996}, "prediction": "red"}]
+    assert dg.baseline_check([[0.5000004, 0.4999996]], [[0.5000004, 0.4999996]], frozen, keys) == ""
+    assert "prediction" in dg.baseline_check([[0.4999996, 0.5000004]], [[0.5000004, 0.4999996]], frozen, keys)   # 8e-7 apart, flipped
+    assert "finite" in dg.baseline_check([[float("nan"), 0.5]], [[0.5, 0.5]], frozen, keys)
+
+
+def test_changed_inputs_are_refused_before_any_model(tmp_path):
+    args = tiny_run(tmp_path)
+    with open(tmp_path / "set.jsonl", "a") as f:
+        f.write("\n")
+    with pytest.raises(SystemExit, match="MANIFEST"):
+        dg.main(args)
+    assert not (tmp_path / "out" / "START.json").exists()
+    args = tiny_run(tmp_path / "p")
+    Image.new("RGB", (60, 40), (1, 2, 3)).save(tmp_path / "p" / "data" / "images" / "1.png")
+    with pytest.raises(SystemExit, match="MANIFEST"):
+        dg.main(args)
+
+
+def test_traces_and_a_cut_run_is_incomplete(tmp_path):
+    args = tiny_run(tmp_path)
+    assert dg.main(args) == 0
+    det = [json.loads(x) for x in open(tmp_path / "out" / "details.jsonl")]
+    for r in det:
+        for k in ("q_norm", "q_diff_rms", "vc_rms", "zero_difference", "alpha_capped", "input_ids_sha256", "question_mask_sha256",
+                  "diff_token_ids", "residual_rms_computed", "residual_rms_applied"):
+            assert k in r
+        if r["mode"] == "amplify_difference":
+            assert r["alpha"] == pytest.approx(max(1.0, min(1000.0, 0.1 * r["vc_rms"] / max(r["d_rms"], 1e-12))), rel=1e-5)
+        if r["mode"] == "no_residual":
+            assert r["residual_rms_applied"] == 0.0
+    assert det[0]["diff_token_ids"] != [] and det[0]["diff_tokens"]
+    out = tmp_path / "out"                                       # as if the run had been cut after the first unit
+    lines = open(out / "details.jsonl").read().splitlines()
+    (out / "details.jsonl").write_text("\n".join(lines[:12]) + "\n")
+    st = json.load(open(out / "status.json"))
+    json.dump(dict(st, state="running"), open(out / "status.json", "w"))
+    rep = dg.finalize(str(out), "124")
+    assert rep["status"] == "incomplete" and rep["exit_code"] == "124"
+    assert rep["completed_questions_by_mode"] == {m: 2 for m in dg.MODES} and rep["missing_by_mode"] == {m: 2 for m in dg.MODES}

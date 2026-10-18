@@ -51,13 +51,21 @@ EXP45-G 的注意力更多落到了数字标注所在的区域，但对两个对
 - oracle 和 no_residual 对决策的影响都很小：先研究这个分支到决策的使用，不继续增大 region_weight。
 - 混合或都不支持：给出精确结果和未排除的解释，不延长、不换样本、不启动训练。
 
+## 第 1 轮评审补正（EXP46-R1-01..04）
+
+- **R1-01 插桩保真**：每个单元先跑不打补丁的前向，再跑插桩 baseline；插桩 baseline 要概率有限、与不打补丁前向和 G 冻结 raw 记录的最大差都 ≤ 1e-5、预测一致（`baseline_check`）。不满足就立即停止，该单元的其余模式都不跑。
+- **R1-02 追踪量**：每题写入（干预前的量）原始 q 的范数、两问 q 的差分 RMS、p 的范数、d 的 RMS、RMS(V + c)、是否零差分、α 和是否触顶，以及 input_ids 和 question_mask 的 sha256、两问不同 token 的位置 / id / 解码。残差分为"计算出的"（residual_rms_computed）和"实际加上的"（residual_rms_applied；no_residual 为 0）。α 可以用 vc_rms / d_rms 复算。
+- **R1-03 incomplete**：明细逐单元追加写入，status.json 逐单元更新；中途停止时写下原因和报告。run.sh 在有界运行之后，总会不加载模型调用一次 `--finalize`：只有六种模式都覆盖了全部 96 题才是 complete，否则为 incomplete，并写明各模式完成数和缺项数。
+- **R1-04 输入身份**：在加载模型之前，按 data/exp46/MANIFEST.json 核对 units、四个来源、sidecar 和 48 张图的 sha256，START 记录 MANIFEST 的 sha 和核对结果；逐题核对选题、来源和冻结记录的图片、gold、选项顺序一致，不一致即拒绝。在真实数据上（不加载模型）核过：96 题，不一致 0。
+- 预算说明修订：48 次不打补丁的前向（batch 2）+ 6 种模式 × 48 次（batch 2）= 336 次 batch 2，即 672 次题目前向；总时长上限仍是 10 分钟，单次，不重试。
+
 ## 运行（`scripts/exp46/run.sh`）
 
 - **启动前检查**：没有其他模型进程；`freeze.py check runs/exp45-g`；units 和 regions_readout 的 sha；runs/exp46 原本不存在。
 - **截止**：启动后 10 分钟，最后 60 秒留给报告；一次有界运行（TERM，15 秒后 KILL）；不重试。
 - **规模**：96 题 × 6 种模式 = 576 次题目前向（每次 2 题，共 288 次），加 48 次不打补丁的 baseline。估计加载约 0.5 分钟，前向约 1–2 分钟。
 
-## CPU 验证（`scripts/exp46/test_exp46.py`，7 项）
+## CPU 验证（`scripts/exp46/test_exp46.py`；第 1 轮补正后 11 项，新增的 4 项在列表末尾）
 
 1. 插桩的 baseline 等于模块自身的计算（输出层非零）；no_residual 原样返回 V。
 2. swap 等于把另一问的词向量喂给模块；amplify 的 α 按公式计算并记录是否触顶。
@@ -65,6 +73,10 @@ EXP45-G 的注意力更多落到了数字标注所在的区域，但对两个对
 4. 出错时模块 forward 也会恢复；不产生梯度，权重不变。
 5. 选题完整且平衡：48 个单元，24 个格子各 2 个，两问 gold 不同，第一对象的左右与记录一致。
 6. 在 tiny checkpoint 上完整跑通：6 种模式、baseline 复现、oracle_target 的目标框质量约为 1。
-7. 拒绝与冻结记录不符的 baseline（概率差 1e-3），也拒绝重复的题。
+7. 冻结记录的概率被改动 1e-3 时停止（incomplete）；重复的题拒绝；冻结记录的 gold 不符时拒绝。
+8. 只有插桩 baseline 的概率偏离（1e-3）时停止，该单元的其余模式都没有跑（各模式完成数为 0）。
+9. baseline_check：差 8e-7 但预测翻转时拒绝；概率非有限时拒绝。
+10. 改一个来源文件或一张图：在加载模型之前就因 MANIFEST 不符而拒绝，不写 START。
+11. 最终明细包含全部追踪字段，α 可以复算，no_residual 实际加上的残差为 0；把明细截到第一个单元并改成 running 状态，finalize 给出 incomplete，各模式完成 2 题、缺 2 题。
 
 pyright 0。没有运行真模型。
