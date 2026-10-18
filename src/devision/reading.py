@@ -230,9 +230,11 @@ class Reading:
             p.requires_grad_(False)
 
     @classmethod
-    def load(cls, decider, decision_dir: str, bundle_dir: str) -> "Reading":
-        """The bundle's components after checking every sha256 in its reading.json, including the decision
-        checkpoint's weights / config / tokenizer it was built for."""
+    def load(cls, decision_dir: str, bundle_dir: str, device: str = "auto") -> "Reading":
+        """The verified entry: checks every sha256 in the bundle's reading.json -- its two component files and the
+        decision checkpoint's weights / config / tokenizer -- and only then loads the Decider from that same
+        `decision_dir` itself (no caller-supplied model), then the components."""
+        from .infer import Decider, best_device
         ident = json.load(open(os.path.join(bundle_dir, "reading.json")))
         checks = {"selector.pt": sha(os.path.join(bundle_dir, "selector.pt")), "head.pt": sha(os.path.join(bundle_dir, "head.pt")),
                   "model.safetensors": sha(os.path.join(decision_dir, "model.safetensors")),
@@ -241,6 +243,13 @@ class Reading:
         bad = [k for k, v in checks.items() if ident["sha256"].get(k) != v]
         if bad or ident.get("policy") != POLICY or ident.get("grid") != GRID:
             raise ValueError("reading bundle does not bind this checkpoint / its components: %s" % (bad or "policy / grid"))
+        decider = Decider.load(decision_dir, device=best_device() if device == "auto" else device)
+        return cls._attach(decider, bundle_dir, ident)
+
+    @classmethod
+    def _attach(cls, decider, bundle_dir: str, ident: Dict) -> "Reading":
+        """The components on an already loaded Decider WITHOUT checking that the Decider is the bound checkpoint --
+        for `load` and CPU fixtures only; not a verified public entry."""
         dev = next(decider.model.parameters()).device
         sel = Selector(*ident["dims"]["selector"])
         sel.load_state_dict(torch.load(os.path.join(bundle_dir, "selector.pt"), map_location="cpu"), strict=True)
@@ -305,7 +314,9 @@ class Reading:
     def decide(self, state: Any, questions: Dict[str, Dict], image: Any = None, diagnostics: Optional[Dict] = None) -> Dict:
         """Ordinary decide's response (Jev structure unchanged). Supported questions are decided on the text state plus
         the table read from `image`; the others, and every request without an image or without a supported question,
-        go through ordinary decide unchanged. `diagnostics` (optional dict) receives the reads and timings."""
+        go through ordinary decide unchanged. `diagnostics` (optional dict) receives the reads and timings.
+        Encoding: a request whose questions are all supported encodes the picture once; a mixed request encodes it
+        twice (once for the reading, once in ordinary decide for the other questions)."""
         from .infer import _split_state
         templates = reads_for(questions)
         if image is None or not templates:

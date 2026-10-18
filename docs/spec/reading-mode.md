@@ -6,7 +6,7 @@
 
 `devision.reading.Reading` 绑定一个带 12 个局部视图（12 / 0.25 / T）的决策 checkpoint，以及一个读数包（`selector.pt`、`head.pt`、`reading.json`）。处理一次请求的步骤：
 
-1. 用请求自带的图片，经 checkpoint 自己的局部视图路径编码一次：全图加 12 个视图。
+1. 用请求自带的图片，经 checkpoint 自己的局部视图路径编码：全图加 12 个视图。全部题都受支持时每个请求编码一次；混合请求（还有不受支持的题）编码两次，一次读取，一次在普通 decide 中。
 2. 区域选择器（exp53）对每个内部读数问题预测一个框。
 3. 字符头（exp51）读出框内的数字，严格解码，加千位分隔符（exp55）。
 4. 写成事实表，接在文字 state 后面。
@@ -35,4 +35,4 @@
 - tokenizer 目录（选择器用它的词嵌入）；
 - 策略版本（templates-v1）和网格。
 
-加载时任何一项不符都拒绝。float16 的边界（选择器的 patch 和词嵌入、字符头的区域特征）与 exp53 / exp51 相同。诊断信息只通过可选的 `diagnostics` 字典返回，不进入响应。
+`Reading.load(decision_dir, bundle_dir)` 先逐项核对，再由它自己从同一目录加载 Decider，不接受调用方传入的模型；任何一项不符都拒绝。`Reading._attach` 不做这项核对，只供内部和 CPU 夹具使用，不是已验证的公共入口。float16 的边界（选择器的 patch 和词嵌入、字符头的区域特征）与 exp53 / exp51 相同。诊断信息只通过可选的 `diagnostics` 字典返回，不进入响应。

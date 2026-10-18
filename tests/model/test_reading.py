@@ -82,9 +82,8 @@ def tiny_reading(tmp_path):
     torch.save(head.state_dict(), tmp_path / "head.pt")
     R.write_bundle(str(tmp_path / "bundle"), str(tmp_path / "ck"), str(tmp_path / "sel.pt"), str(tmp_path / "head.pt"), {},
                    dims={"selector": [32, 64], "head": 32})
-    from devision.infer import Decider
-    dd = Decider.load(str(tmp_path / "ck"), device="cpu")
-    return dd, R.Reading.load(dd, str(tmp_path / "ck"), str(tmp_path / "bundle"))
+    rd = R.Reading.load(str(tmp_path / "ck"), str(tmp_path / "bundle"), device="cpu")
+    return rd.decider, rd
 
 
 def picture():
@@ -132,16 +131,32 @@ def test_bundle_round_trip_and_refusal(tmp_path):
     d, rd = tiny_reading(tmp_path)
     img = picture()
     a = rd.decide("x", {"t": q(TEMP, ("red", "blue"))}, image=img)
-    from devision.infer import Decider
-    d2 = Decider.load(str(tmp_path / "ck"), device="cpu")
-    rd2 = R.Reading.load(d2, str(tmp_path / "ck"), str(tmp_path / "bundle"))
+    rd2 = R.Reading.load(str(tmp_path / "ck"), str(tmp_path / "bundle"), device="cpu")
     assert rd2.decide("x", {"t": q(TEMP, ("red", "blue"))}, image=img) == a
     ident = json.loads((tmp_path / "bundle" / "reading.json").read_text())
     assert set(ident["sha256"]) == {"selector.pt", "head.pt", "model.safetensors", "config.json", "tokenizer"}
     with open(tmp_path / "bundle" / "head.pt", "ab") as fh:
         fh.write(b"x")
     with pytest.raises(ValueError, match="does not bind"):
-        R.Reading.load(d2, str(tmp_path / "ck"), str(tmp_path / "bundle"))
+        R.Reading.load(str(tmp_path / "ck"), str(tmp_path / "bundle"), device="cpu")
+
+
+def test_the_verified_entry_loads_its_own_decider(tmp_path):
+    """critic EXP56-R1-03: the verified entry takes no caller model; a different checkpoint in the bound directory (or
+    the right directory with another model's files) is refused before anything is loaded."""
+    import inspect
+    import shutil
+    d, rd = tiny_reading(tmp_path)
+    assert "decider" not in inspect.signature(R.Reading.load).parameters
+    other = tiny_decider(seed=11)                                              # another model, same structure
+    other.model.add_question_conditioning()
+    other.cfg.question_conditioning = True
+    other.model.enable_local_views(12)
+    other.cfg.local_views, other.cfg.local_overlap, other.cfg.local_source = 12, 0.25, "T"
+    other.save(tmp_path / "other")
+    shutil.copy(tmp_path / "other" / "model.safetensors", tmp_path / "ck" / "model.safetensors")
+    with pytest.raises(ValueError, match="model.safetensors"):
+        R.Reading.load(str(tmp_path / "ck"), str(tmp_path / "bundle"), device="cpu")
 
 
 def test_needs_the_local_view_checkpoint(tmp_path):

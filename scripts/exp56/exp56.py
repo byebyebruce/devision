@@ -32,6 +32,7 @@ E53, E55 = "runs/exp53", "runs/exp55"
 SELECTOR, SELECTOR_SHA = "runs/exp53/selector.pt", "8f10f1fd3de347dd7d5d2c375b7c4660ba97b75e65920e295132845d5cd2518a"
 HEAD, HEAD_SHA = "runs/exp51/head_T.pt", "0b548142ed3697742ca9efaec7498e3aaa37d2872415d6c8c77f6f2ba9d0e3fa"
 E55_START_SHA = "bf0595676f54e8decc666cebecf3693febce386a1be14209d8dd98526a644e12"
+E53_PICTURES_SHA = "14366ad74e8d2dd8a4ff1c511bd85c990115725fd809707a656ae06607f5de8d"     # EXP53 START pictures_sha256
 FILES = ["scripts/exp56/exp56.py", "scripts/exp56/run.sh", "src/devision/reading.py", "src/devision/infer.py", "src/devision/model.py",
          "src/devision/image.py", "scripts/exp54/exp54.py", "scripts/exp55/exp55.py", "scripts/exp53/watch.py"]
 CONDS = ("P", "E", "D")
@@ -80,19 +81,52 @@ def stage_start(deadline: int, out: str = OUT) -> Dict:
     e53det = os.path.join(E53, "details_auto.jsonl")
     if sha(e53det) != e54.E53_DETAILS_SHA:
         raise SystemExit("EXP53's automatic details changed")
+    import hashlib
+    qs_all = [json.loads(x) for x in open(e54.QUESTIONS) if x.strip()]
+    allpics = {q["picture"]: sha(os.path.join("data", q["picture"])) for q in qs_all}
+    if hashlib.sha256(json.dumps(allpics, sort_keys=True).encode()).hexdigest() != E53_PICTURES_SHA or \
+            json.load(open(os.path.join(E53, "START.json")))["pictures_sha256"] != E53_PICTURES_SHA:
+        raise SystemExit("the pictures are not those EXP53 bound (14366ad7)")
+    rows0 = {r["id"]: r for r in map(json.loads, open(e54.TUNE))}
+    pics = {r["image"]: allpics[r["image"]] for r in rows0.values()}
     os.makedirs(out, exist_ok=True)
+    write_json(os.path.join(out, "pictures.json"), pics)
     bundle = write_bundle(os.path.join(out, "bundle"), os.path.join(e54.RUN, "stage2"), SELECTOR, HEAD,
                           {"selector": {"path": SELECTOR, "exp53_start": json.load(open(os.path.join(E53, "registry.json")))["selector"]},
                            "head": {"path": HEAD, "exp51_registry_T": json.load(open("runs/exp51/registry.json"))["T"]}})
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
          "files": {f: sha(f) for f in FILES}, "model": model, "bundle": {"reading.json": sha(os.path.join(out, "bundle", "reading.json")), **bundle["sha256"]},
+         "pictures": {"pictures.json": sha(os.path.join(out, "pictures.json")), "count": len(pics), "exp53_pictures_sha256": E53_PICTURES_SHA},
          "temperature": "none (raw), in memory", "questions_sha256": st55["questions_sha256"], "tune_sha256": st55["tune_sha256"],
          "baselines": {"exp53_details_auto": e54.E53_DETAILS_SHA, "exp55_start": E55_START_SHA, "exp55_registry": e55reg},
          "conditions": list(CONDS), "started": time.strftime("%F %T"), "deadline": deadline,
          "deadline_text": time.strftime("%F %T", time.localtime(deadline))}
     write_json(path, s)
     return s
+
+
+def check_combination(out: str, st: Dict, code: bool = True) -> None:
+    """The run's combination is START's: the code files (optional), the bundle files, the source pictures (critic
+    EXP56-R1-01). Refused otherwise."""
+    if code:
+        bad = [f for f, h in st["files"].items() if sha(f) != h]
+        if bad:
+            raise SystemExit("code differs from START: %s" % bad)
+    b = os.path.join(out, "bundle")
+    for f in ("reading.json", "selector.pt", "head.pt"):
+        if sha(os.path.join(b, f)) != st["bundle"][f]:
+            raise SystemExit("bundle %s differs from START" % f)
+    if sha(os.path.join(out, "pictures.json")) != st["pictures"]["pictures.json"]:
+        raise SystemExit("pictures.json differs from START")
+
+
+def check_pictures(out: str, data_root: str = "data") -> Dict[str, str]:
+    pics = json.load(open(os.path.join(out, "pictures.json")))
+    bad = [p for p, h in pics.items() if sha(os.path.join(data_root, p)) != h]
+    if bad:
+        raise SystemExit("%d pictures differ from START's, e.g. %s: refused before any forward" % (len(bad), bad[0]))
+    return pics
 
 
 def records(rows, rid, res) -> List[Dict]:
@@ -125,19 +159,24 @@ def write_condition(out: str, c: str, recs: List[Dict], s_sha: str, model: Dict,
 def stage_live(out: str = OUT, data_root: str = "data", device: str = "auto") -> Dict:
     from PIL import Image
 
-    from devision.infer import Decider, best_device
+    import hashlib
+    import io
+
+    from devision.infer import best_device
     from devision.reading import UNREADABLE, Reading, serialise
     s_sha = e54.started(out)
     st = json.load(open(os.path.join(out, "START.json")))
     model = e54.verified_model(st)                       # before any load
+    check_combination(out, st)
+    pics = check_pictures(out, data_root)
     rows = {r["id"]: r for r in map(json.loads, open(e54.TUNE))}
-    if sha(e54.TUNE) != st["tune_sha256"]:
-        raise SystemExit("rl_tune differs from START")
+    if sha(e54.TUNE) != st["tune_sha256"] or sha(e54.QUESTIONS) != st["questions_sha256"]:
+        raise SystemExit("rl_tune / questions differ from START")
     dev = best_device() if device == "auto" else device
     ck = os.path.join(e54.RUN, "stage2")
-    d = Decider.load(ck, device=dev)
-    d.cfg.temperature, d.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}
-    reading = Reading.load(d, ck, os.path.join(out, "bundle"))
+    reading = Reading.load(ck, os.path.join(out, "bundle"), device=dev)       # verified entry: loads its own Decider
+    d = reading.decider
+    d.cfg.temperature, d.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}     # raw, in memory only
     total = 3 * len(rows)
     t0 = time.time()
     recs, inputs, reads = [], {}, []
@@ -145,7 +184,10 @@ def stage_live(out: str = OUT, data_root: str = "data", device: str = "auto") ->
         row = rows[rid]
         diag: Dict = {}
         t = time.perf_counter()
-        with Image.open(os.path.join(data_root, row["image"])) as img:
+        raw = open(os.path.join(data_root, row["image"]), "rb").read()
+        if hashlib.sha256(raw).hexdigest() != pics[row["image"]]:
+            raise SystemExit("%s changed during the run" % row["image"])
+        with Image.open(io.BytesIO(raw)) as img:
             res = reading.decide(row.get("state_text", ""), row["questions"], image=img.convert("RGB"), diagnostics=diag)
         secs = time.perf_counter() - t
         recs += records(rows, rid, res)
@@ -156,7 +198,7 @@ def stage_live(out: str = OUT, data_root: str = "data", device: str = "auto") ->
         fh.write("".join(json.dumps(r) + "\n" for r in reads))
     merge_register(out, "reads", {"reads.jsonl": sha(os.path.join(out, "reads.jsonl"))})
     write_condition(out, "P", recs, s_sha, model, dev, inputs,
-                    {"reading_bundle": st["bundle"]["reading.json"]})
+                    {"reading_bundle": st["bundle"]["reading.json"], "pictures": st["pictures"]["pictures.json"]})
     print("P done after %.1f s" % (time.time() - t0), flush=True)
     qs53 = [json.loads(x) for x in open(e54.QUESTIONS)]
     twin_row = {}
@@ -178,13 +220,46 @@ def stage_live(out: str = OUT, data_root: str = "data", device: str = "auto") ->
 
 # ------------------------------------------------------------------ report
 
-def read_fidelity(rows, reads_path: str) -> Dict:
+def check_reads(out: str, rows: Dict[str, Dict], st: Dict) -> Dict[str, Dict[str, Dict]]:
+    """The registered reads (critic EXP56-R1-01): unchanged since registration; every picture once; for each, exactly
+    the reading templates its questions call for (reads_for), once each; each read's value is the strict decoding /
+    separator format of its decoded string; inputs_P's table and state are exactly those reads serialised; the P
+    details carry START's bundle and pictures. Returns {row id: {template: read}}; refuses otherwise."""
+    from devision.reading import TEMPLATES, UNREADABLE, VALID, fmt, reads_for, serialise
+    if e54.check_registered(out, "reads").get("reads.jsonl") != sha(os.path.join(out, "reads.jsonl")):
+        raise SystemExit("reads.jsonl not registered")
+    lines = [json.loads(x) for x in open(os.path.join(out, "reads.jsonl")) if x.strip()]
+    ids = [r["id"] for r in lines]
+    if len(ids) != len(set(ids)) or set(ids) != set(rows):
+        raise SystemExit("reads: %d pictures for %d rows (duplicates or missing)" % (len(set(ids)), len(rows)))
+    pin = e54.load_inputs(out, "P")
+    out_reads: Dict[str, Dict[str, Dict]] = {}
+    for r in lines:
+        want = reads_for(rows[r["id"]]["questions"])
+        got = [x["question"] for x in r["reads"]]
+        if got != want:
+            raise SystemExit("%s: reads %s, expected %s" % (r["id"], got, want))
+        table = []
+        for x in r["reads"]:
+            if (x["valid"] and not VALID.match(x["decoded"])) or x["value"] != (fmt(x["decoded"]) if x["valid"] else UNREADABLE):
+                raise SystemExit("%s: a read's value is not its decoded string's format" % r["id"])
+            table.append([*TEMPLATES[x["question"]], x["value"]])
+        if pin[r["id"]]["table"] != table or pin[r["id"]]["state"] != serialise(rows[r["id"]].get("state_text", ""), table):
+            raise SystemExit("%s: inputs_P is not the reads serialised" % r["id"])
+        out_reads[r["id"]] = {x["question"]: x for x in r["reads"]}
+    ident = json.loads(open(os.path.join(out, "details_P.jsonl")).readline())["identity"]
+    if ident.get("reading_bundle") != st["bundle"]["reading.json"] or ident.get("pictures") != st["pictures"]["pictures.json"]:
+        raise SystemExit("P details are not about START's bundle / pictures")
+    return out_reads
+
+
+def read_fidelity(rows, live: Dict[str, Dict[str, Dict]]) -> Dict:
     """Live decoded strings vs EXP53's automatic readings, per reading question; accuracy of both against gold."""
     qs53 = [json.loads(x) for x in open(e54.QUESTIONS)]
     pred, _, _ = e54.p49.read_details(os.path.join(E53, "details_auto.jsonl"), qs53)
     e53 = {q["key"]: e54.p49.decode(p) for q, p in zip(qs53, pred)}
-    live = {r["id"]: {x["question"]: x for x in r["reads"]} for r in map(json.loads, open(reads_path))}
     same = right_live = right_53 = n = 0
+    same_pictures = {}
     for q in qs53:
         if q["set"] != "rl_tune":
             continue
@@ -192,27 +267,36 @@ def read_fidelity(rows, reads_path: str) -> Dict:
         lv = live[q["id"]][t]
         a = e53[q["key"]]
         n += 1
-        same += lv["decoded"] == a["text"] and lv["valid"] == a["valid"]
+        eq = lv["decoded"] == a["text"] and lv["valid"] == a["valid"]
+        same += eq
+        same_pictures[q["id"]] = same_pictures.get(q["id"], True) and eq
         right_live += lv["valid"] and lv["decoded"] == q["target"]
         right_53 += a["valid"] and a["text"] == q["target"]
-    out = {"questions": n, "same_strings": same / n, "accuracy_live": right_live / n, "accuracy_exp53": right_53 / n}
-    out["reproduced"] = bool(out["same_strings"] >= 0.99 and abs(out["accuracy_live"] - out["accuracy_exp53"]) <= 0.01)
+    out = {"questions": n, "same_strings": same / n, "accuracy_live": right_live / n, "accuracy_exp53": right_53 / n,
+           "pictures_all_same": sum(same_pictures.values())}
+    out["reproduced"] = bool(n == 1800 and out["same_strings"] >= 0.99 and abs(out["accuracy_live"] - out["accuracy_exp53"]) <= 0.01)
+    out["_same_pictures"] = sorted(k for k, v in same_pictures.items() if v)
     return out
 
 
-def decision_fidelity(out: str, rows) -> Dict:
-    """Requests whose live P table text equals EXP55's P input: same predictions, probabilities within 1e-5."""
+def decision_fidelity(out: str, rows, same_pictures: List[str]) -> Dict:
+    """critic EXP56-R1-02: every picture whose live readings all equal EXP53's must give EXP55's exact P state; on the
+    requests whose state equals EXP55's, the same predictions and probabilities within 1e-5. No paired request, or a
+    same-reading picture with another state, is not reproduced."""
     new_in = e54.load_inputs(out, "P")
     old_in = {r["id"]: r for r in map(json.loads, open(os.path.join(E55, "inputs_P.jsonl")))}
     same_req = {rid for rid in new_in if new_in[rid]["state"] == old_in[rid]["state"]}
+    inconsistent = [rid for rid in same_pictures if rid not in same_req]
     new = e54.read_condition(out, "P", rows)
     old = e54.read_condition(E55, "P", rows)
     o = {(r["sample_id"], r["qid"]): r for r in old}
     sel = [r for r in new if r["sample_id"] in same_req]
-    diff = max((abs(r["probabilities"][k] - o[(r["sample_id"], r["qid"])]["probabilities"][k]) for r in sel for k in r["probabilities"]), default=0.0)
-    agree = all(r["prediction"] == o[(r["sample_id"], r["qid"])]["prediction"] for r in sel)
-    return {"requests_same_table": len(same_req), "questions": len(sel), "max_probability_difference": diff, "same_predictions": agree,
-            "reproduced": bool(agree and diff <= 1e-5)}
+    diff = max((abs(r["probabilities"][k] - o[(r["sample_id"], r["qid"])]["probabilities"][k]) for r in sel for k in r["probabilities"]), default=None)
+    agree = bool(sel) and all(r["prediction"] == o[(r["sample_id"], r["qid"])]["prediction"] for r in sel)
+    why = "no paired request" if not sel else "%d same-reading pictures with another state" % len(inconsistent) if inconsistent else ""
+    return {"pictures_same_readings": len(same_pictures), "requests_same_table": len(same_req), "questions_paired": len(sel),
+            "same_reading_other_state": len(inconsistent), "max_probability_difference": diff, "same_predictions": agree,
+            "reproduced": bool(not why and agree and diff is not None and diff <= 1e-5), "reason": why}
 
 
 def report(out: str = OUT, finalize: str = "") -> Dict:
@@ -263,8 +347,12 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
             res["differences"]["%s-%s" % (a, b)] = {s: r42.diff(fams[a], fams[b], r42.clusters(reading[a]), s) for s in stats}
     res["gates"] = e54.gates(res)
     try:
-        res["read_fidelity"] = read_fidelity(rows, os.path.join(out, "reads.jsonl"))
-        res["decision_fidelity"] = decision_fidelity(out, rows)
+        if st is None:
+            raise SystemExit("no START")
+        check_combination(out, st, code=False)
+        live = check_reads(out, rows, st)
+        res["read_fidelity"] = read_fidelity(rows, live)
+        res["decision_fidelity"] = decision_fidelity(out, rows, res["read_fidelity"].pop("_same_pictures"))
         reads = [json.loads(x) for x in open(os.path.join(out, "reads.jsonl"))]
         rs = sorted(r["request_seconds"] for r in reads)
         res["timing"] = {"requests": len(rs), "p50_s": rs[len(rs) // 2], "p95_s": rs[int(len(rs) * 0.95)],
