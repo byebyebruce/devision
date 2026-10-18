@@ -105,3 +105,25 @@
   - 过期的 fidelity 记录：B 拒绝启动，报告给 invalid；
   - 没有 START 时报告给 incomplete；
   - stub 链：start 失败时 finalize，A 不能再次启动；B2 在写出第一个集合前被截止停止，子进程组被杀，然后 finalize，B2 也不能再次启动。
+
+## 事后迁移探索模式（EXP58-EXPLORE-PREP-01；CPU，未运行）
+
+- **背景**：EXP57 按预写规则整体未通过：fit = False，原报告和分支都保留。评审裁决（2026-10-18 22:45:30）认为同域的比较收益有效，先用低成本诊断检验它能否迁移到真实输入。这是**看过 EXP57 结果之后**提出的探索，不让 EXP57 或原投资规则追溯通过。
+- **端点**：`NEW_SHA` 填入 EXP57 冻结端点 962503fb / 09a5b447。
+- **默认模式**：仍要求 EXP57 走全部通过那一支，所以对这次 fit 失败会拒绝。
+- **`explore-after-exp57-fit-fail` 模式**（`run.sh A explore` → `start --mode explore-after-exp57-fit-fail`）：
+  - 只接受精确的身份：权重 / config = 962503fb / 09a5b447；EXP57 `report.json` 的 sha256 = e5a8565d；五个门槛正好是 fit false、G_tune / P_tune / reading / screens true；分支以 fit 优先的 "fit not learned" 开头。任何一项不符都拒绝，没有通用的 force 开关；
+  - START 记录 `mode`：事后性质、目的、来源报告哈希、全部原门槛和原分支、candidate_eligible = false；
+  - `check_run` 在加载前和报告时都重新核对，报告在启动后被改动就给 invalid；
+  - report 一律带上 mode 和 candidate_eligible = false，分支前缀为 "post-hoc exploration (EXP57 fit failed, kept; not a candidate, no release)"；即使 B1 达标也不输出候选或发布资格；
+  - B2 在探索模式下被拒绝。
+- **范围不变**：
+  - A：600 张图实时保真，1,800 / 600 / 2,400 和概率差 ≤ 1e-5，都不放宽；A 不成立就停；
+  - B1：322 个请求，68:114 准确率和看图收益，temp / force 分项，原统计门槛；
+  - 硬上限 20 分钟，最后 120 秒报告，只启动一次。
+- **CPU 夹具**（`test_live.py` 共 28 项，全过；不加载模型、不建真实 bundle）：
+  - 在真实 runs/exp57 上只读核哈希：默认模式拒绝，探索模式接受（e5a8565d，fit false）；
+  - 假环境里，默认模式拒绝 fit 失败且不写 START；探索模式写出事后记录，B2 被拒绝；
+  - 报告哈希、缺 screens、G false、fit true、分支、端点任一不符，都拒绝且不写 START；
+  - 启动后改报告，组合就是 invalid，candidate_eligible 仍为 false；
+  - 伪造的完整阳性结果（A 通过、B1 达标、七保护无代价）在探索模式下仍是 candidate_eligible false，只有默认模式的全部通过才可能为 true。

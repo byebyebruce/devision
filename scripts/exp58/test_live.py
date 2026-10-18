@@ -79,11 +79,21 @@ def test_real_reading_routes_supported_with_table_and_others_with_picture(tmp_pa
     assert seen == [("hint", ["0:o"], True)] and reads == [True]                                              # nothing routed: no read
 
 
-def test_placeholder_endpoint_refuses_start(tmp_path):
-    assert m.NEW_SHA is None
-    with pytest.raises(SystemExit, match="placeholder"):
-        m.stage_start(0, out=str(tmp_path / "out"))
-    assert not (tmp_path / "out").exists()
+def test_real_exp57_end_default_refuses_explore_accepts():
+    """Read-only on the real runs/exp57 (hashes only, no tensor loaded): the default mode refuses EXP57's failed fit; the
+    exploration accepts exactly this end."""
+    if not os.path.exists(os.path.join(m.NEW_RUN, "report.json")):
+        pytest.skip("runs/exp57 not here")
+    cwd = os.getcwd()
+    os.chdir(os.path.join(HERE, "..", ".."))
+    try:
+        with pytest.raises(SystemExit, match="does not allow the live path"):
+            m.mode_record(m.DEFAULT)
+        rec = m.mode_record(m.EXPLORE)
+    finally:
+        os.chdir(cwd)
+    assert rec["post_hoc"] and rec["candidate_eligible"] is False and rec["exp57_gates"]["fit"] is False
+    assert rec["exp57_report_sha256"].startswith("e5a8565d")
 
 
 def test_grouping_is_devision_eval_s(tmp_path):
@@ -364,3 +374,70 @@ def test_b2_stopped_before_its_first_set_finalizes_and_never_starts_again(tmp_pa
     assert "continues_start" in (root / "runs/exp58-B2.started").read_text()
     _, p2 = chain(tmp_path, "B2")
     assert p2.returncode == 1 and "already started once" in p2.stdout
+
+
+def fit_failed_world(world, monkeypatch, gates=None, branch="fit not learned: constrains only this supervision"):
+    run57 = m.NEW_RUN
+    g = gates if gates is not None else {"fit": False, "G_tune": True, "P_tune": True, "reading": True, "screens": True}
+    with open(os.path.join(run57, "report.json"), "w") as fh:
+        json.dump({"gates": g, "branch": branch}, fh)
+    monkeypatch.setattr(m, "EXPLORE_ID", dict(m.EXPLORE_ID, model=m.NEW_SHA, report_sha256=m.sha(os.path.join(run57, "report.json"))))
+    return os.path.join(str(world["tmp"]), "out2")
+
+
+def test_default_refuses_fit_failure_explore_records_post_hoc(world, monkeypatch):
+    out = fit_failed_world(world, monkeypatch)
+    with pytest.raises(SystemExit, match="does not allow the live path"):
+        m.stage_start(0, out=out, data_root=world["data"])
+    assert not os.path.exists(os.path.join(out, "START.json"))
+    st = m.stage_start(0, out=out, data_root=world["data"], mode=m.EXPLORE)
+    assert st["mode"]["post_hoc"] and st["mode"]["candidate_eligible"] is False and st["mode"]["exp57_gates"]["fit"] is False
+    m.check_run(out, data_root=world["data"])
+    with pytest.raises(SystemExit, match="not permitted in the exploration mode"):
+        m.stage_sets(out, m.GUARD, "guard", data_root=world["data"])
+
+
+@pytest.mark.parametrize("change", ["report_sha", "screens_missing", "g_false", "fit_true", "branch", "model"])
+def test_explore_accepts_only_the_exact_identity(world, monkeypatch, change):
+    gates = {"fit": False, "G_tune": True, "P_tune": True, "reading": True, "screens": True}
+    if change == "screens_missing":
+        gates.pop("screens")
+    if change == "g_false":
+        gates["G_tune"] = False
+    if change == "fit_true":
+        gates["fit"] = True
+    out = fit_failed_world(world, monkeypatch, gates, branch="something else" if change == "branch" else "fit not learned: x")
+    if change == "report_sha":
+        monkeypatch.setattr(m, "EXPLORE_ID", dict(m.EXPLORE_ID, report_sha256="0" * 64))
+    if change == "model":
+        monkeypatch.setattr(m, "EXPLORE_ID", dict(m.EXPLORE_ID, model={"model.safetensors": "0" * 64, "config.json": "0" * 64}))
+    with pytest.raises(SystemExit):
+        m.stage_start(0, out=out, data_root=world["data"], mode=m.EXPLORE)
+    assert not os.path.exists(os.path.join(out, "START.json"))
+
+
+def test_report_changed_after_start_invalidates_the_exploration(world, monkeypatch):
+    out = fit_failed_world(world, monkeypatch)
+    m.stage_start(0, out=out, data_root=world["data"], mode=m.EXPLORE)
+    with open(os.path.join(m.NEW_RUN, "report.json"), "a") as fh:
+        fh.write(" ")
+    with pytest.raises(SystemExit):
+        m.check_run(out, data_root="")
+    rep = m.report(out)
+    assert rep["combination"].startswith("invalid") and rep["candidate_eligible"] is False and rep["mode"]["name"] == m.EXPLORE
+
+
+def test_a_complete_positive_exploration_is_still_not_a_candidate():
+    """A forged all-positive result (A reproduced, B1 target met, every panel without cost)."""
+    positive = lambda: {"fidelity": {"reproduced": True}, "transfer": {"x": 1}, "transfer_target": True,  # noqa: E731
+                        "guard": {g: {} for g in m.GUARD}, "costs": []}
+    explore = {"name": m.EXPLORE, "post_hoc": True, "exp57_gates": {"fit": False, "G_tune": True, "P_tune": True, "reading": True, "screens": True}}
+    res = positive()
+    res["branch"] = m.branch(res)
+    m.verdict(res, explore)
+    assert res["candidate_eligible"] is False and res["exp57_gates"]["fit"] is False
+    assert res["branch"].startswith("post-hoc exploration (EXP57 fit failed, kept; not a candidate, no release)")
+    res = positive()
+    res["branch"] = m.branch(res)
+    m.verdict(res, {"name": m.DEFAULT})
+    assert res["candidate_eligible"] is True                               # only the default all-pass path could be

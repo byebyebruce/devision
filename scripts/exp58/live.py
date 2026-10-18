@@ -1,7 +1,9 @@
 """exp58 (prepared, not run; critic LIVE-TRANSFER-PREP-01; docs/experiments/2026-10-18-exp58-live-transfer-plan.md): the
 reading mode with EXP57's decision endpoint, live. Only after EXP57's own branch allows it and a separate model
-permission; nothing here is chained to EXP57. The endpoint is a placeholder until EXP57 is frozen (NEW_SHA must be
-filled from runs/exp57/FROZEN.json and reviewed); the selector / head stay EXP53's / EXP51's files (8f10f1fd / 0b548142).
+permission; nothing here is chained to EXP57. NEW_SHA is EXP57's frozen end (962503fb / 09a5b447); the selector / head stay
+EXP53's / EXP51's files (8f10f1fd / 0b548142). Modes: default (EXP57's pre-written branch passed -- it did not, so default
+refuses) and explore-after-exp57-fit-fail (critic EXP58-EXPLORE-PREP-01: a disclosed post-hoc exploration bound to exactly
+EXP57's frozen end, report e5a8565d and its gates fit false / the other four true; A + B1 only, never a candidate).
 
   start    model-free: EXP57 frozen (weights / config = NEW_SHA, its report's branch), EXP56's bundle components /
            pictures / reads / inputs_P, EXP57's details_P, the stage B data and v0.3 records, this code; a NEW reading
@@ -39,7 +41,16 @@ from typing import Any, Dict, List, Optional
 HERE = os.path.dirname(__file__)
 OUT, E56, E57 = "runs/exp58", "runs/exp56", "runs/exp57"
 NEW_RUN = E57
-NEW_SHA: Optional[Dict[str, str]] = None          # placeholder: filled from runs/exp57/FROZEN.json after EXP57's end, reviewed
+# EXP57's frozen end (runs/exp57/FROZEN.json 709c2d01, verified by the critic 2026-10-18 22:45:30)
+NEW_SHA: Optional[Dict[str, str]] = {"model.safetensors": "962503fbd5f41b6794e5b48a16fcd833b591b04b285d8f3afaa45f18d7c38131",
+                                     "config.json": "09a5b44716b1b818df0372994b7581159625f4af7e267b6cf4e2ff4f12eb8d0d"}
+DEFAULT, EXPLORE = "default", "explore-after-exp57-fit-fail"
+# critic EXP58-EXPLORE-PREP-01 (EXP57 ruling 2026-10-18 22:45:30): a post-hoc transfer exploration allowed for exactly this
+# EXP57 end -- its report (fit failed, the four other gates passed) is kept as it is; the exploration never makes EXP57 or
+# the original investment rule pass, and its result is never a candidate (candidate_eligible false, B2 not permitted)
+EXPLORE_ID = {"model": dict(NEW_SHA or {}), "report_sha256": "e5a8565d5dc13ae9c2f27aa66ef52c375b4d549e97b8455cf2b3b3dfa3b2e5b0",
+              "gates": {"fit": False, "G_tune": True, "P_tune": True, "reading": True, "screens": True},
+              "branch_prefix": "fit not learned"}
 SELECTOR, SELECTOR_SHA = "runs/exp53/selector.pt", "8f10f1fd3de347dd7d5d2c375b7c4660ba97b75e65920e295132845d5cd2518a"
 HEAD, HEAD_SHA = "runs/exp51/head_T.pt", "0b548142ed3697742ca9efaec7498e3aaa37d2872415d6c8c77f6f2ba9d0e3fa"
 E56_SHA = {"START.json": "ccdd23f28e20b0795db9d6ec12d3c9df68591d6616e7dd72173041af4046d2d5",
@@ -156,7 +167,33 @@ def picture_manifest(data_root: str = "data") -> Dict[str, str]:
     return pics
 
 
-def stage_start(deadline: int, out: str = OUT, data_root: str = "data") -> Dict:
+def mode_record(mode: str) -> Dict:
+    """The run's mode, checked against EXP57's report as it is now. default: EXP57's pre-written branch passed. explore:
+    exactly EXPLORE_ID -- the frozen weights / config, the report's sha256, its five gates (fit false, the other four
+    true) and its fit-first branch; anything else is refused (no general override)."""
+    rp = os.path.join(NEW_RUN, "report.json")
+    rep = json.load(open(rp))
+    gates = {k: rep.get("gates", {}).get(k) for k in EXPLORE_ID["gates"]}
+    if mode == DEFAULT:
+        if not rep.get("branch", "").startswith("fit, G, P, reading retention and exist / science all pass"):
+            raise SystemExit("EXP57's pre-written branch does not allow the live path: %s" % rep.get("branch"))
+        return {"name": DEFAULT, "post_hoc": False, "exp57_report_sha256": sha(rp), "exp57_gates": gates, "exp57_branch": rep.get("branch")}
+    if mode != EXPLORE:
+        raise SystemExit("unknown mode %r" % mode)
+    if new_sha() != EXPLORE_ID["model"] or fz.weights(NEW_RUN) != EXPLORE_ID["model"]:
+        raise SystemExit("exploration is allowed only for EXP57's frozen 962503fb / 09a5b447")
+    if sha(rp) != EXPLORE_ID["report_sha256"]:
+        raise SystemExit("exploration is allowed only for EXP57's report e5a8565d (this one differs)")
+    if gates != EXPLORE_ID["gates"] or not rep.get("branch", "").startswith(EXPLORE_ID["branch_prefix"]):
+        raise SystemExit("exploration needs EXP57's exact gates %s / fit-first branch, got %s / %r" % (EXPLORE_ID["gates"], gates, rep.get("branch")))
+    return {"name": EXPLORE, "post_hoc": True, "exp57_report_sha256": sha(rp), "exp57_gates": gates, "exp57_branch": rep["branch"],
+            "purpose": "post-hoc transfer diagnosis after EXP57 failed its fit gate (critic EXP57 ruling 2026-10-18 22:45:30, "
+                       "EXP58-EXPLORE-PREP-01): does the combination carry the measured in-domain comparison gain to the real "
+                       "ScienceQA dev questions? EXP57 stays failed; not a candidate; B2 not permitted",
+            "candidate_eligible": False}
+
+
+def stage_start(deadline: int, out: str = OUT, data_root: str = "data", mode: str = DEFAULT) -> Dict:
     from devision.reading import write_bundle
     path = os.path.join(out, "START.json")
     if os.path.exists(path):
@@ -164,9 +201,7 @@ def stage_start(deadline: int, out: str = OUT, data_root: str = "data") -> Dict:
     want = new_sha()
     if fz.check(NEW_RUN, list(e57.SCREENS))["weights"] != want:
         raise SystemExit("EXP57 is not its frozen endpoint")
-    rep = json.load(open(os.path.join(NEW_RUN, "report.json")))
-    if not rep.get("branch", "").startswith("fit, G, P, reading retention and exist / science all pass"):
-        raise SystemExit("EXP57's pre-written branch does not allow the live path: %s" % rep.get("branch"))
+    mode_rec = mode_record(mode)
     e57.bound("EXP56", E56, E56_SHA)
     if sha(SELECTOR) != SELECTOR_SHA or sha(HEAD) != HEAD_SHA:
         raise SystemExit("the selector / head are not EXP53's / EXP51's files")
@@ -180,7 +215,7 @@ def stage_start(deadline: int, out: str = OUT, data_root: str = "data") -> Dict:
                           {"selector": {"path": SELECTOR, "sha256": SELECTOR_SHA}, "head": {"path": HEAD, "sha256": HEAD_SHA}})
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
-         "files": {f: sha(f) for f in FILES}, "model": want, "exp57_report": sha(os.path.join(NEW_RUN, "report.json")),
+         "files": {f: sha(f) for f in FILES}, "model": want, "mode": mode_rec, "exp57_report": sha(os.path.join(NEW_RUN, "report.json")),
          "exp57_details_P": sha(os.path.join(E57, "details_P.jsonl")),
          "bundle": {"reading.json": sha(os.path.join(out, "bundle", "reading.json")), **bundle["sha256"]},
          "pictures": {"pictures.json": sha(os.path.join(out, "pictures.json")), "count": len(pics),
@@ -201,6 +236,8 @@ def check_run(out: str, data_root: str = "data", code: bool = True) -> Dict:
     e56.check_combination(out, st, code=code)
     if fz.weights(NEW_RUN) != st["model"] or st["model"] != new_sha():
         raise SystemExit("EXP57's weights / config are not START's")
+    if mode_record(st["mode"]["name"]) != st["mode"]:
+        raise SystemExit("EXP57's report / the run's mode no longer match START")
     rj = json.load(open(os.path.join(out, "bundle", "reading.json")))["sha256"]
     if {k: rj.get(k) for k in st["model"]} != st["model"]:
         raise SystemExit("the bundle does not bind START's weights / config")
@@ -308,6 +345,8 @@ def fidelity(out: str = OUT) -> Dict:
 
 def stage_sets(out: str, sets: Dict[str, str], label: str, data_root: str = "data") -> Dict:
     st0 = check_run(out, data_root="")
+    if label == "guard" and st0["mode"]["name"] == EXPLORE:
+        raise SystemExit("B2 (the seven panels) is not permitted in the exploration mode")
     if not verify_fidelity(out, st0)["reproduced"]:
         raise SystemExit("stage A not reproduced: stage B does not start")
     reading, st, pics = load_reading(out, data_root=data_root)
@@ -360,7 +399,7 @@ def errors(rs: List[Dict]) -> Dict:
 def write_report(out: str, res: Dict) -> Dict:
     os.makedirs(out, exist_ok=True)
     write_json(os.path.join(out, "report.json"), res)
-    keys = ("finalized", "combination", "states", "fidelity_state", "transfer_target", "costs", "branch")
+    keys = ("finalized", "mode", "combination", "states", "fidelity_state", "transfer_target", "costs", "candidate_eligible", "branch")
     text = json.dumps({k: res[k] for k in keys if k in res}, indent=1, default=str)
     open(os.path.join(out, "report.txt"), "w").write(text + "\n")
     print(text)
@@ -370,7 +409,7 @@ def write_report(out: str, res: Dict) -> Dict:
 def report(out: str = OUT, finalize: str = "") -> Dict:
     """Model-free. Without START, or when the combination / stage A evidence does not verify, the report says so
     (incomplete / invalid) and gives no transfer or candidate verdict; parts that do verify are still reported."""
-    res: Dict[str, Any] = {"states": {}, "fidelity": None, "transfer": None, "guard": {}, "costs": []}
+    res: Dict[str, Any] = {"states": {}, "fidelity": None, "transfer": None, "guard": {}, "costs": [], "candidate_eligible": False}
     if finalize:
         res["finalized"] = {"exit_codes": finalize, "note": "the run did not complete; missing items are not low scores"}
     if not os.path.exists(os.path.join(out, "START.json")):
@@ -382,6 +421,10 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
         res["combination"] = "verified"
     except (SystemExit, OSError, ValueError, KeyError) as e:
         res["combination"] = "invalid: %s" % e
+        try:
+            res["mode"] = json.load(open(os.path.join(out, "START.json")))["mode"]
+        except (OSError, ValueError, KeyError):
+            pass
         res["branch"] = "invalid: the run's combination does not verify -- no verdict"
         return write_report(out, res)
     try:
@@ -427,7 +470,21 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
         routed = [r for r in recs["science"] if r["routed"]]
         res["science_routed"] = {"n": len(routed), "accuracy": sum(r["correct"] for r in routed) / len(routed) if routed else None}
     res["branch"] = branch(res)
+    verdict(res, st["mode"])
     return write_report(out, res)
+
+
+def verdict(res: Dict, mode: Dict) -> Dict:
+    """Mode and eligibility on every report: the exploration keeps EXP57's failed fit and is never a candidate, whatever
+    stage B measured; the default mode is eligible only on the final all-pass branch (still a development result)."""
+    res["mode"] = mode
+    if mode["name"] == EXPLORE:
+        res["candidate_eligible"] = False
+        res["exp57_gates"] = mode["exp57_gates"]
+        res["branch"] = "post-hoc exploration (EXP57 fit failed, kept; not a candidate, no release): " + res["branch"]
+    else:
+        res["candidate_eligible"] = res["branch"].startswith("transfer target met on the monitored dev_sqa sets with no protection cost")
+    return res
 
 
 def branch(res: Dict) -> str:
@@ -450,11 +507,12 @@ def main(argv=None) -> int:
     ap.add_argument("stage", choices=["counts", "start", "live", "fidelity", "transfer", "guard", "report"])
     ap.add_argument("--deadline", type=int, default=0)
     ap.add_argument("--finalize", default="")
+    ap.add_argument("--mode", choices=[DEFAULT, EXPLORE], default=DEFAULT)
     a = ap.parse_args(argv)
     if a.stage == "counts":
         print(json.dumps(request_counts(), indent=1))
     elif a.stage == "start":
-        print(json.dumps({k: v for k, v in stage_start(a.deadline).items() if k not in ("files", "v03", "data")}, indent=1))
+        print(json.dumps({k: v for k, v in stage_start(a.deadline, mode=a.mode).items() if k not in ("files", "v03", "data")}, indent=1))
     elif a.stage == "live":
         print(json.dumps(stage_live(), indent=1))
     elif a.stage == "fidelity":
