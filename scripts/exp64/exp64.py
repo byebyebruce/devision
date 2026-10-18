@@ -79,6 +79,24 @@ def bound_data() -> Dict[str, str]:
     return {"manifest": sha(os.path.join(D, "MANIFEST.json")), "train": m["train_sha256"], "plan": m["plan_sha256"], "audit": m["audit_sha256"]}
 
 
+def bound_e56() -> str:
+    """EXP56's live reads (the production baseline): the registered sha256 and the file's actual sha256 must agree."""
+    f = os.path.join(e61.E56, "reads.jsonl")
+    reg = e54.check_registered(e61.E56, "reads")["reads.jsonl"]
+    if sha(f) != reg:
+        raise SystemExit("EXP56's reads differ from their registry")
+    return reg
+
+
+def bound_variants(data_root: str = "data") -> Dict[str, str]:
+    """EXP61's dev / train variants (list, MANIFEST, and with data_root the pictures' bytes) as EXP62's START bound them."""
+    v = e61.check_variants(data_root)
+    st62 = json.load(open(os.path.join(E62, "START.json")))
+    if v != st62["variants"]:
+        raise SystemExit("data/exp61 is not the identity EXP62's START bound")
+    return v
+
+
 def pictures_digest(recs: List[Dict], root: str) -> str:
     import hashlib
     pics = sorted({r["picture"] for r in recs})
@@ -96,7 +114,7 @@ def stage_start(deadline: int, out: str = OUT, data_root: str = "data") -> Dict:
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
          "files": {f: sha(f) for f in FILES}, "exp62": bound_e62(), "head_sha256": HEAD_SHA, "model": st58["model"], "bundle": st58["bundle"],
-         "exp60": e61.bound_e60(), "exp56_reads": e54.check_registered(e61.E56, "reads")["reads.jsonl"], "data": bound_data(),
+         "exp60": e61.bound_e60(), "exp56_reads": bound_e56(), "variants": bound_variants(data_root), "data": bound_data(),
          "sources": {"exp49": sha(e61.QUESTIONS), "exp61": sha(e61.V_QUESTIONS), "exp62_parents": sha("data/exp62/parents.jsonl")},
          "train_pictures": pictures_digest(recs, data_root),
          "recipe": {"init": HEAD_SHA, "lr": LR, "weight_decay": WD, "warmup": WARMUP, "schedule": "linear warm-up then constant",
@@ -121,6 +139,10 @@ def check_start(out: str, data_root: str = "data", code: bool = True) -> Dict:
         raise SystemExit("sources differ from START")
     if sha(e58.HEAD) != HEAD_SHA:
         raise SystemExit("EXP51's head changed")
+    if bound_e56() != st["exp56_reads"]:
+        raise SystemExit("EXP56's reads differ from START")
+    if bound_variants(data_root) != st["variants"]:          # list / MANIFEST always; the pictures with data_root
+        raise SystemExit("data/exp61 differs from START")
     if data_root and pictures_digest(jsonl(os.path.join(D, "train.jsonl")), data_root) != st["train_pictures"]:
         raise SystemExit("training pictures differ from START")
     return st
@@ -312,6 +334,80 @@ def read_heads(reading, kv, w: int, h: int, templates: List[str], boxes: Optiona
     return out
 
 
+def check_reads_list(reads: List[Dict], want: List[str]) -> None:
+    """One picture's reads: exactly the templates `want`, once each, in order; each value is its decoded string's format
+    (valid) or "unreadable" (invalid)."""
+    from devision.reading import UNREADABLE, VALID, fmt
+    if [r.get("question") for r in reads] != want:
+        raise SystemExit("reads %s, expected %s" % ([r.get("question") for r in reads], want))
+    for r in reads:
+        if not all(k in r for k in ("decoded", "valid", "value")):
+            raise SystemExit("a read lacks its fields")
+        ok = (bool(VALID.match(r["decoded"])) and r["value"] == fmt(r["decoded"])) if r["valid"] is True else \
+            (r["valid"] is False and r["value"] == UNREADABLE)
+        if not ok:
+            raise SystemExit("a read's value is not its decoded string's format")
+
+
+def reproduce(old: List[Dict], ref: Dict[str, Dict[str, Dict]], key) -> Dict:
+    """The old head's reads against the registered reference, per picture and template: counts, missing / extra
+    pictures, and every mismatch (expected / actual decoded string and validity)."""
+    got = {}
+    dup = 0
+    for x in old:
+        dup += key(x) in got
+        got[key(x)] = {r["question"]: r for r in x["reads"]}
+    mism = []
+    for k, exp in ref.items():
+        if k not in got:
+            continue
+        for t, e in exp.items():
+            a = got[k].get(t)
+            if a is None or a["decoded"] != e["decoded"] or a["valid"] != e["valid"]:
+                mism.append({"picture": k, "question": t, "expected": [e["decoded"], e["valid"]],
+                             "actual": None if a is None else [a["decoded"], a["valid"]]})
+        mism += [{"picture": k, "question": t, "expected": None, "actual": [got[k][t]["decoded"], got[k][t]["valid"]]}
+                 for t in got[k] if t not in exp]
+    res = {"pictures": len(ref), "reads": sum(len(v) for v in ref.values()), "missing_pictures": sorted(set(ref) - set(got)),
+           "extra_pictures": sorted(set(got) - set(ref)), "duplicates": dup, "mismatches": mism}
+    res["reproduced"] = not (res["missing_pictures"] or res["extra_pictures"] or dup or mism)
+    return res
+
+
+def write_reads(out: str, name: str, recs: List[Dict], head_sha: str) -> None:
+    f = "%s.jsonl" % name
+    ident = {"start_sha256": sha(os.path.join(out, "START.json")), "set": name, "selector_sha256": E62_SHA["selector.pt"], "head_sha256": head_sha}
+    with open(os.path.join(out, f), "w") as fh:
+        fh.write(json.dumps({"identity": ident}) + "\n" + "".join(json.dumps(x) + "\n" for x in recs))
+    register(out, "reads_" + name, {f: sha(os.path.join(out, f))})
+
+
+def close_group(out: str, group: str, results: Dict[str, List[Dict]], names: List[str], ref, key, new_sha: str) -> Dict:
+    """A finished slice: its read files written and registered, then the old head's reproduction recorded and registered
+    (repro_<group>.json); a failure raises only after both are on disk."""
+    for n in names:
+        write_reads(out, n, results[n], HEAD_SHA if n.endswith("_old") else new_sha)
+    rep = reproduce(results[names[0]], ref, key)
+    f = "repro_%s.json" % group
+    write_json(os.path.join(out, f), rep)
+    register(out, "repro_" + group, {f: sha(os.path.join(out, f))})
+    if not rep["reproduced"]:
+        raise SystemExit("%s: the old head does not reproduce the registered reads (%d mismatches, %d missing) -- stopped"
+                         % (group, len(rep["mismatches"]), len(rep["missing_pictures"])))
+    return rep
+
+
+REFS = {"rl_tune": (lambda: registered_reads(os.path.join(E62, "rl_tune_new.jsonl"), lambda x: x["id"]), lambda x: x["id"], ["rl_tune_old", "rl_tune_new"]),
+        "tune_V_auto": (lambda: registered_reads(os.path.join(E62, "tune_V_new.jsonl"), lambda x: x["picture"]), lambda x: x["picture"],
+                        ["tune_V_auto_old", "tune_V_auto_new"]),
+        "tune_V_oracle": (lambda: registered_reads(os.path.join(E62, "tune_V_oracle.jsonl"), lambda x: x["picture"]), lambda x: x["picture"],
+                          ["tune_V_oracle_old", "tune_V_oracle_new"]),
+        "dev24_auto": (lambda: {r["sample_id"]: {x["question"]: x for x in r["diagnostics"]["reads"]} for r in jsonl(os.path.join(E62, "details_dev24_new.jsonl"))[1:]},
+                       lambda x: x["id"], ["dev24_auto_old", "dev24_auto_new"]),
+        "dev24_oracle": (lambda: {r["sample_id"]: {x["question"]: x for x in r["diagnostics"]["reads"]} for r in jsonl(os.path.join(E60, "details_oracle.jsonl"))[1:]},
+                         lambda x: x["id"], ["dev24_oracle_old", "dev24_oracle_new"])}
+
+
 def registered_reads(path: str, key) -> Dict[str, Dict[str, Dict]]:
     return {key(x): {r["question"]: r for r in x["reads"]} for x in jsonl(path)[1:]}
 
@@ -349,10 +445,9 @@ def stage_reads(out: str = OUT, data_root: str = "data") -> Dict:
     done = 0
     results: Dict[str, List[Dict]] = defaultdict(list)
 
-    def finish(slice_, name_old, ref, key):
-        bad = [x for x in results[name_old] if not same_strings(x["reads"], ref[key(x)])]
-        if bad:
-            raise SystemExit("%s: the old head does not reproduce the registered reads on %d pictures -- stopped" % (slice_, len(bad)))
+    def finish(group):
+        load, key, names = REFS[group]
+        close_group(out, group, results, names, load(), key, reg["head.pt"])
     for rid in sorted(tune):                                                      # rl_tune, EXP62 selector boxes
         img = e60.picture(data_root, tune[rid]["image"], pics58)
         kv = encode(m, cfg, img)
@@ -361,7 +456,7 @@ def stage_reads(out: str = OUT, data_root: str = "data") -> Dict:
             results["rl_tune_" + who].append({"id": rid, "reads": r[who]})
         done += 1
         e54.progress(out, "reads", done, total)
-    finish("rl_tune", "rl_tune_old", registered_reads(os.path.join(E62, "rl_tune_new.jsonl"), lambda x: x["id"]), lambda x: x["id"])
+    finish("rl_tune")
     for p in sorted(vby):                                                         # tune_V, auto and oracle boxes
         img = e60.picture(data_root, p, vpics)
         kv = encode(m, cfg, img)
@@ -373,8 +468,8 @@ def stage_reads(out: str = OUT, data_root: str = "data") -> Dict:
             results["tune_V_oracle_" + who].append({"picture": p, "reads": o[who]})
         done += 1
         e54.progress(out, "reads", done, total)
-    finish("tune_V auto", "tune_V_auto_old", registered_reads(os.path.join(E62, "tune_V_new.jsonl"), lambda x: x["picture"]), lambda x: x["picture"])
-    finish("tune_V oracle", "tune_V_oracle_old", registered_reads(os.path.join(E62, "tune_V_oracle.jsonl"), lambda x: x["picture"]), lambda x: x["picture"])
+    finish("tune_V_auto")
+    finish("tune_V_oracle")
     dev24 = []
     for it in e59.items():                                                        # dev24: auto and EXP60's oracle boxes
         row = it["row"]
@@ -393,18 +488,9 @@ def stage_reads(out: str = OUT, data_root: str = "data") -> Dict:
         dev24.append(e59.record(it, _probabilities(res["answers"][it["key"]]), {"diagnostics": {"reads": a["new"], "table": table, "state": state}}))
         done += 1
         e54.progress(out, "reads", done, total)
-    ref_auto = {r["sample_id"]: {x["question"]: x for x in r["diagnostics"]["reads"]} for r in jsonl(os.path.join(E62, "details_dev24_new.jsonl"))[1:]}
-    ref_or = {r["sample_id"]: {x["question"]: x for x in r["diagnostics"]["reads"]} for r in jsonl(os.path.join(E60, "details_oracle.jsonl"))[1:]}
-    finish("dev24 auto", "dev24_auto_old", ref_auto, lambda x: x["id"])
-    finish("dev24 oracle", "dev24_oracle_old", ref_or, lambda x: x["id"])
+    finish("dev24_auto")
+    finish("dev24_oracle")
     s_sha = sha(os.path.join(out, "START.json"))
-    for name, recs in results.items():
-        f = "%s.jsonl" % name
-        ident = {"start_sha256": s_sha, "set": name, "selector_sha256": E62_SHA["selector.pt"],
-                 "head_sha256": HEAD_SHA if name.endswith("_old") else reg["head.pt"]}
-        with open(os.path.join(out, f), "w") as fh:
-            fh.write(json.dumps({"identity": ident}) + "\n" + "".join(json.dumps(x) + "\n" for x in recs))
-        register(out, "reads_" + name, {f: sha(os.path.join(out, f))})
     e59.check_diagnostics(dev24, e59.items())
     f = "details_dev24_new_head.jsonl"
     with open(os.path.join(out, f), "w") as fh:
@@ -430,10 +516,82 @@ def dev24_hits(out: str, name: str, head_sha: str) -> Dict[str, Dict[str, bool]]
     lines = jsonl(f)
     if lines[0]["identity"].get("head_sha256") != head_sha or lines[0]["identity"].get("start_sha256") != sha(os.path.join(out, "START.json")):
         raise SystemExit("%s: identity does not bind" % name)
-    got = {x["id"]: x["reads"] for x in lines[1:]}
+    got: Dict[str, List[Dict]] = {}
+    want = templates_by_key()["dev24_auto"]
+    for x in lines[1:]:
+        if x["id"] in got:
+            raise SystemExit("%s: %s twice" % (name, x["id"]))
+        check_reads_list(x["reads"], want[x["id"]])
+        got[x["id"]] = x["reads"]
     if set(got) != set(gold):
         raise SystemExit("%s: pictures missing" % name)
     return {rid: {x["question"]: bool(x["valid"] and x["value"] == e59.value_of(gold[rid][x["question"]])) for x in rs} for rid, rs in got.items()}
+
+
+def read_file(out: str, name: str, head_sha: str) -> List[Dict]:
+    """A registered read file's items after its identity check (START, set, EXP62's selector, the head)."""
+    f = os.path.join(out, name + ".jsonl")
+    if e54.check_registered(out, "reads_" + name).get(name + ".jsonl") != sha(f):
+        raise SystemExit("%s not registered" % name)
+    lines = jsonl(f)
+    want = {"start_sha256": sha(os.path.join(out, "START.json")), "set": name, "selector_sha256": E62_SHA["selector.pt"], "head_sha256": head_sha}
+    if any(lines[0]["identity"].get(k) != v for k, v in want.items()):
+        raise SystemExit("%s: identity does not bind" % name)
+    return lines[1:]
+
+
+def templates_by_key() -> Dict[str, Dict[str, List[str]]]:
+    """Per group: the templates each picture's reads must hold, in order."""
+    from devision.reading import reads_for
+    tune = {r["id"]: r for r in jsonl(e54.TUNE)}
+    vby: Dict[str, List[Dict]] = defaultdict(list)
+    for q in jsonl(e61.V_QUESTIONS):
+        if q["set"] == "tune_V":
+            vby[q["picture"]].append(q)
+    dev = {it["row"]["id"]: reads_for(it["row"]["questions"]) for it in e59.items()}
+    return {"rl_tune": {rid: reads_for(r["questions"]) for rid, r in tune.items()},
+            "tune_V_auto": {p: e61.templates_of(v) for p, v in vby.items()}, "tune_V_oracle": {p: e61.templates_of(v) for p, v in vby.items()},
+            "dev24_auto": dev, "dev24_oracle": dev}
+
+
+def validity(out: str, new_sha: Optional[str]) -> Dict:
+    """critic EXP64-R1-01: every required read file present, registered, bound, structurally complete (templates once
+    each, value = format of decoded), and each old-head group reproducing its registered reference (recomputed here,
+    never taken from a stored flag). missing -> incomplete; anything else wrong -> invalid."""
+    out_: Dict[str, Any] = {"groups": {}, "missing": [], "invalid": []}
+    want = templates_by_key()
+    for group, (load, key, names) in REFS.items():
+        items: Dict[str, List[Dict]] = {}
+        for n in names:
+            if not os.path.exists(os.path.join(out, n + ".jsonl")):
+                out_["missing"].append(n)
+                continue
+            try:
+                if new_sha is None and not n.endswith("_old"):
+                    raise SystemExit("no verified trained head")
+                items[n] = read_file(out, n, HEAD_SHA if n.endswith("_old") else new_sha or "")
+                seen = set()
+                for x in items[n]:
+                    k = key(x)
+                    if k in seen or k not in want[group]:
+                        raise SystemExit("%s: picture %s twice / unknown" % (n, k))
+                    seen.add(k)
+                    check_reads_list(x["reads"], want[group][k])
+                if seen != set(want[group]):
+                    raise SystemExit("%s: %d pictures missing" % (n, len(set(want[group]) - seen)))
+            except SystemExit as e:
+                out_["invalid"].append("%s: %s" % (n, e))
+        if names[0] in items:
+            rep = reproduce(items[names[0]], load(), key)
+            out_["groups"][group] = {k: v for k, v in rep.items() if k != "mismatches"} | {"mismatches": len(rep["mismatches"])}
+            if not rep["reproduced"]:
+                out_["invalid"].append("%s: the old head does not reproduce its reference" % group)
+    if not os.path.exists(os.path.join(out, "details_dev24_new_head.jsonl")):
+        out_["dev24_decide"] = "missing (report only)"
+    else:
+        out_["dev24_decide"] = "completed (report only)"
+    out_["state"] = "invalid" if out_["invalid"] else "incomplete" if out_["missing"] else "valid"
+    return out_
 
 
 def gates(res: Dict) -> Dict:
@@ -455,7 +613,10 @@ def gates(res: Dict) -> Dict:
     return g
 
 
-def branch(g: Dict) -> str:
+def branch(g: Dict, valid: Optional[Dict] = None) -> str:
+    if valid is not None and valid["state"] != "valid":
+        return ("%s: the run's required evidence is %s (%s) -- no scientific verdict"
+                % (valid["state"], valid["state"], "; ".join(valid["invalid"] or ["missing %s" % valid["missing"]])))
     if g["head_learned"] is False:
         return "the head did not fit its own training data (EXP49 validity line): the bottleneck is not located"
     missing = [k for k, v in g.items() if v == "incomplete"]
@@ -539,15 +700,16 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
         res["states"]["dev24"] = "completed"
     except (SystemExit, OSError, ValueError, KeyError) as e:
         res["states"]["dev24"] = "missing / invalid: %s" % e
+    res["validity"] = validity(out, new_sha)
     res["gates"] = gates(res)
-    res["branch"] = branch(res["gates"])
+    res["branch"] = branch(res["gates"], res["validity"])
     return write_report(out, res)
 
 
 def write_report(out: str, res: Dict) -> Dict:
     os.makedirs(out, exist_ok=True)
     write_json(os.path.join(out, "report.json"), res)
-    text = json.dumps({k: res[k] for k in ("finalized", "states", "fit_validity", "gates", "branch", "candidate_eligible") if k in res}, indent=1, default=str)
+    text = json.dumps({k: res[k] for k in ("finalized", "states", "validity", "fit_validity", "gates", "branch", "candidate_eligible") if k in res}, indent=1, default=str)
     for s in ("rl_tune", "tune_V"):
         for who, v in (res.get(s) or {}).items():
             if isinstance(v, dict) and "exact" in v:

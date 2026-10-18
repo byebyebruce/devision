@@ -166,3 +166,126 @@ def test_run_order_and_failed_stage_finalize(tmp_path):
     root, p, calls = chain(tmp_path / "b", {"FAIL_TRAIN": "1"})
     joined = "\n".join(calls)
     assert p.returncode == 6 and "exp64.py reads" not in joined and "report --finalize" in joined
+
+
+# ---------------------------------------------------------------- EXP64-R1-01 / 02
+
+def fake_run(tmp_path, data_root="data"):
+    """A complete run directory from the real registered references (no model): START, a head, and every read file
+    with the old and the new head reading exactly the reference."""
+    out = str(tmp_path / "out")
+    m.stage_start(0, out=out, data_root=data_root)
+    open(os.path.join(out, "head.pt"), "wb").write(b"new head")
+    h = m.sha(os.path.join(out, "head.pt"))
+    fit = {"%s/%s/%s" % (w, s, f): 1.0 for w in ("old", "new") for s in ("fit_O", "fit_L", "train_V", "train_P") for f in ("all",) + m.e61.FIELDS}
+    json.dump({"head_sha256": h, "fit": fit}, open(os.path.join(out, "train.json"), "w"))
+    m.register(out, "head", {"head.pt": h, "train.json": m.sha(os.path.join(out, "train.json"))})
+    want = m.templates_by_key()
+    for group, (load, key, names) in m.REFS.items():
+        ref = load()
+        idk = "picture" if group.startswith("tune_V") else "id"
+        items = [{idk: k, "reads": [dict(ref[k][t]) for t in want[group][k]]} for k in sorted(ref)]
+        for n in names:
+            m.write_reads(out, n, items, m.HEAD_SHA if n.endswith("_old") else h)
+    open(os.path.join(out, "details_dev24_new_head.jsonl"), "w").write(open(os.path.join(m.E62, "details_dev24_new.jsonl")).read())
+    return out, h
+
+
+def edit_reads(out, name, h, fn):
+    f = os.path.join(out, name + ".jsonl")
+    lines = m.jsonl(f)
+    items = fn(lines[1:])
+    m.write_reads(out, name, items, m.HEAD_SHA if name.endswith("_old") else h)
+
+
+@real
+def test_complete_run_is_valid_and_each_fault_is_not(tmp_path):
+    out, h = fake_run(tmp_path)
+    rep = m.report(out)
+    assert rep["validity"]["state"] == "valid" and all(g["reproduced"] for g in rep["validity"]["groups"].values())
+    assert not rep["branch"].startswith(("invalid", "incomplete"))
+
+    def flip_string(items):
+        items[0]["reads"][0]["decoded"] = items[0]["reads"][0]["decoded"] + "1"
+        items[0]["reads"][0]["valid"], items[0]["reads"][0]["value"] = False, "unreadable"
+        return items
+    edit_reads(out, "rl_tune_old", h, flip_string)
+    rep = m.report(out)
+    assert rep["validity"]["state"] == "invalid" and rep["validity"]["groups"]["rl_tune"]["mismatches"] == 1
+    assert rep["branch"].startswith("invalid") and rep["candidate_eligible"] is False
+
+
+@real
+def test_valid_flag_duplicate_template_and_missing_control(tmp_path):
+    out, h = fake_run(tmp_path)
+
+    def flip_valid(items):
+        r = items[0]["reads"][0]
+        r["valid"] = not r["valid"]
+        r["value"] = "unreadable" if not r["valid"] else r["decoded"]
+        return items
+    edit_reads(out, "tune_V_auto_old", h, flip_valid)
+    assert m.report(out)["validity"]["state"] == "invalid"
+    out2, h2 = fake_run(tmp_path / "b")
+    edit_reads(out2, "dev24_auto_new", h2, lambda items: [dict(items[0], reads=items[0]["reads"] + items[0]["reads"][:1])] + items[1:])
+    v = m.report(out2)["validity"]
+    assert v["state"] == "invalid" and any("dev24_auto_new" in x for x in v["invalid"])
+    out3, h3 = fake_run(tmp_path / "c")
+    os.remove(os.path.join(out3, "tune_V_oracle_new.jsonl"))
+    rep = m.report(out3)
+    assert rep["validity"]["state"] == "incomplete" and rep["branch"].startswith("incomplete")
+    tj = json.load(open(os.path.join(out3, "train.json")))                     # a failed fit does not mask it
+    tj["fit"] = {k: 0.0 for k in tj["fit"]}
+    json.dump(tj, open(os.path.join(out3, "train.json"), "w"))
+    m.register(out3, "head", {"head.pt": h3, "train.json": m.sha(os.path.join(out3, "train.json"))})
+    assert m.report(out3)["branch"].startswith("incomplete")
+
+
+def test_failed_reproduction_is_on_disk_before_the_stop(tmp_path, monkeypatch):
+    out = str(tmp_path)
+    open(os.path.join(out, "START.json"), "w").write("{}")
+    ref = {"p1": {"t": {"decoded": "14", "valid": True}}}
+    results = {"g_old": [{"id": "p1", "reads": [{"question": "t", "decoded": "15", "valid": True, "value": "15"}]}],
+               "g_new": [{"id": "p1", "reads": [{"question": "t", "decoded": "14", "valid": True, "value": "14"}]}]}
+    with pytest.raises(SystemExit, match="does not reproduce"):
+        m.close_group(out, "g", results, ["g_old", "g_new"], ref, lambda x: x["id"], "h")
+    rep = json.load(open(os.path.join(out, "repro_g.json")))
+    assert rep["reproduced"] is False and rep["mismatches"] == [{"picture": "p1", "question": "t", "expected": ["14", True], "actual": ["15", True]}]
+    reg = json.load(open(os.path.join(out, "registry.json")))
+    assert {"repro_g", "reads_g_old", "reads_g_new"} <= set(reg)
+
+
+@real
+def test_dev_picture_and_baseline_identity(tmp_path, monkeypatch):
+    import shutil
+    root = tmp_path / "data"
+    root.mkdir()
+    for name in os.listdir(os.path.join(ROOT, "data")):                        # a mirror of data/ by symlinks ...
+        if name != "exp61":
+            os.symlink(os.path.join(ROOT, "data", name), root / name)
+    (root / "exp61").mkdir()
+    for name in os.listdir(os.path.join(ROOT, "data", "exp61")):
+        if name != "images":
+            os.symlink(os.path.join(ROOT, "data", "exp61", name), root / "exp61" / name)
+    (root / "exp61" / "images").mkdir()
+    imgs = sorted(os.listdir(os.path.join(ROOT, "data", "exp61", "images")))
+    for name in imgs:
+        os.symlink(os.path.join(ROOT, "data", "exp61", "images", name), root / "exp61" / "images" / name)
+    out = str(tmp_path / "out")
+    m.stage_start(0, out=out, data_root=str(root))
+    m.check_start(out, data_root=str(root))
+    victim = [n for n in imgs if n.startswith("tune_V")][0]                      # ... with one dev picture replaced
+    os.remove(root / "exp61" / "images" / victim)
+    shutil.copy(os.path.join(ROOT, "data", "exp61", "images", imgs[0]), root / "exp61" / "images" / victim)
+    with pytest.raises(SystemExit, match="pictures differ"):
+        m.check_start(out, data_root=str(root))
+    e56 = tmp_path / "exp56"
+    e56.mkdir()
+    for f in ("reads.jsonl", "registry.json"):
+        shutil.copy(os.path.join(ROOT, m.e61.E56, f), e56 / f)
+    (e56 / "reads.jsonl").write_text((e56 / "reads.jsonl").read_text() + "\n")
+    m.e54.register(str(e56), "reads", {"reads.jsonl": m.sha(str(e56 / "reads.jsonl"))})   # the current registry updated too
+    monkeypatch.setattr(m.e61, "E56", str(e56))
+    with pytest.raises(SystemExit, match="EXP56"):
+        m.check_start(out, data_root="")
+    assert m.report(out)["branch"].startswith("invalid")
