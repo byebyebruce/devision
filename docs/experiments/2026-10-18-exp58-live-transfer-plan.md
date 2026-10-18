@@ -81,3 +81,27 @@
   - 请求里没有被支持的题时，不读取。
 - 占位端点下 start 拒绝，且不留下任何文件。
 - 分组等于 devision-eval 的 `_requests`。
+
+## 第 1 轮修正（EXP58-R1-01–03；CPU，未运行）
+
+- **R1-01 图片身份与 START 契约**：
+  - start 写 EXP58 自己的 `pictures.json`：A 的 600 张取自已冻结的 EXP56 清单（不在清单里就拒绝）；B 的每一行按源题单的实际 image 字段（真图和固定错图）在 start 时计算哈希。
+  - START 的 `pictures` / `bundle` 结构与 `e56.check_combination` 的契约一致。
+  - `check_run` 在加载前和报告时都核对以下各项：代码、bundle 文件、清单；EXP57 权重 / config = START = NEW_SHA；bundle 的 reading.json 绑定的是这份权重 / config；源题单与 rl_tune；在加载前还逐张核对清单里每张图的字节。
+  - `ask` 必须拿到清单，A 和 B 的每次读取都核实际字节，不在清单里的图直接拒绝。
+- **R1-02 保真闭环**：`verify_fidelity` 每次使用时都从登记证据重新计算，不信缓存的 True：
+  - 新的读取经 EXP56 的 `check_reads`：已登记，每图一次，模板齐全，值是其解码串的格式，inputs_P 正是读取的序列化，details_P 绑定 START 的 bundle / 图片清单；
+  - 新的明细经 `live_records`：已登记；身份绑定本轮 START、已登记的 inputs_P、模型、raw、bundle、清单；用 `check_details` 核对唯一全集，选项顺序也核；
+  - 再与 EXP56 的读取 / state、EXP57 的 details_P（START 绑定其哈希）比较。
+  - `fidelity.json` 只是一份记录：B 阶段开始前和 report 时都重新计算。A 或组合核对不过时，报告给 invalid / incomplete，不给迁移或候选结论。
+- **R1-03 一次启动与收尾**：
+  - 每个部分在做任何事之前都写 `runs/exp58-<部分>.started`，含截止、HEAD；B2 的标记里还记它接续的 START 哈希。标记从不删除，存在就拒绝再次启动。
+  - B2 要求 A 已启动且有 START；不再以「成功产物不存在」代替「是否启动过」。
+  - report 在没有 START、组合无效、基线异常时都写出可读的 incomplete / invalid 报告；main 兜底，任何异常也写 report.txt。
+- **CPU 夹具**（`test_live.py` 共 19 项，全过；假权重和假 Reading，不加载模型）：
+  - 非占位的完整链：start → 加载前核对 → live → fidelity 通过；
+  - 改 B 图片、换清单、改源题单，都在使用前拒绝；B 请求也核字节（加载后改图、清单外的图）；
+  - 保真拒绝：改读取但不重新登记、改预测但不重新登记、重复、漏项、外来身份、读取串相同而实际表不同；
+  - 过期的 fidelity 记录：B 拒绝启动，报告给 invalid；
+  - 没有 START 时报告给 incomplete；
+  - stub 链：start 失败时 finalize，A 不能再次启动；B2 在写出第一个集合前被截止停止，子进程组被杀，然后 finalize，B2 也不能再次启动。

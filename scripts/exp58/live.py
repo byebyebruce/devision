@@ -50,6 +50,7 @@ TRANSFER = {"sqa_temp": "data/exp21/dev_sqa_temp.jsonl", "sqa_force": "data/exp2
 GUARD = {"exist": "data/r13b/panel_exist.jsonl", "science": "data/r13b/panel_science.jsonl", "ext": "data/ext/dev_ext.jsonl",
          "count_wide": "data/r13b/count_wide.jsonl", "count_narrow": "data/v11/dev_count_transfer.jsonl",
          "flip": "data/v6/dev_lr_pairs.jsonl", "vsr": "data/v5/dev_vsr.jsonl"}
+A_PICTURES, A_READS, A_QUESTIONS = 600, 1800, 2400     # stage A's complete sets
 MAX_QUESTIONS = 32                                  # devision-eval's default, as v0.3's records were made
 FILES = ["scripts/exp58/live.py", "scripts/exp58/run.sh", "src/devision/reading.py", "src/devision/infer.py", "src/devision/model.py",
          "src/devision/image.py", "src/devision/train/evaluate.py", "scripts/exp56/exp56.py", "scripts/exp57/exp57.py",
@@ -84,21 +85,22 @@ def requests(samples: List[Dict]) -> List:
     return _requests(samples, {}, "none", MAX_QUESTIONS)
 
 
-def ask(reading, image_path: str, text: str, questions: Dict[str, Dict], data_root: str, pictures: Optional[Dict[str, str]] = None,
+def ask(reading, image_path: str, text: str, questions: Dict[str, Dict], data_root: str, pictures: Dict[str, str],
         diagnostics: Optional[Dict] = None) -> Dict:
     """One request through the product path: the actual picture bytes (checked against `pictures` when given) opened as
-    an image and passed as image= to Reading.decide with the text state -- never inside state, never None."""
+    an image and passed as image= to Reading.decide with the text state -- never inside state, never None. The bytes must
+    hash to START's picture manifest (a picture outside it is refused)."""
     import hashlib
 
     from PIL import Image
     raw = open(os.path.join(data_root, image_path), "rb").read()
-    if pictures is not None and hashlib.sha256(raw).hexdigest() != pictures[image_path]:
+    if image_path not in pictures or hashlib.sha256(raw).hexdigest() != pictures[image_path]:
         raise SystemExit("%s differs from the bound picture" % image_path)
     with Image.open(io.BytesIO(raw)) as img:
         return reading.decide(text, questions, image=img.convert("RGB"), diagnostics=diagnostics)
 
 
-def run_set(reading, samples: List[Dict], data_root: str, on_request=None) -> List[Dict]:
+def run_set(reading, samples: List[Dict], data_root: str, pictures: Dict[str, str], on_request=None) -> List[Dict]:
     """Every question of `samples` through `ask`, devision-eval's record fields (+ routed: the question went to the
     reading path), scored with evaluate.score_records."""
     from devision.reading import domain_of
@@ -106,7 +108,7 @@ def run_set(reading, samples: List[Dict], data_root: str, on_request=None) -> Li
     asked = {}
     for n, (image, text, items) in enumerate(requests(samples)):
         questions = {"%d:%s" % (i, qid): q for i, qid, q in items}
-        res = ask(reading, image, text, questions, data_root)
+        res = ask(reading, image, text, questions, data_root, pictures)
         for key, (i, qid, q) in zip(questions, items):
             asked[(i, qid)] = (q, image, len(items), _probabilities(res["answers"][key]))
         if on_request:
@@ -139,7 +141,22 @@ def request_counts() -> Dict:
 
 # ------------------------------------------------------------------ start / stages
 
-def stage_start(deadline: int, out: str = OUT) -> Dict:
+def picture_manifest(data_root: str = "data") -> Dict[str, str]:
+    """Every picture any stage will open, by its path in the source files: stage A's 600 (which must be EXP56's frozen
+    manifest entries) and the image field of every B row (true and fixed wrong pictures)."""
+    e56pics = json.load(open(os.path.join(E56, "pictures.json")))
+    pics = {}
+    for r in jsonl(e54.TUNE):
+        if r["image"] not in e56pics:
+            raise SystemExit("%s is not in EXP56's picture manifest" % r["image"])
+        pics[r["image"]] = e56pics[r["image"]]
+    for p in {**TRANSFER, **GUARD}.values():
+        for r in jsonl(p):
+            pics.setdefault(r["image"], sha(os.path.join(data_root, r["image"])))
+    return pics
+
+
+def stage_start(deadline: int, out: str = OUT, data_root: str = "data") -> Dict:
     from devision.reading import write_bundle
     path = os.path.join(out, "START.json")
     if os.path.exists(path):
@@ -156,15 +173,19 @@ def stage_start(deadline: int, out: str = OUT) -> Dict:
     st56 = json.load(open(os.path.join(E56, "START.json")))
     if sha(os.path.join(E56, "pictures.json")) != st56["pictures"]["pictures.json"]:
         raise SystemExit("EXP56's pictures.json changed")
+    pics = picture_manifest(data_root)
     os.makedirs(out, exist_ok=True)
+    write_json(os.path.join(out, "pictures.json"), pics)
     bundle = write_bundle(os.path.join(out, "bundle"), os.path.join(NEW_RUN, "stage2"), SELECTOR, HEAD,
                           {"selector": {"path": SELECTOR, "sha256": SELECTOR_SHA}, "head": {"path": HEAD, "sha256": HEAD_SHA}})
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
          "files": {f: sha(f) for f in FILES}, "model": want, "exp57_report": sha(os.path.join(NEW_RUN, "report.json")),
+         "exp57_details_P": sha(os.path.join(E57, "details_P.jsonl")),
          "bundle": {"reading.json": sha(os.path.join(out, "bundle", "reading.json")), **bundle["sha256"]},
-         "exp56": dict(E56_SHA, pictures=st56["pictures"]["pictures.json"]),
-         "data": {n: sha(p) for n, p in {**TRANSFER, **GUARD}.items()}, "tune_sha256": sha(e54.TUNE),
+         "pictures": {"pictures.json": sha(os.path.join(out, "pictures.json")), "count": len(pics),
+                      "exp56_pictures_sha256": st56["pictures"]["pictures.json"]},
+         "exp56": dict(E56_SHA), "data": {n: sha(p) for n, p in {**TRANSFER, **GUARD}.items()}, "tune_sha256": sha(e54.TUNE),
          "v03": {n: sha(os.path.join(V03, n + ".details.jsonl")) for n in {**TRANSFER, **GUARD}},
          "requests": request_counts(), "temperature": "none (raw), in memory", "max_questions": MAX_QUESTIONS,
          "started": time.strftime("%F %T"), "deadline": deadline, "deadline_text": time.strftime("%F %T", time.localtime(deadline))}
@@ -172,21 +193,42 @@ def stage_start(deadline: int, out: str = OUT) -> Dict:
     return s
 
 
-def load_reading(out: str, device: str = "auto"):
+def check_run(out: str, data_root: str = "data", code: bool = True) -> Dict:
+    """Before any load and in the report: START's combination as it is now -- code (optional), bundle files, the picture
+    manifest (EXP56's contract: e56.check_combination), EXP57's weights / config = START's = NEW_SHA, the bundle's
+    reading.json binding those weights / config, the source files, and (with data_root) every manifest picture's bytes."""
+    st = json.load(open(os.path.join(out, "START.json")))
+    e56.check_combination(out, st, code=code)
+    if fz.weights(NEW_RUN) != st["model"] or st["model"] != new_sha():
+        raise SystemExit("EXP57's weights / config are not START's")
+    rj = json.load(open(os.path.join(out, "bundle", "reading.json")))["sha256"]
+    if {k: rj.get(k) for k in st["model"]} != st["model"]:
+        raise SystemExit("the bundle does not bind START's weights / config")
+    bad = [n for n, p in {**TRANSFER, **GUARD}.items() if sha(p) != st["data"][n]] + (["rl_tune"] if sha(e54.TUNE) != st["tune_sha256"] else [])
+    if bad:
+        raise SystemExit("source files differ from START: %s" % bad)
+    if data_root:
+        e56.check_pictures(out, data_root)
+    return st
+
+
+def load_reading(out: str, device: str = "auto", data_root: str = "data"):
     from devision.infer import best_device
     from devision.reading import Reading
-    st = json.load(open(os.path.join(out, "START.json")))
-    if fz.weights(NEW_RUN) != st["model"] or st["model"] != new_sha():
-        raise SystemExit("EXP57's weights / config are not START's: refused before loading")
-    e56.check_combination(out, st)
+    st = check_run(out, data_root)                                   # before the load
     r = Reading.load(os.path.join(NEW_RUN, "stage2"), os.path.join(out, "bundle"), device=best_device() if device == "auto" else device)
     r.decider.cfg.temperature, r.decider.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}      # raw, in memory only
-    return r, st
+    return r, st, json.load(open(os.path.join(out, "pictures.json")))
 
 
 def stage_live(out: str = OUT, data_root: str = "data") -> Dict:
-    reading, st = load_reading(out)
-    pics = json.load(open(os.path.join(E56, "pictures.json")))
+    reading, st, pics = load_reading(out, data_root=data_root)
+    return live_into(out, reading, st, pics, data_root)
+
+
+def live_into(out: str, reading, st: Dict, pics: Dict[str, str], data_root: str) -> Dict:
+    """Stage A's requests (one per rl_tune picture, the row's questions, the actual picture as image=) and its registered
+    products: reads.jsonl, inputs_P.jsonl (the actual tables / states), details_P.jsonl bound to START / bundle / pictures."""
     rows = {r["id"]: r for r in jsonl(e54.TUNE)}
     recs, inputs, reads, t0 = [], {}, [], time.time()
     for n, rid in enumerate(sorted(rows)):
@@ -201,48 +243,84 @@ def stage_live(out: str = OUT, data_root: str = "data") -> Dict:
         fh.write("".join(json.dumps(r) + "\n" for r in reads))
     e56.merge_register(out, "reads", {"reads.jsonl": sha(os.path.join(out, "reads.jsonl"))})
     e56.write_condition(out, "P", recs, sha(os.path.join(out, "START.json")), st["model"], "live", inputs,
-                        {"reading_bundle": st["bundle"]["reading.json"], "pictures": st["exp56"]["pictures"]})
+                        {"reading_bundle": st["bundle"]["reading.json"], "pictures": st["pictures"]["pictures.json"]})
     return {"seconds": time.time() - t0}
 
 
-def fidelity(out: str = OUT) -> Dict:
-    """Stage A's gate: live reads = EXP56's, states = EXP56's inputs_P, answers = EXP57's details_P (<= 1e-5)."""
+def live_records(out: str, rows: Dict[str, Dict], st: Dict) -> List[Dict]:
+    """The live details_P after every check: registered and unchanged; identity (condition P, this START, the registered
+    inputs_P, START's model, raw temperature, START's bundle and pictures); every rl_tune question exactly once (gold,
+    picture, valid probabilities, prediction = argmax, correct), options in order."""
+    f = "details_P.jsonl"
+    if e54.check_registered(out, "decide_P").get(f) != sha(os.path.join(out, f)):
+        raise SystemExit("live details_P not registered")
+    lines = jsonl(os.path.join(out, f))
+    ident = lines[0]["identity"]
+    want = {"condition": "P", "start_sha256": sha(os.path.join(out, "START.json")),
+            "inputs_sha256": e54.check_registered(out, "inputs")["inputs_P.jsonl"], "model": st["model"], "temperature": "none (raw)",
+            "reading_bundle": st["bundle"]["reading.json"], "pictures": st["pictures"]["pictures.json"]}
+    if any(ident.get(k) != v for k, v in want.items()):
+        raise SystemExit("live details_P: identity does not bind")
+    got = e57.r41.check_details("exp58/live_P", list(rows.values()), lines[1:])
+    for r in lines[1:]:
+        if r["options"] != list(rows[r["sample_id"]]["questions"][r["qid"]]["criteria"]):
+            raise SystemExit("live details_P %s %s: options differ" % (r["sample_id"], r["qid"]))
+    return list(got.values())
+
+
+def verify_fidelity(out: str, st: Dict) -> Dict:
+    """Stage A's gate, recomputed from the registered evidence every time it is used (never a cached flag): the live reads
+    pass EXP56's check_reads (registered, every picture once, the templates its questions call for, each value its
+    decoded string's format, inputs_P = the reads serialised, details_P about START's bundle / pictures); the live
+    details pass live_records; then reads = EXP56's 1,800, states = EXP56's 600 inputs_P, answers = EXP57's details_P
+    (fixed EXP56 tables, same endpoint) with the same predictions and probabilities within 1e-5."""
     rows = {r["id"]: r for r in jsonl(e54.TUNE)}
-    new = {r["id"]: {x["question"]: (x["decoded"], x["valid"], x["value"]) for x in r["reads"]} for r in jsonl(os.path.join(out, "reads.jsonl"))}
-    old = {r["id"]: {x["question"]: (x["decoded"], x["valid"], x["value"]) for x in r["reads"]} for r in jsonl(os.path.join(E56, "reads.jsonl"))}
-    n_reads = sum(len(v) for v in old.values())
-    same_reads = sum(new.get(rid, {}).get(q) == v for rid, d in old.items() for q, v in d.items())
-    si = e54.load_inputs(out, "P")
-    oi = e54.load_inputs(E56, "P")
-    same_states = sum(si.get(rid, {}).get("state") == oi[rid]["state"] for rid in oi)
-    live = {(r["sample_id"], r["qid"]): r for r in jsonl(os.path.join(out, "details_P.jsonl"))[1:]}
-    fixed = e57.read_set(E57, "P", rows, new_sha(), e57.set_inputs("P", rows, {})[1])
+    live_reads = e56.check_reads(out, rows, st)
+    old_reads = e56.check_reads(E56, rows, json.load(open(os.path.join(E56, "START.json"))))
+    key = lambda x: (x["decoded"], x["valid"], x["value"])  # noqa: E731
+    n_reads = sum(len(v) for v in old_reads.values())
+    same_reads = sum(key(live_reads[rid][q]) == key(x) for rid, d in old_reads.items() for q, x in d.items())
+    si, oi = e54.load_inputs(out, "P"), e54.load_inputs(E56, "P")
+    same_states = sum(si[rid]["state"] == oi[rid]["state"] for rid in oi) if set(si) == set(oi) else 0
+    live = {(r["sample_id"], r["qid"]): r for r in live_records(out, rows, st)}
+    if sha(os.path.join(E57, "details_P.jsonl")) != st["exp57_details_P"]:
+        raise SystemExit("EXP57's details_P is not the one START bound")
+    fixed = e57.read_set(E57, "P", rows, st["model"], e57.set_inputs("P", rows, {})[1])
     diff = max(abs(live[(r["sample_id"], r["qid"])]["probabilities"][k] - r["probabilities"][k]) for r in fixed for k in r["probabilities"])
-    agree = all(live[(r["sample_id"], r["qid"])]["prediction"] == r["prediction"] for r in fixed) and len(live) == len(fixed)
+    agree = all(live[(r["sample_id"], r["qid"])]["prediction"] == r["prediction"] for r in fixed)
     res = {"reads": n_reads, "same_reads": same_reads, "states": len(oi), "same_states": same_states, "questions": len(fixed),
-           "same_predictions": agree, "max_probability_difference": diff}
-    res["reproduced"] = bool(n_reads == 1800 and same_reads == n_reads and same_states == len(oi) == 600 and agree and diff <= 1e-5)
-    write_json(os.path.join(out, "fidelity.json"), res)
+           "same_predictions": agree, "max_probability_difference": diff, "start_sha256": sha(os.path.join(out, "START.json")),
+           "evidence": {f: sha(os.path.join(out, f)) for f in ("reads.jsonl", "inputs_P.jsonl", "details_P.jsonl")}}
+    res["reproduced"] = bool(n_reads == A_READS and same_reads == n_reads and len(oi) == A_PICTURES and same_states == A_PICTURES
+                             and len(fixed) == A_QUESTIONS and len(live) == A_QUESTIONS and agree and diff <= 1e-5)
+    return res
+
+
+def fidelity(out: str = OUT) -> Dict:
+    st = check_run(out, data_root="")
+    res = verify_fidelity(out, st)
+    write_json(os.path.join(out, "fidelity.json"), res)                  # a record; every consumer recomputes
+    register(out, "fidelity", {"fidelity.json": sha(os.path.join(out, "fidelity.json"))})
     if not res["reproduced"]:
         raise SystemExit("stage A not reproduced: %s" % res)
     return res
 
 
 def stage_sets(out: str, sets: Dict[str, str], label: str, data_root: str = "data") -> Dict:
-    if not json.load(open(os.path.join(out, "fidelity.json"))).get("reproduced"):
+    st0 = check_run(out, data_root="")
+    if not verify_fidelity(out, st0)["reproduced"]:
         raise SystemExit("stage A not reproduced: stage B does not start")
-    reading, st = load_reading(out)
+    reading, st, pics = load_reading(out, data_root=data_root)
     s_sha = sha(os.path.join(out, "START.json"))
     total = sum(st["requests"][n]["requests"] for n in sets)
     done, t0 = 0, time.time()
     for name, path in sets.items():
-        if sha(path) != st["data"][name]:
-            raise SystemExit("%s differs from START" % path)
         rows = jsonl(path)
-        recs = run_set(reading, rows, data_root, on_request=lambda k, b=done: e54.progress(out, label, b + k, total))
+        recs = run_set(reading, rows, data_root, pics, on_request=lambda k, b=done: e54.progress(out, label, b + k, total))
         done += st["requests"][name]["requests"]
         ident = {"set": name, "start_sha256": s_sha, "data_sha256": st["data"][name], "model": st["model"], "bundle": st["bundle"]["reading.json"],
-                 "temperature": "none (raw)", "path": "devision.reading.Reading.decide(image=actual picture)", "max_questions": MAX_QUESTIONS}
+                 "pictures": st["pictures"]["pictures.json"], "temperature": "none (raw)",
+                 "path": "devision.reading.Reading.decide(image=actual picture)", "max_questions": MAX_QUESTIONS}
         e57.write_set(out, name, recs, ident)
         print("%s done after %.1f s" % (name, time.time() - t0), flush=True)
     return {"seconds": time.time() - t0}
@@ -258,7 +336,7 @@ def set_records(out: str, name: str, st: Dict) -> List[Dict]:
     lines = jsonl(os.path.join(out, f))
     ident = lines[0]["identity"]
     want = {"set": name, "start_sha256": sha(os.path.join(out, "START.json")), "data_sha256": st["data"][name], "model": st["model"],
-            "bundle": st["bundle"]["reading.json"], "temperature": "none (raw)"}
+            "bundle": st["bundle"]["reading.json"], "pictures": st["pictures"]["pictures.json"], "temperature": "none (raw)"}
     if any(ident.get(k) != v for k, v in want.items()):
         raise SystemExit("%s: identity does not bind" % f)
     path = {**TRANSFER, **GUARD}[name]
@@ -279,35 +357,69 @@ def errors(rs: List[Dict]) -> Dict:
         "%s -> %s" % (r["gold_answer"], r["prediction"]) for r in rs if not r["correct"]))}
 
 
+def write_report(out: str, res: Dict) -> Dict:
+    os.makedirs(out, exist_ok=True)
+    write_json(os.path.join(out, "report.json"), res)
+    keys = ("finalized", "combination", "states", "fidelity_state", "transfer_target", "costs", "branch")
+    text = json.dumps({k: res[k] for k in keys if k in res}, indent=1, default=str)
+    open(os.path.join(out, "report.txt"), "w").write(text + "\n")
+    print(text)
+    return res
+
+
 def report(out: str = OUT, finalize: str = "") -> Dict:
+    """Model-free. Without START, or when the combination / stage A evidence does not verify, the report says so
+    (incomplete / invalid) and gives no transfer or candidate verdict; parts that do verify are still reported."""
+    res: Dict[str, Any] = {"states": {}, "fidelity": None, "transfer": None, "guard": {}, "costs": []}
+    if finalize:
+        res["finalized"] = {"exit_codes": finalize, "note": "the run did not complete; missing items are not low scores"}
+    if not os.path.exists(os.path.join(out, "START.json")):
+        res["combination"] = "incomplete: no START"
+        res["branch"] = "incomplete: no START (nothing ran)"
+        return write_report(out, res)
+    try:
+        st = check_run(out, data_root="", code=False)
+        res["combination"] = "verified"
+    except (SystemExit, OSError, ValueError, KeyError) as e:
+        res["combination"] = "invalid: %s" % e
+        res["branch"] = "invalid: the run's combination does not verify -- no verdict"
+        return write_report(out, res)
+    try:
+        res["fidelity"] = verify_fidelity(out, st)
+        res["fidelity_state"] = "verified" if res["fidelity"]["reproduced"] else "not reproduced"
+    except (SystemExit, OSError, ValueError, KeyError) as e:
+        res["fidelity"], res["fidelity_state"] = None, "missing / invalid: %s" % e
     sys.path.insert(0, os.path.join(HERE, "..", "exp21"))
     from readout import transfer  # type: ignore
 
     from devision.train.compare import paired_metric
     r32 = _load("exp32_report", "../exp32/report.py")
-    st = json.load(open(os.path.join(out, "START.json")))
-    res: Dict[str, Any] = {"states": {}, "fidelity": None, "transfer": None, "guard": {}, "costs": []}
-    fp = os.path.join(out, "fidelity.json")
-    res["fidelity"] = json.load(open(fp)) if os.path.exists(fp) else {"state": "missing"}
     recs = {}
     for name in list(TRANSFER) + list(GUARD):
         try:
             recs[name] = set_records(out, name, st)
             res["states"][name] = "completed"
         except (SystemExit, OSError, ValueError, KeyError) as e:
-            res["states"][name] = "missing: %s" % e
+            res["states"][name] = "missing / invalid: %s" % e
     if all(n in recs for n in TRANSFER):
-        t = transfer({k[4:]: v03_records(k, st) for k in TRANSFER}, {k[4:]: recs[k] for k in TRANSFER})
-        res["transfer"] = t
-        res["transfer_target"] = bool(t["accuracy_change"]["value"] >= 0.10 and t["accuracy_change"]["ci95"][0] > 0 and t["gain_change"]["ci95"][0] > 0)
-        res["transfer_detail"] = {k: {"accuracy": sum(r["correct"] for r in recs[k]) / len(recs[k]), **errors(recs[k])} for k in TRANSFER}
+        try:
+            t = transfer({k[4:]: v03_records(k, st) for k in TRANSFER}, {k[4:]: recs[k] for k in TRANSFER})
+            res["transfer"] = t
+            res["transfer_target"] = bool(t["accuracy_change"]["value"] >= 0.10 and t["accuracy_change"]["ci95"][0] > 0 and t["gain_change"]["ci95"][0] > 0)
+            res["transfer_detail"] = {k: {"accuracy": sum(r["correct"] for r in recs[k]) / len(recs[k]), **errors(recs[k])} for k in TRANSFER}
+        except (SystemExit, OSError, ValueError, KeyError) as e:
+            res["states"]["transfer_baseline"] = "invalid: %s" % e
     for name in GUARD:
         if name not in recs:
             continue
-        a, b = v03_records(name, st), recs[name]
-        if name == "flip":
-            a, b = [dict(r, image_id=r["image_id"].removesuffix(":flip")) for r in a], [dict(r, image_id=r["image_id"].removesuffix(":flip")) for r in b]
-        m = paired_metric(a, b, "macro_accuracy", sources=r32.EXT_SOURCES) if name == "ext" else paired_metric(a, b, "accuracy")
+        try:
+            a, b = v03_records(name, st), recs[name]
+            if name == "flip":
+                a, b = [dict(r, image_id=r["image_id"].removesuffix(":flip")) for r in a], [dict(r, image_id=r["image_id"].removesuffix(":flip")) for r in b]
+            m = paired_metric(a, b, "macro_accuracy", sources=r32.EXT_SOURCES) if name == "ext" else paired_metric(a, b, "accuracy")
+        except (SystemExit, OSError, ValueError, KeyError) as e:
+            res["states"][name] = "invalid baseline: %s" % e
+            continue
         res["guard"][name] = {"difference": m["difference"], "ci95": m["ci95"], **errors(b)}
         if m["difference"] * 100 <= -3 and m["ci95"][1] < 0:
             res["costs"].append(name)
@@ -315,11 +427,7 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
         routed = [r for r in recs["science"] if r["routed"]]
         res["science_routed"] = {"n": len(routed), "accuracy": sum(r["correct"] for r in routed) / len(routed) if routed else None}
     res["branch"] = branch(res)
-    if finalize:
-        res["finalized"] = {"exit_codes": finalize, "note": "missing items are not low scores"}
-    write_json(os.path.join(out, "report.json"), res)
-    print(json.dumps({k: res[k] for k in ("states", "transfer_target", "costs", "branch") if k in res}, indent=1))
-    return res
+    return write_report(out, res)
 
 
 def branch(res: Dict) -> str:
@@ -356,7 +464,13 @@ def main(argv=None) -> int:
     elif a.stage == "guard":
         print(json.dumps(stage_sets(OUT, GUARD, "guard"), indent=1))
     else:
-        report(finalize=a.finalize)
+        try:
+            report(finalize=a.finalize)
+        except Exception as e:                      # the report never ends without a readable file
+            os.makedirs(OUT, exist_ok=True)
+            open(os.path.join(OUT, "report.txt"), "w").write("REPORT FAILED (invalid, no verdict): %s%s\n" % (e, " (after: %s)" % a.finalize if a.finalize else ""))
+            print("REPORT FAILED: %s" % e, file=sys.stderr)
+            return 1
     return 0
 
 
