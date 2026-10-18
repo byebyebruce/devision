@@ -126,3 +126,17 @@
   - 检查了其他阶段：reads 里校正器的前向在 no_grad 下，编码也在 no_grad 下，没有同类问题。
   - pytest scripts/exp69：16 项通过；pyright 0 错误。
 - **是否再运行由评审决定**。runs/exp69 与一次性标记都保留不动；如果再运行，需要新的运行目录和标记，以及新的许可。
+
+## 重跑接线（评审 EXP69-FIX-ACCEPT-01 / RETRY-PREP-01；未运行，等 EXP69-RUN-02）
+
+- 新运行的全部产物放在独立路径：OUT = runs/exp69-r2，标记 runs/exp69-r2.started，日志 runs/exp69-r2.out，状态 runs/exp69-r2-status.txt。watch 的进度和日志、异常时的报告、finalize 报告都在 runs/exp69-r2 下。
+- 失败的第一次（runs/exp69、runs/exp69.started、runs/exp69.out、runs/exp69-status.txt）原样保留。START.retry_of 绑定 9 个文件的 sha256，包括原 START 31d2efcc…、失败报告 143a04eb… 和未登记的 union_tokens.npy，并写明失败原因。
+  - bound_retry 在新 START 之前核对，check_start 每个阶段和报告也都重核；任一文件改变就拒绝。
+  - 旧的 union_tokens.npy 不复用，新链重新提取训练特征。
+- 数据、配方（seed 0，1,000 步，末步）、门槛和停止规则都不变；默认上限 1,800 秒、留 120 秒报告；仍只启动一次（新标记）。
+- 夹具（pytest scripts/exp69 共 17 项，全过；pyright 0 错误）：
+  - stub 全链：各阶段的 watch 路径都在 runs/exp69-r2；新标记、状态和报告都写在新路径；
+  - train 失败时 finalize 写进新目录，状态记为 failed；
+  - 已有 runs/exp69-r2.started 时拒绝启动，什么都不调用；
+  - 三种情况下旧目录、标记、日志和状态的字节都不变；
+  - bound_retry 对改动过的旧证据拒绝，新 START 正确记录 retry_of。

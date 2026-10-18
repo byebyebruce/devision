@@ -31,7 +31,20 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 HERE = os.path.dirname(__file__)
-OUT, E62, E64 = "runs/exp69", "runs/exp62", "runs/exp64"
+OUT, E62, E64 = "runs/exp69-r2", "runs/exp62", "runs/exp64"
+# EXP69-RUN-01's failed attempt (features: numpy() on grad-tracking template words; incomplete, no result), kept byte for
+# byte and bound by this retry (critic EXP69-RETRY-PREP-01); its unregistered union_tokens.npy is never reused.
+RETRY_OF = {"runs/exp69/START.json": "31d2efcccf80720f6fea9b5bc77bba6838a70a8bc210774bf28ea2c9b9d6d8bd",
+            "runs/exp69/report.json": "143a04eb02d1ca3f0cd5956b4ef1a938f74aa08c5988a1ea4e0581fa6cc06726",
+            "runs/exp69/report.txt": "228fb52cef202357c98196a49686f190c24800a0276e20944a8da6c465eb65ec",
+            "runs/exp69/watch-features.txt": "2d6d4a34ea99d8c7b7e0d73fd5ca962976035c24cd2ebfd3e7fa832efb9b8f54",
+            "runs/exp69/progress-features.txt": "7841ffe9ce3540fa9445f25535ef4f814c6e6026ac0ca86dd0ad0980b3c03e60",
+            "runs/exp69/union_tokens.npy": "fae5c996cfcc4459783d00973b74e8e225c1dfcf07f431942230210a2d2976d3",
+            "runs/exp69.started": "74c689820b9e76fec217d14fffcbfd0dba04819efd4597fe8815b9d0acf1f1b2",
+            "runs/exp69.out": "b93207c0c6b32fe49e3ed4f12a3889a731f6b54a660cadc978c38a41b216ea78",
+            "runs/exp69-status.txt": "6ebe1addd182edced5f42eb262300f17a09354489f5892fe5cc83ecea7cf70bf"}
+RETRY_REASON = ("EXP69-RUN-01 (b2eae8c, 05:32:31-05:35:16): features exit 1, RuntimeError: Can't call numpy() on Tensor that requires "
+                "grad (Reading._words outside no_grad); fixed in ef722f7 (template_words); incomplete, no training, no reads")
 D69 = "data/exp69"
 M69_KEYS = ("train.jsonl", "dev_targets.jsonl")
 AUDIT = {"data/exp66/audit.details.jsonl": "a94f8f355040f8147236a4a72abea6ef3ffd90dbf1fa8a87af9fde56b3c5a85d",
@@ -157,6 +170,14 @@ def bound_sources() -> Dict[str, str]:
     return {k: h for k, (_, h) in frozen.items()}
 
 
+def bound_retry() -> Dict:
+    """The failed first attempt, unchanged (checked before this run's START and at every stage / the report)."""
+    bad = [f for f, hh in RETRY_OF.items() if not os.path.exists(f) or sha(f) != hh]
+    if bad:
+        raise SystemExit("EXP69-RUN-01's failure evidence changed: %s" % bad)
+    return {"files": dict(RETRY_OF), "reason": RETRY_REASON}
+
+
 def train_pictures() -> List[str]:
     return sorted({r["picture"] for r in jsonl(os.path.join(D69, "train.jsonl"))})
 
@@ -169,7 +190,7 @@ def stage_start(deadline: int, out: str = OUT, data_root: str = "data") -> Dict:
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
     tr = jsonl(os.path.join(D69, "train.jsonl"))
     s = {"git_head": git("rev-parse", "HEAD"), "dirty_files": [f for f in FILES if git("status", "--porcelain", "--", f)],
-         "files": {f: sha(f) for f in FILES}, "exp62": e64.bound_e62(), "exp64": bound_e64(), "exp60": e61.bound_e60(), "model": st58["model"],
+         "files": {f: sha(f) for f in FILES}, "retry_of": bound_retry(), "exp62": e64.bound_e62(), "exp64": bound_e64(), "exp60": e61.bound_e60(), "model": st58["model"],
          "bundle": st58["bundle"], "variants": e64.bound_variants(data_root), "data": bound_d69(), "sources": bound_sources(),
          "train_pictures": e64.pictures_digest([{"picture": p} for p in train_pictures()], data_root),
          "recipe": {"init": "c92 " + C92, "lr": LR, "weight_decay": WD, "batch": BATCH, "steps": STEPS, "warmup": WARMUP, "seed": SEED,
@@ -193,6 +214,8 @@ def check_start(out: str, data_root: str = "data", code: bool = True) -> Dict:
         raise SystemExit("data/exp61 differs from START")
     if bound_sources() != st["sources"]:
         raise SystemExit("the scoring sources differ from START")
+    if bound_retry() != st["retry_of"]:
+        raise SystemExit("EXP69-RUN-01's evidence differs from START")
     if data_root and e64.pictures_digest([{"picture": p} for p in train_pictures()], data_root) != st["train_pictures"]:
         raise SystemExit("training pictures differ from START")
     return st

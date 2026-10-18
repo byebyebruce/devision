@@ -287,22 +287,27 @@ STUB = """#!/bin/bash
 echo "uv $*" >> "${MARK_CALLS}"
 case "$*" in
   *"watch.py"*) shift 2; exec python3 "$@";;
-  *"exp69.py start"*) mkdir -p runs/exp69; exit 0;;
+  *"exp69.py start"*) mkdir -p runs/exp69-r2; exit 0;;
   *"exp69.py train"*) [ -n "${FAIL_TRAIN:-}" ] && exit 6; exit 0;;
   *"exp69.py features"*|*"exp69.py reads"*) exit 0;;
-  *"exp69.py report"*) echo report > runs/exp69/report.txt; exit 0;;
+  *"exp69.py report"*) echo "report $*" > runs/exp69-r2/report.txt; exit 0;;
 esac
 exit 9
 """
+OLD = {"runs/exp69/START.json": "old start", "runs/exp69/report.json": "old report", "runs/exp69/union_tokens.npy": "old tokens",
+       "runs/exp69.started": "old marker", "runs/exp69.out": "old log", "runs/exp69-status.txt": "old status"}
 
 
-def chain(tmp_path, extra):
+def chain(tmp_path, extra, pre=None):
     import stat as st_
     import subprocess
     root = tmp_path / "repo"
     for rel in ("scripts/exp69/run.sh", "scripts/exp53/watch.py", "scripts/exp35/guard.sh", "scripts/exp38/steps.sh"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(os.path.join(ROOT, rel), root / rel)
+    for rel, body in {**OLD, **(pre or {})}.items():                    # the failed first attempt (and any pre-existing file)
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(body)
     bdir = tmp_path / "bin"
     bdir.mkdir()
     for name, body in {"uv": STUB, "pgrep": '#!/bin/bash\n[ "$1" = "-fl" ] && exit 1\nexec /usr/bin/pgrep "$@"\n'}.items():
@@ -311,16 +316,47 @@ def chain(tmp_path, extra):
     env = {**os.environ, "PATH": "%s:%s" % (bdir, os.environ["PATH"]), "MARK_CALLS": str(tmp_path / "calls"), "EXP69_LIMIT": "60",
            "EXP69_RESERVE": "4", **extra}
     p = subprocess.run(["bash", str(root / "scripts/exp69/run.sh")], env=env, capture_output=True, text=True, timeout=120)
-    return root, p, (tmp_path / "calls").read_text().splitlines()
+    calls = (tmp_path / "calls").read_text().splitlines() if (tmp_path / "calls").exists() else []
+    return root, p, calls
 
 
-def test_run_order_failed_stage_and_limit(tmp_path):
+def old_unchanged(root) -> bool:
+    return all((root / rel).read_text() == body for rel, body in OLD.items())
+
+
+def test_retry_chain_writes_only_its_own_paths(tmp_path):
     root, p, calls = chain(tmp_path / "a", {})
     assert p.returncode == 0, p.stdout + p.stderr
     first = lambda s: next(i for i, c in enumerate(calls) if s in c)  # noqa: E731
     assert first("exp69.py start") < first("exp69.py features") < first("exp69.py train") < first("exp69.py reads") < first("exp69.py report")
-    root, p, calls = chain(tmp_path / "b", {"FAIL_TRAIN": "1"})
+    assert all("runs/exp69-r2/progress-" in c for c in calls if "watch.py" in c)
+    assert (root / "runs/exp69-r2.started").exists() and (root / "runs/exp69-r2-status.txt").exists() and (root / "runs/exp69-r2/report.txt").exists()
+    assert old_unchanged(root)
+    root, p, calls = chain(tmp_path / "b", {"FAIL_TRAIN": "1"})                     # failure -> finalize, in the new paths
     joined = "\n".join(calls)
     assert p.returncode == 6 and "exp69.py reads" not in joined and "report --finalize" in joined
+    assert "finalize" in (root / "runs/exp69-r2/report.txt").read_text() and "train failed" in (root / "runs/exp69-r2-status.txt").read_text()
+    assert old_unchanged(root)
+    root, p, calls = chain(tmp_path / "c", {}, pre={"runs/exp69-r2.started": "x"})       # the retry also starts only once
+    assert p.returncode == 1 and not calls and "already started once" in p.stdout and old_unchanged(root)
     s = open(os.path.join(ROOT, "scripts/exp69/run.sh")).read()
-    assert "${EXP69_LIMIT:-1800}" in s and "${EXP69_RESERVE:-120}" in s
+    assert "${EXP69_LIMIT:-1800}" in s and "${EXP69_RESERVE:-120}" in s and "runs/exp69.started" not in s.replace("runs/exp69-r2.started", "")
+    assert m.OUT == "runs/exp69-r2"
+
+
+@data
+def test_retry_binds_the_failed_attempt(started, tmp_path, monkeypatch):
+    st = json.load(open(os.path.join(started, "START.json")))
+    assert st["retry_of"]["files"] == m.RETRY_OF and "ef722f7" in st["retry_of"]["reason"]
+    copy = {}
+    for f in m.RETRY_OF:
+        dst = tmp_path / "old" / f
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(f, dst)
+        copy[str(dst)] = m.RETRY_OF[f]
+    monkeypatch.setattr(m, "RETRY_OF", copy)
+    m.bound_retry()
+    with open(next(iter(copy)), "a") as fh:
+        fh.write(" ")
+    with pytest.raises(SystemExit, match="failure evidence changed"):
+        m.bound_retry()
