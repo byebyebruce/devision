@@ -148,3 +148,30 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - 缺 collect → incomplete；records 被改 → invalid；start 时来源不对 → 拒绝；
   - run.sh 的阶段顺序、collect 失败时 finalize 且不再跑 analyse、上限 2,700 / 180。
 - 用真实文件做只读核对（没有创建任何东西）：LIVE-K 来源核对通过；val 共 3,892 题；三个输出目录都不存在。
+
+## 合成确认的 CPU 准备（V04-K-CONFIRM-PREP-01；worktree devision-k-confirm，分支 k-confirm-prep，从 07694e6 拉出）
+
+- **scripts/release/confirm.py**：
+  - **独立渲染器**：自己的画布、圆角容器加盖子、带描边的粒子、圆角条形和圆形磁铁、带箭头的距离线；字体用 Verdana / Georgia Bold / Trebuchet MS（real_layout 用的是 Arial），布局也不同。从不调用 real_layout 的 temp_render / force_render（夹具会把这两个函数换成一调用就失败）。画面上只有对象、标签、数值和单位：小磁铁就画得小，不写任何能提示答案的文字。
+  - **事实定义沿用已验收的规则**：温度用 real_layout 的数值范围和 M × V²；磁力用 force_items 的规则和四种措辞（金标随措辞翻转）；数值取自 rl_calib 的密集值池；题目和金标都由 temp_items / force_items 生成。
+  - **集合构成**：
+    - 温度 60 张：same mass / same speed / both differ / equal 各 15 张；前三类里 A 和 B 谁更热交替出现，相差不超过 1；每张图 1 道比较题加 4 道读数题；
+    - 磁力 60 张：distance / size / equal 各 20 张；每张图 1 道比较题加 2 道距离读数题；size 类照常计入主要分母，单独描述。
+  - **隔离**：每张图的 case 必须同时满足：落在 rl_calib 分区的 confirm 一侧；不被任何数据文件使用；不在 rl_calib 里（有 MANIFEST 时读取，否则按固定 seed 重新确定）；不是转写场景；在集合内唯一。配额不足时直接报错，不放宽隔离。
+  - **固定错图**：每个域内部做一次错位排列（不会配到自己），作为配错图对照。
+  - **正式入口 generate**：
+    - 在画任何东西之前，先用 freeze_problems 核对：IDENTITY.json 完整（files / reading / code），是这个 checkpoint 的；checkpoint 的整棵目录树仍与它一致；reading bundle 和 LIVE-K lineage 与冻结时相同（check_eval.reading_identity，即 rebind 的发布来源）；带 K 规则。
+    - 输出目录必须是新的。
+    - seed 取 int(sha256(IDENTITY.json)[:16], 16)：冻结之前这个集合和它的答案根本不存在，无法预先算出。
+    - 输出 confirm.jsonl、confirm_mism.jsonl 和 MANIFEST（类别、温度题答案的分布、隔离结果、渲染器代码哈希和字体、身份哈希、请求契约）。
+  - **preview**：必须给出 seed，每个域最多 4 张图，id 以 preview: 开头，只用来检查渲染器，不是确认集。
+  - **outcome**：预写的主要判定。每张图一道比较题，120 张图等权，按图重抽 2,000 次（seed 0）：候选减 v0.3 的准确率 ≥ +0.10 且下界 > 0，并且候选自身「真图减错图」的下界 > 0。这是候选自己的看图收益，不是 68:114 那种增量。三组记录覆盖的图片不一致时，不给结论。
+- **请求契约**（每次模型运行都要单独许可）：候选的真图 / 固定错图 / 选项倒序各 120 个请求；v0.3 的真图 / 同一组错图各 120 个请求，共 600 个请求。按 LIVE-K 实测的读取吞吐（每秒 2.2–3.0 个）和普通请求吞吐，约 4–6 分钟，另加两次加载约 1–2 分钟。
+- **夹具**（tests/release/test_confirm.py，7 项全过，约 23 秒；只加载了一个 tiny 冻结候选的文件，没有加载任何模型权重）：
+  - preview（7 张）：只用独立渲染器（real_layout 的渲染器一被调用就失败）；截获的绘制文字包含题目里的全部数值和单位；题目数量正确；超过 4 张会被拒绝；
+  - 金标：温度按 M × V²，与指定的更热一侧一致，equal 为 TEMP_SAME；磁力的 8 种措辞里，金标随措辞翻转；
+  - 选择：类别数量正确，A / B 差不超过 1，case 唯一且都在 confirm 一侧，注入的已用 case 不会被选中；
+  - 错图是每个域内部的错位排列；
+  - 正式入口：tiny LIVE-K 式候选的冻结身份可以通过 freeze_problems（没有生成集合）；以下情况都在任何选择或绘制之前被拒绝，输出目录也不会被创建：没有身份文件、身份不完整、身份属于另一个 checkpoint、来源不是发布来源、冻结后改动了组件；输出目录已经存在也会拒绝；
+  - outcome：通过、准确率差不够、没有看图收益、记录集不一致这四种情况。
+- 没有生成正式确认集，也没有在正式 seed 上遍历；也无法遍历，因为 seed 只有冻结之后才存在。preview 只在 /tmp 和 pytest 的临时目录里画过 7 张以内的图。
