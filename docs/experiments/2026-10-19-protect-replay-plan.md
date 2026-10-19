@@ -31,7 +31,7 @@
 | pixmo | 6,421 / 4,074 | 5,579 | 600 | 600 | pixmo_points |
 | existence | 7,105 / 6,834 | 2,895 | 900 | 900 | objects365 860、coco-exist 40 |
 | general | 6,055 / 5,698 | 3,943 | 900 | 900 | aokvqa、gqa-v2、vqav2-yesno 等 |
-| ext | 13,716 / 11,105 | 7,286 | 1,200 | 1,200 | 13 个来源均衡 |
+| ext | 13,716 / 11,105 | 7,286 | 1,200 | 1,200 | 实际 10 个来源，各 103–151 题（按块哈希抽，没有逐来源等额约束；保护评测仍用 13 来源宏平均） |
 | vsr | 519 / 493 | 481 | 200 | 200 | vsr |
 | **合计** | | | 7,600 | **7,380** | |
 
@@ -116,3 +116,16 @@
    - 阶段：start → fid → train → freeze（重新绑定 bundle）→ B → C（新端点和起点）→ A → report。
    - A 复用 EXP73 的 run_set 和代价规则；B 复用 EXP72 的读出；C 复用 DECISION-FACTS / EXP57 的 P 门槛计算。
 4. CPU 夹具：假读取器和假决策器走分支 0–3；混合输入的批计划等于 MANIFEST 记录的计划；run.sh 的顺序、上限和到限行为。
+
+## 第 1 轮修正（PROTECT-R1-01、NOTE-01）
+
+- **镜像对被拆批（R1-01）**：属实。r14b 里原图的 group 是 `coco:<id>`，翻转图是 `coco:<id>:flip`，plan_batches 按 (group, qid) 装批，所以第一次生成的 data/protect 在 seed 1 的真实计划里，383 个镜像单元全部被拆开。
+  - 修正：重新生成到 **data/protect2/**（data/protect 原样保留，r14b 不动）。每个镜像单元的各行共用训练 group `protect-mirror:<基础图>`，原 group 记在 source_group 里。题目、金标和图片都不变：去掉 group / source_group 后，两版 replay 与 train_mix 逐行相同，顺序也相同。
+  - 单元数要更正：780 道镜像题是 **383 个图片单元**，其中 376 个是「一题原图 + 一题翻转」，7 个是「两题原图 + 两题翻转」，合计 390 个「原图—翻转」题对。之前写的「390 对」指的是题对，不是图片单元。
+  - build.py 现在直接按训练的方式抽计划（random.seed(1) → rlcd.plan_mixed，用 train_mix 文件顺序里的题），并检查：每题恰好一次、一批里不混输入、单元不超过一批（超过就拒绝，不让 plan_batches 悄悄切开）、每个镜像单元都在同一批（按基础图检查，不看 group）。
+  - 结果记在 MANIFEST.plan：文字 475 批 + 图片 923 批 = **1,398 次更新**（不变）；最大单元 6 题；383 / 383 个镜像单元都在同一批；plan_sha256 2f7314d4…。
+  - 夹具 scripts/protect/test_build.py：第一版数据被检查拒绝（拆开 383 个）；新版全部同批，并与 MANIFEST 一致；超过一批的单元被拒绝。tests/train/test_mixed_input.py 新增一项：训练实际抽到的就是预先算好的计划。
+  - 身份：replay.jsonl d86c86f8…、train_mix.jsonl 7ae73f11…、MANIFEST.json 918fec57…。重跑脚本得到逐字节相同的文件。
+- **NOTE-01**：
+  - ext 的措辞改成实际的 10 个来源（见上表）；
+  - MANIFEST 的每个曝光文件都附上 sha256，runner 的 START 要绑定这份清单，并在加载前逐个核对。

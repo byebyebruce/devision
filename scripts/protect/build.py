@@ -10,11 +10,15 @@ mixed training set of the one-arm replay recovery. CPU only, loads no model, cha
     name, plus every non-training file under data/exp*, data/facts, data/real_layout, data/v04_*, data/lv_bench);
     sampled per block with fixed quotas (ALLOC, set before looking at any item) by sha256 of the unit key, whole units:
     a mirrored pair (original + flipped picture of one COCO image) or a group of questions stays together; never chosen
-    from any protection panel's wrong answers;
-  - MANIFEST.json: input hashes, the exposure files, per block available / chosen counts, the exclusion counts, and the
-    batch plan (micro batch 8; text-only and picture batches never mixed; units whole) with its update count.
+    from any protection panel's wrong answers. In the copy written here a mirrored pair's rows share one training group
+    "protect-mirror:<base image>" (the pool's own groups differ: coco:<id> vs coco:<id>:flip; kept as source_group), so
+    rlcd.plan_mixed packs each pair into one batch (critic PROTECT-R1-01); data/r14b is not changed;
+  - MANIFEST.json: input hashes, the exposure files with their sha256 (the isolation evidence the runner's START binds),
+    per block available / chosen counts, the exclusion counts, and the batch plan exactly as training draws it
+    (random.seed(1), rlcd.plan_mixed on the items of train_mix.jsonl in file order, micro batch 8): update count, the
+    largest unit, no batch mixing inputs, every question once, every mirrored pair in one batch.
 
-    uv run python scripts/protect/build.py [--out data/protect]
+    uv run python scripts/protect/build.py [--out data/protect2]
 """
 import argparse
 import glob
@@ -102,7 +106,7 @@ def build(out: str) -> Dict:
             if isinstance(r, dict) and isinstance(r.get("image"), str) and r.get("image") and not r["image"].startswith("text-only:"):
                 exposed |= family(str(r.get("image_id", "")), r["image"], twins)
                 n += 1
-        per_file[p] = n
+        per_file[p] = {"pictures": n, "sha256": sha(p)}
     pool = jsonl(POOL)
     units: Dict[str, Dict[Tuple, List[Dict]]] = defaultdict(lambda: defaultdict(list))
     removed: Counter = Counter()
@@ -132,46 +136,80 @@ def build(out: str) -> Dict:
                          "sources": dict(Counter(x["source"] for x in got).most_common())}
         chosen.extend(got)
     new = [dict(r, input="text") for r in jsonl(NEW)]
-    chosen = [dict(r, input="picture") for r in chosen]
+    chosen = [dict(r, input="picture", **mirror_group(r)) for r in chosen]
     n_new = sum(len(r["questions"]) for r in new)
-    plan = batch_plan(new, chosen)
+    mix = new + chosen
+    random.Random(0).shuffle(mix)
+    plan = batch_plan(mix)
     os.makedirs(out, exist_ok=False)
     with open(os.path.join(out, "replay.jsonl"), "w") as fh:
         fh.write("".join(json.dumps(r) + "\n" for r in chosen))
-    mix = new + chosen
-    random.Random(0).shuffle(mix)
     with open(os.path.join(out, "train_mix.jsonl"), "w") as fh:
         fh.write("".join(json.dumps(r) + "\n" for r in mix))
-    man = {"inputs": {p: sha(p) for p in (NEW, POOL, IDENTITY)}, "exposure_files": {p: {"pictures": per_file[p]} for p in files},
+    man = {"inputs": {p: sha(p) for p in (NEW, POOL, IDENTITY)}, "exposure_files": {p: per_file[p] for p in files},
            "exposed_family_keys": len(exposed), "pool_questions": len(pool), "removed_by_exposure": dict(removed),
            "allocation": ALLOC, "blocks": blocks,
            "new_task": {"rows": len(new), "questions": n_new, "input": "text (image=None) for every row",
                         "rows_naming_a_picture": sum(not r["image"].startswith("text-only:") for r in new)},
            "replay": {"rows": len(chosen), "questions": sum(len(r["questions"]) for r in chosen),
-                      "mirror_pairs": blocks["mirror"]["chosen"] // 2},
+                      "mirror_pairs": plan["mirrored_pairs"]},
            "plan": plan, "sha256": {n: sha(os.path.join(out, n)) for n in ("replay.jsonl", "train_mix.jsonl")}}
     with open(os.path.join(out, "MANIFEST.json"), "w") as fh:
         json.dump(man, fh, indent=1)
     return man
 
 
-def batch_plan(new: List[Dict], replay: List[Dict]) -> Dict:
-    """The update count of one epoch: rlcd.plan_batches on each input mode separately (units whole: same group and
-    question id), text-only batches never mixed with picture batches."""
-    sys.path.insert(0, "src")
-    from devision.train.rlcd import plan_batches
+def mirror_group(r: Dict) -> Dict:
+    """A mirrored pair's shared training group (the row's own group kept as source_group); other rows unchanged."""
+    if r["block"] != "mirror":
+        return {}
+    base = r["image_id"][:-len(":flip")] if r["image_id"].endswith(":flip") else r["image_id"]
+    return {"group": "protect-mirror:" + base, "source_group": r["group"]}
 
-    def items(rows):
-        return [{"group": r["group"], "qid": q} if r.get("group") else {"qid": q} for r in rows for q in r["questions"]]
-    rng = random.Random(1)
-    t, p = plan_batches(items(new), MICRO, rng), plan_batches(items(replay), MICRO, rng)
-    return {"micro_batch": MICRO, "text_batches": len(t), "picture_batches": len(p), "updates": len(t) + len(p),
-            "text_partial_batches": sum(len(b) < MICRO for b in t), "picture_partial_batches": sum(len(b) < MICRO for b in p)}
+
+def batch_plan(mix: List[Dict], seed: int = 1) -> Dict:
+    """The first epoch's plan as training draws it: random.seed(seed) then rlcd.plan_mixed on the items of `mix` in its
+    order (one per question: group, qid, input -- what rlcd._items gives plan_batches), checked: every question once, no
+    batch mixing inputs, no unit larger than a batch (refused: plan_batches would split it), every mirrored pair in one
+    batch."""
+    sys.path.insert(0, "src")
+    from devision.train import rlcd
+
+    items, mirror = [], defaultdict(list)
+    for r in mix:
+        for q in r["questions"]:
+            it = {"qid": q, "input": r["input"]}
+            if r.get("group"):
+                it["group"] = r["group"]
+            if r.get("block") == "mirror":      # by the shared base picture, whatever the rows' groups say
+                mirror[r["image_id"][:-len(":flip")] if r["image_id"].endswith(":flip") else r["image_id"]].append(len(items))
+            items.append(it)
+    sizes = Counter((it.get("group", "#%d" % i), it["qid"]) for i, it in enumerate(items))
+    if max(sizes.values()) > MICRO:
+        raise SystemExit("units larger than a batch: %s" % [k for k, v in sizes.items() if v > MICRO][:5])
+    random.seed(seed)
+    plan = rlcd.plan_mixed(items, MICRO)
+    flat = sorted(i for b in plan for i in b)
+    where = {i: n for n, b in enumerate(plan) for i in b}
+    mixed = sum(len({items[i]["input"] for i in b}) > 1 for b in plan)
+    split = [g for g, idx in mirror.items() if len({where[i] for i in idx}) > 1]
+    if flat != list(range(len(items))) or mixed or split or any(len(v) < 2 for v in mirror.values()):
+        raise SystemExit("plan check failed: questions once %s, mixed batches %d, split mirrored pairs %d"
+                         % (flat == list(range(len(items))), mixed, len(split)))
+    text = [b for b in plan if items[b[0]]["input"] == "text"]
+    pic = [b for b in plan if items[b[0]]["input"] == "picture"]
+    return {"micro_batch": MICRO, "seed": seed, "drawn_as": "random.seed(seed); rlcd.plan_mixed(items of train_mix.jsonl in file order)",
+            "text_batches": len(text), "picture_batches": len(pic), "updates": len(plan),
+            "text_partial_batches": sum(len(b) < MICRO for b in text), "picture_partial_batches": sum(len(b) < MICRO for b in pic),
+            "largest_unit": max(sizes.values()), "questions": len(items), "mixed_batches": 0,
+            "mirrored_pairs": len(mirror), "mirrored_pairs_in_one_batch": len(mirror) - len(split),
+            "mirrored_unit_sizes": {str(k): v for k, v in sorted(Counter(len(v) for v in mirror.values()).items())},
+            "plan_sha256": hashlib.sha256(json.dumps(plan).encode()).hexdigest()}
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", default="data/protect")
+    ap.add_argument("--out", default="data/protect2")
     a = ap.parse_args(argv)
     man = build(a.out)
     print(json.dumps({k: man[k] for k in ("removed_by_exposure", "blocks", "new_task", "replay", "plan")}, indent=1))

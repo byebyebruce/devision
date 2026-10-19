@@ -137,3 +137,17 @@ def test_refusals(tmp_path, bad):
         match = "exclusive"
     with pytest.raises(ValueError, match=match):
         train(d, rs, data_root=tmp_path, out_dir=tmp_path / "o", val_samples=rs[:2], config=TrainConfig(**{**CONFIG, **over}))
+
+
+def test_training_draws_the_precomputed_mixed_plan(tmp_path, monkeypatch):
+    """scripts/protect/build.py records random.seed(seed) -> plan_mixed(items in file order); the run draws the same."""
+    d = exp72_like(seed=1)
+    rs = rows(tmp_path)
+    random.seed(3)
+    want = rlcd.plan_mixed(rlcd._items(d, rs), 4)
+    got, real = [], rlcd.plan_mixed
+    monkeypatch.setattr(rlcd, "plan_mixed", lambda *a, **k: (got.append(real(*a, **k)), got[-1])[1])
+    train(d, rs, data_root=tmp_path, out_dir=tmp_path / "out", val_samples=rs[:2],
+          config=TrainConfig(**{**CONFIG, "epochs": 1, "objective": "ce", "micro_batch": 4, "seed": 3, "save_every": 0,
+                                "mixed_input": True, "eval_every": 0}))
+    assert got[0] == want
