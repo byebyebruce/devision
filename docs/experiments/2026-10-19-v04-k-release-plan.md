@@ -119,3 +119,32 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
     - 实际运行的模块内容不同、缺少必需模块，都不能登记；登记之后实现被改，analyse 拒绝；
     - 内容相同、路径不同的模块可以通过；
     - 固定源码缺失时拒绝。
+
+## 校准 runner（scripts/calib/calib.py、run.sh；CPU 实现，不是运行许可）
+
+- 阶段依次为 start → calibrate → rl_calib → temp_bundle → collect → analyse → report。
+  - **start**（不加载模型）：
+    - 核对 LIVE-K 来源（rebind kind livek）；val 必须正好 3,892 题；
+    - runs/v04-k-calib、runs/v04-k、data/rl_calib 都必须还不存在；
+    - 写 START（代码哈希、val 哈希、来源及其固定哈希、截止时间）；
+    - 之后只动文件：source --kind livek、clone 到 runs/v04-k/cand（runs/v04-k 下有 run.json）。
+  - **calibrate**（MPS）：
+    - 在同一进程里调用 devision-calibrate 的 --in-place；每次前向都写一行进度，给 watch 的停滞规则用；
+    - 把 calibrate_report.json 移出候选目录；把 model_name 定为 devision-v0.4；
+    - 核对候选的权重仍是来源的，config 只有 temperature / temperature_by_options / model_name 有差异。
+  - **rl_calib**（CPU）：用已验收的构建器写入 data/rl_calib。300 + 300 族、1,200 张图、重叠 0、分区正确，任何一项不符就拒绝。
+  - **temp_bundle**（CPU）：rebind.temp_bundle，写在候选目录之外。
+  - **collect**（MPS）：先用 route_calib.identity 核对并登记身份，再加载；原始温度；每个请求写一行进度；登记 records 和 runtime_code。
+  - **analyse**（CPU）：analyse_registered，结果写入 route_calibration.json。
+  - **report**（不加载模型）：
+    - 逐个阶段核对登记的文件（缺失 → incomplete，被改 → invalid，都先于任何数字）；
+    - 重新计算 analyse，结果必须与已写文件完全相同；
+    - 给出普通校准前后的温度、路由分支，以及每个分支允许的下一步。
+  - 本 runner 不做 bind、freeze、确认或发布。
+- 总上限 2,700 秒（45 分钟），最后 180 秒留给报告；calibrate 和 collect 在 watch 下运行；一次启动，不重试。
+- 预算按前面的表：约 23–35 分钟。普通校准的吞吐以首窗为准，预计到不了就判 incomplete，不删题。
+- 夹具 tests/release/test_calib_runner.py（5 项全过）：
+  - 在临时工作区里用假的 LIVE-K 来源、tiny val（8 题）和真实构建器生成的 tiny rl_calib（6 + 6 族）走完全部阶段：真实的普通校准、进度写到最后一题、报告文件移出候选、发布名已设、候选里没有 reading/；collect 的进度达到全部 24 个请求；报告的各阶段都是 completed，分支来自重算的分析；
+  - 缺 collect → incomplete；records 被改 → invalid；start 时来源不对 → 拒绝；
+  - run.sh 的阶段顺序、collect 失败时 finalize 且不再跑 analyse、上限 2,700 / 180。
+- 用真实文件做只读核对（没有创建任何东西）：LIVE-K 来源核对通过；val 共 3,892 题；三个输出目录都不存在。
