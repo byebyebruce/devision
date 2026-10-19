@@ -130,7 +130,7 @@ def test_v3_allowed_and_outcome():
     assert any("needed" in w for w in vcheck.v3_allowed(ok, 200, 600, 300, 120))     # 400 s left < 420
     for k, v in (("end", {"why": "limit"}), ("v1", {"ok": False}), ("cleanup_confirmed", False), ("gpu_error", {"x": 1})):
         assert vcheck.v3_allowed(dict(ok, **{k: v}), 100, 600, 300, 120)
-    good = {"start": "s", "deadline": "d", "training": ok, "v3": {"exit": 0, "result": {"ok": True}, "cleanup_confirmed": True}}
+    good = {"start_epoch": time.time() - 100, "deadline_epoch": time.time() + 2600, "training": ok, "v3": {"exit": 0, "result": {"ok": True}, "cleanup_confirmed": True}}
     assert vcheck.outcome(good, []) == "pass"
     assert vcheck.outcome(good, [{"file": "x"}]).startswith("execution-unverified")      # the report's last look counts
     assert vcheck.outcome(dict(good, training=dict(ok, updates=225)), []).startswith("failed: planned stop recorded with fewer")
@@ -356,14 +356,17 @@ def test_non_finite_option_is_rejected(ref_p, new_p):
     assert out["problems"]
 
 
+T0 = time.time() - 100                                     # a real-format window: started 100 s ago, 2,700 s long
+
+
 def good_record():
-    return {"start": "s", "deadline": "d",
+    return {"start_epoch": T0, "deadline_epoch": T0 + 2700, "start": vcheck.time_str(T0), "deadline": vcheck.time_str(T0 + 2700),
             "training": {"end": {"why": "planned_stop", "initiated": True, "confirmed": True}, "v1": {"ok": True},
                          "cleanup_confirmed": True, "updates": 250, "child_returncode": -15},
             "v3": {"exit": 0, "result": {"ok": True}, "cleanup_confirmed": True}}
 
 
-@pytest.mark.parametrize("drop", ["training.v1", "training.cleanup_confirmed", "v3.cleanup_confirmed", "start", "deadline",
+@pytest.mark.parametrize("drop", ["training.v1", "training.cleanup_confirmed", "v3.cleanup_confirmed", "start_epoch", "deadline_epoch",
                                   "training.end.initiated"])
 def test_missing_evidence_never_passes(drop):
     """R1-02: each piece removed from a passing record."""
@@ -392,7 +395,7 @@ def test_report_requires_start_and_a_readable_record(report_dir):
     assert m.main() == 1                                                             # no started marker: not pass
     rep = json.load(open(tmp / m.OUT))
     assert rep["outcome"].startswith("incomplete") and "window cannot be checked" in rep["outcome"]
-    open(tmp / m.STARTED, "w").write("start %d\ndeadline 0\n" % (time.time() - 5))
+    open(tmp / m.STARTED, "w").write("start %r\ndeadline %r\nstarted x\n" % (T0, T0 + 2700))
     assert m.main() == 0 and json.load(open(tmp / m.OUT))["outcome"] == "pass"
     open(tmp / m.RECORD, "w").write('{"training": {"end"')                           # truncated record
     assert m.main() == 1
@@ -446,3 +449,42 @@ def test_own_failure_after_250_is_not_a_planned_stop(fast, monkeypatch):
     assert rc == 1 and "end" not in tr and tr["ended_before_stop"] == {"wanted": "planned_stop", "returncode": 3}
     assert tr["child_returncode"] == 3 and tr["updates"] == 250 and "v3" not in rec
     assert rec["outcome_at_end"] == "failed: the training process ended by itself (exit 3) before the planned stop"
+
+
+@pytest.mark.parametrize("start,deadline,rec_window,want", [
+    (time.time() + 600, time.time() + 3300, None, "starts in the future"),
+    (float("nan"), T0 + 2700, None, "not two finite times"),
+    (float("inf"), T0 + 2700, None, "not two finite times"),
+    (float("-inf"), T0 + 2700, None, "not two finite times"),
+    (T0, T0 - 1, None, "ends before it starts"),
+    (T0, T0 + 2700, (T0 - 50, T0 + 2650), "different windows"),
+    (T0, T0 + 2700, (float("nan"), T0 + 2700), "different windows")])
+def test_report_rejects_bad_windows(report_dir, start, deadline, rec_window, want):
+    """R2-01: started / record windows parsed, finite, ordered and the same; none of these passes, each is reported
+    with a null duration and no exception."""
+    m, tmp = report_dir
+    rec = good_record()
+    if rec_window is None:                                                           # the record names the same (bad) window
+        rec["start_epoch"], rec["deadline_epoch"] = start, deadline
+    else:
+        rec["start_epoch"], rec["deadline_epoch"] = rec_window
+    json.dump(rec, open(tmp / m.RECORD, "w"))
+    open(tmp / m.STARTED, "w").write("start %r\ndeadline %r\n" % (start, deadline))
+    assert m.main() == 1
+    rep = json.load(open(tmp / m.OUT))
+    assert rep["outcome"].startswith("incomplete") and want in rep["outcome"], rep["outcome"]
+    assert rep["duration_s"] is None and rep["system_events_in_window"] == []
+
+
+def test_bad_window_keeps_a_recorded_failure(report_dir):
+    m, tmp = report_dir
+    json.dump(dict(good_record(), training=dict(good_record()["training"], gpu_error={"line": "x"})), open(tmp / m.RECORD, "w"))
+    open(tmp / m.STARTED, "w").write("start nan\ndeadline 1\n")
+    assert m.main() == 1
+    rep = json.load(open(tmp / m.OUT))
+    assert rep["outcome"].startswith("failed: GPU execution error; also incomplete") and rep["duration_s"] is None
+
+
+def test_outcome_window_rules():
+    for start, deadline in ((time.time() + 60, time.time() + 2760), (float("nan"), 1.0), (5.0, 4.0), ("s", "d")):
+        assert vcheck.outcome(dict(good_record(), start_epoch=start, deadline_epoch=deadline), []) == "incomplete: no valid V window recorded"

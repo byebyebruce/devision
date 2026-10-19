@@ -10,6 +10,7 @@ import math
 import os
 import re
 import subprocess
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 TOL = 1e-6                     # per question and option, absolute probability difference; predictions must be equal
@@ -244,8 +245,8 @@ def outcome(rec: Optional[Dict[str, Any]], events: List[Dict[str, Any]]) -> str:
         return "failed: the training process ended by itself (exit %s) before the planned stop" % tr.get("child_returncode")
     if (tr.get("updates") or 0) < 250:
         return "failed: planned stop recorded with fewer than 250 updates"
-    if not rec.get("start") or not rec.get("deadline"):
-        return "incomplete: no V window recorded"
+    if window_problems(rec.get("start_epoch"), rec.get("deadline_epoch"), time.time()):
+        return "incomplete: no valid V window recorded"
     if (tr.get("v1") or {}).get("ok") is not True:
         return "incomplete: no V1 result recorded"
     if tr.get("cleanup_confirmed") is not True:
@@ -262,6 +263,26 @@ def outcome(rec: Optional[Dict[str, Any]], events: List[Dict[str, Any]]) -> str:
     if v3.get("cleanup_confirmed") is not True:
         return "incomplete: the V3 cleanup is not recorded as confirmed"
     return "pass"
+
+
+def window_problems(start: Any, deadline: Any, now: float, other: Optional[Tuple[Any, Any]] = None) -> List[str]:
+    """R2-01: a V window is two finite epoch numbers, start <= now (no future start) and deadline > start; `other`,
+    when given, is the second record of the same window (the started marker against the V record) and must agree."""
+    def num(x):
+        return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+    if not num(start) or not num(deadline):
+        return ["the window is not two finite times (start %r, deadline %r)" % (start, deadline)]
+    out = []
+    if start > now:
+        out.append("the window starts in the future (%r > now %r)" % (start, now))
+    if not deadline > start:
+        out.append("the window ends before it starts (deadline %r <= start %r)" % (deadline, start))
+    if other is not None:
+        o_start, o_deadline = other
+        if not (num(o_start) and num(o_deadline)) or abs(o_start - start) > 1e-6 or abs(o_deadline - deadline) > 1e-6:
+            out.append("the started marker and the V record name different windows (%r, %r) vs (%r, %r)"
+                       % (start, deadline, o_start, o_deadline))
+    return out
 
 
 def time_str(t: float) -> str:

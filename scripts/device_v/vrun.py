@@ -167,7 +167,7 @@ def main(argv=None) -> int:
     train_cmd, v3_cmd = rest[:i], rest[i + 1:]
     deadline = a.start + a.total
     train_end = deadline - a.report_reserve - a.v3_reserve - MARGIN
-    rec = {"start": vcheck.time_str(a.start), "deadline": vcheck.time_str(deadline), "training_end": vcheck.time_str(train_end),
+    rec = {"start_epoch": a.start, "deadline_epoch": deadline, "start": vcheck.time_str(a.start), "deadline": vcheck.time_str(deadline), "training_end": vcheck.time_str(train_end),
            "reserves": {"v3": a.v3_reserve, "report": a.report_reserve, "guard_margin": MARGIN}, "planned_updates": PLANNED}
 
     def save():

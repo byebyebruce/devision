@@ -20,33 +20,41 @@ DIAG = "/Library/Logs/DiagnosticReports"
 
 
 def load_parts():
-    """(t0 or None, record or None, problems): an unreadable / truncated started marker or record is a problem, not an
-    empty window or a missing record that could pass (R1-02)."""
-    probs, t0, rec = [], None, None
+    """(start, deadline, record, problems) -- the started marker's window as written, the V record or None. An
+    unreadable / truncated marker or record is a problem, not an empty window or a missing record that could pass."""
+    probs, start, deadline, rec = [], None, None, None
     try:
-        t0 = float(next(x for x in open(STARTED).read().splitlines() if x.startswith("start ")).split()[1])
-    except (OSError, StopIteration, ValueError, IndexError) as e:
-        probs.append("no valid start in %s (%s): the window cannot be checked" % (STARTED, type(e).__name__))
+        lines = dict(x.split(None, 1) for x in open(STARTED).read().splitlines() if x.strip() and len(x.split(None, 1)) == 2)
+        start, deadline = float(lines["start"]), float(lines["deadline"])
+    except (OSError, KeyError, ValueError) as e:
+        probs.append("no valid start / deadline in %s (%s): the window cannot be checked" % (STARTED, type(e).__name__))
     try:
         rec = json.load(open(RECORD))
     except (OSError, ValueError) as e:
         probs.append("the V record %s is missing or unreadable (%s)" % (RECORD, type(e).__name__))
-    return t0, rec, probs
+    return start, deadline, rec, probs
 
 
 def main() -> int:
-    t0, rec, probs = load_parts()
+    start, deadline, rec, probs = load_parts()
+    now = time.time()
+    window_ok = False
+    if start is not None:
+        other = (rec.get("start_epoch"), rec.get("deadline_epoch")) if isinstance(rec, dict) else None
+        bad = vcheck.window_problems(start, deadline, now, other)
+        probs += bad
+        window_ok = not bad
     events: list = []
-    if t0 is not None:
+    if window_ok and start is not None:                    # events only over a valid window: never an empty query
         try:
-            events = vcheck.events_in_window(DIAG, t0, time.time())
+            events = vcheck.events_in_window(DIAG, start, now)
         except Exception as e:
             probs.append("the system event check failed (%s: %s)" % (type(e).__name__, e))
-    out = vcheck.outcome(rec, events) if rec else None
+    out = vcheck.outcome(rec, events) if isinstance(rec, dict) else None
     if probs:                                              # missing evidence never passes; a recorded failure stays named
         out = ("incomplete: " if out in (None, "pass") else out + "; also incomplete: ") + "; ".join(probs)
     rep = {"outcome": out, "record": rec, "problems": probs, "system_events_in_window": events,
-           "duration_s": round(time.time() - t0) if t0 is not None else None,
+           "duration_s": round(now - start) if window_ok and start is not None else None,
            "note": "diagnostic only: no scientific outcome; a pass is not a proof that long runs are safe"}
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     json.dump(rep, open(OUT + ".tmp", "w"), indent=1)
