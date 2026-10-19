@@ -35,6 +35,21 @@ D1 已有直接的依图读数（异值两端全对 0.234，真图减错图 +0.2
   - 按 family 重采样 2,000 次（seed 0）的配对区间：N − R、各臂 − D1、各臂 − EXP26、各臂的真图减错图；
   - 同答、串到另一端、对调、逐端和同值分层都保留，只作诊断，不替代主判据。
 
+## 输入同源与逐臂有效性（PANEL-NUMBER-R1-01 / R1-02）
+
+- **训练前预检**（`compare.py preflight`，不加载模型；runner 的第一步，失败时以 exit 12 停止，什么都不训练，原因写进 `runs/panel-number-preflight.json`）：
+  - 已批准的 D1 model / config / tokenizer（f2efe49d… / 7fb24ad3… / f3458e25…）；
+  - train / val（731999b8… / 6a36f5bc…）；
+  - 已验收的 panel-bind START（3c4280cd…）及其中登记的 val、图片摘要和 D1；
+  - 实际 1,000 张验证图的字节摘要（31e1840f…）；
+  - 固定的 D1 / EXP26 明细和 report。
+- **比较前**：新 START 的 val sha 和图片摘要必须等于冻结值；每个臂的 numbers 中每个 (family, 真 / 错图) 的 (id, gold, 图片) 必须与固定 D1 明细完全相同，否则该臂判 invalid、不参与任何比较。同一个 family 换了 caption 或图片，不能再和旧成绩配对。
+- **逐臂训练报告**（`compare.py start`）：
+  - align_report 缺失记为 missing；1,250 个 loss 不全记为 incomplete；截断或无法读取、最后一次验证不在 1,250 步、或数值不有限，都记为 invalid；
+  - 状态写进 `runs/panel-number-arms.json`；只有有效的臂进入 START；
+  - runner 的探针名单直接取自 START 的端点，与 START 一致；
+  - 坏臂不会挡住另一臂；最终比较保留各臂状态，有效臂照常读出，但不给双臂归因；没有有效臂时，比较报告记为 incomplete。
+
 ## 投入判断（运行前写下，不看结果改）
 
 - **某臂值得进入"新的决策诊断方案"**：异值两端全对 ≥ 0.60，且（该臂 − D1）的下界 > 0，且该臂真图减错图的下界 > 0。
@@ -65,7 +80,7 @@ D1 已有直接的依图读数（异值两端全对 0.234，真图减错图 +0.2
 
 ## 验证（CPU，已完成）
 
-- `scripts/panel_number/test_panel_number.py` 10 passed：
+- `scripts/panel_number/test_panel_number.py` 25 passed（R1 之后；新增 15 项：真实文件预检通过；caption / 图片字节 / D1 组件 / panel-bind START 四种变化在训练前被拒；同 family 改 gold、另一份 START 都不参与比较；坏臂保留状态、另一臂照常读出、不归因；训练报告 6 种状态；START 只纳入有效臂；runner 在预检失败时不训练，探针只跑 START 里的臂）。最初的 10 项：
   - 21,000 条面板 caption 都恰好给出 A、B 两个数字（与探针解析一致）；
   - _number_rows 只把这两段设为目标、全部遮掉、其余 token 可见；
   - 旧的 real-layout caption 仍给出 4 个字段；缺数和非面板 caption 被拒绝；

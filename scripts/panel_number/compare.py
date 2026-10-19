@@ -27,6 +27,18 @@ FIXED = {"d1": ("runs/panel-bind/d1/numbers.jsonl", "e18bf3f2135cd77ee61a696071e
          "exp26": ("runs/panel-bind/exp26/numbers.jsonl", "41c1c99820703b7acf38a66fef56499b6952ab620fe33eb1860328fa986d93de")}
 FIXED_REPORT = ("runs/panel-bind/report.json", "d7c4e0e455fc4351fb29d728755ba3ac1c2d4bd9a96d4569b185b14beb73ba3d")
 LINE, ATTRIBUTION = 0.60, 0.10
+STEPS = 1250
+# the frozen inputs this comparison is defined on (critic PANEL-NUMBER-R1-01): the approved D1 start, EXP26's data, the
+# accepted PANEL-BIND-RUN-01 START (its validation file and the sha256 of its 1,000 pictures' bytes)
+APPROVED = {"d1": {"path": "runs/exp74-panel-d1/d1", "model.safetensors": "f2efe49de1cb1129394d8a96c6d6268703cdcab70a619485a7794d384e344460",
+                   "config.json": "7fb24ad36c7076f71fa1b7cea634ed58ef62ce8414565cc54f2d4fddfe591bc8",
+                   "tokenizer": "f3458e257b831d28dd3f4fd4011dfd922da180303f7d684559d9e54527c84324"},
+            "train": ("data/exp26/align_train.jsonl", "731999b8e87c9aedd4b31bb81734f5709e85f95913682e5b191a3c45c4ababbd"),
+            "val": ("data/exp26/align_val.jsonl", "6a36f5bcb338ee439e7cb65f4aeae6fb1f7b38f195cef9a0502d13293d266bda"),
+            "pictures": "31e1840f2bae151596ea74f942d4636d13e323cd4a75c377a537b60fd120d5bd",
+            "bind_start": ("runs/panel-bind/START.json", "3c4280cd9af61bc4f332423ee2ccde6488d1f40260a6b67aa374db46b9328564")}
+ARM_STATUS = "runs/panel-number-arms.json"
+PREFLIGHT = "runs/panel-number-preflight.json"
 
 
 def bind():
@@ -46,11 +58,77 @@ def both_exact(rows):
     return {r["family"]: float(r["exact"]["A"] and r["exact"]["B"]) for r in rows if r["mode"] == "real" and r["gold"]["A"] != r["gold"]["B"]}
 
 
+def identity(rows):
+    """family -> (id, gold, picture) of every true / wrong row: what a family's reading was asked on."""
+    return {(r["family"], r["mode"]): (r["id"], r["gold"]["A"], r["gold"]["B"], r.get("picture")) for r in rows}
+
+
 def paired(rep, a, b):
     keys = sorted(set(a) & set(b))
     if len(keys) != len(a) or len(keys) != len(b):
         raise ValueError("the two readings are not on the same families")
     return rep.boot({k: (a[k], b[k]) for k in keys}, lambda us: sum(x - y for x, y in us) / len(us))
+
+
+def pictures_digest(val: str) -> str:
+    rows = [json.loads(x) for x in open(val) if x.strip()]
+    return hashlib.sha256(json.dumps([sha(os.path.join("data", r["image"])) for r in rows]).encode()).hexdigest()
+
+
+def preflight() -> dict:
+    """Before any training (no model): the approved D1 start, the train / val files, the accepted panel-bind START and
+    the actual 1,000 pictures, the fixed D1 / EXP26 evidence. Any difference: refused, nothing trained."""
+    rep = bind()
+    problems = []
+    d1 = APPROVED["d1"]
+    try:
+        got = {"model.safetensors": sha(os.path.join(d1["path"], "model.safetensors")), "config.json": sha(os.path.join(d1["path"], "config.json")),
+               "tokenizer": rep.tree(os.path.join(d1["path"], "tokenizer"))}
+        problems += ["D1 %s is not the approved one" % k for k, v in got.items() if v != d1[k]]
+    except OSError as e:
+        problems.append("D1 unreadable: %s" % e)
+    for k in ("train", "val", "bind_start"):
+        path, h = APPROVED[k]
+        if not os.path.exists(path) or sha(path) != h:
+            problems.append("%s is not the approved one" % path)
+    if not problems:
+        bs = json.load(open(APPROVED["bind_start"][0]))
+        if bs["val"]["sha256"] != APPROVED["val"][1] or bs["val"]["pictures_sha256"] != APPROVED["pictures"] or bs["endpoints"]["d1"] != {**d1}:
+            problems.append("the panel-bind START does not name these inputs")
+        try:
+            if pictures_digest(APPROVED["val"][0]) != APPROVED["pictures"]:
+                problems.append("the 1,000 validation pictures' bytes changed")
+        except OSError as e:
+            problems.append("a validation picture is unreadable: %s" % e)
+    try:
+        fixed(rep)
+    except SystemExit as e:
+        problems.append(str(e))
+    out = {"ok": not problems, "problems": problems}
+    tmp = PREFLIGHT + ".tmp"
+    json.dump(out, open(tmp, "w"), indent=1)
+    os.replace(tmp, PREFLIGHT)
+    return out
+
+
+def arm_report(path: str) -> tuple:
+    """(valid, state) of an arm's training report: missing / incomplete / invalid unless it holds STEPS finite losses
+    and its last validation is at step STEPS with finite true / wrong accuracies (critic PANEL-NUMBER-R1-02)."""
+    import math
+    if not os.path.exists(path):
+        return False, "missing: no align_report.json"
+    try:
+        r = json.load(open(path))
+        losses, val = r["losses"], r["val"]
+        last = val[-1]
+        if len(losses) != STEPS:
+            return False, "incomplete: %d updates, %d planned" % (len(losses), STEPS)
+        if last["step"] != STEPS or not all(math.isfinite(last[k]) for k in ("val/mlm_acc_real", "val/mlm_acc_shuffled")) \
+                or not all(math.isfinite(x) for x in losses):
+            return False, "invalid: the last validation is not a finite step-%d reading (step %s)" % (STEPS, last.get("step"))
+    except (ValueError, KeyError, IndexError, TypeError) as e:
+        return False, "invalid: align_report.json unreadable (%s)" % e
+    return True, "trained"
 
 
 def fixed(rep):
@@ -70,14 +148,29 @@ def compare(out: str = OUT) -> dict:
     rep = bind()
     res = rep.report(out)                                  # the probe report: statuses, reproduction, statistics
     ref = fixed(rep)
+    trained = json.load(open(ARM_STATUS)) if os.path.exists(ARM_STATUS) else {}
+    same_inputs = None
+    st_path = os.path.join(out, "START.json")
+    if os.path.exists(st_path):                            # the probe read the frozen list / pictures (R1-01)
+        try:
+            val = json.load(open(st_path))["val"]
+            same_inputs = val["sha256"] == APPROVED["val"][1] and val["pictures_sha256"] == APPROVED["pictures"]
+        except (ValueError, KeyError):
+            same_inputs = False
+    old_id = identity([json.loads(x) for x in open(FIXED["d1"][0])])
     arms = {}
     for a in ARMS:
         e = res["endpoints"].get(a, {})
-        arm = {"status": e.get("status", "missing")}
+        arm = {"status": e.get("status") or "missing"}
+        if a in trained and not trained[a]["valid"]:      # never taken into START: its training report's own state
+            arm["status"] = trained[a]["state"]
         arms[a] = arm
         if arm["status"] != "completed":
             continue
         rows = [json.loads(x) for x in open(os.path.join(out, a, "numbers.jsonl"))]
+        if not same_inputs or identity(rows) != old_id:     # same family must mean the same picture and gold
+            arm["status"] = "invalid: not read on the frozen questions / pictures of D1 / EXP26"
+            continue
         be = both_exact(rows)
         arm["both_exact"] = sum(be.values()) / len(be)
         arm["minus_d1"] = paired(rep, be, ref["d1"])
@@ -117,10 +210,23 @@ def compare(out: str = OUT) -> dict:
 
 def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
+    if argv[:1] == ["preflight"]:
+        res = preflight()
+        print(json.dumps(res, indent=1))
+        return 0 if res["ok"] else 12
     if argv[:1] == ["start"]:
-        done = {a: p for a, p in ARMS.items() if os.path.exists(os.path.join(p, "model.safetensors")) and os.path.exists(REFS[a][0])}
+        states = {}
+        for a, p in ARMS.items():
+            ok, state = arm_report(REFS[a][0])
+            if ok and not os.path.exists(os.path.join(p, "model.safetensors")):
+                ok, state = False, "missing: no saved weights"
+            states[a] = {"valid": ok, "state": state}
+        json.dump(states, open(ARM_STATUS + ".tmp", "w"), indent=1)
+        os.replace(ARM_STATUS + ".tmp", ARM_STATUS)
+        done = {a: p for a, p in ARMS.items() if states[a]["valid"]}
+        print(json.dumps(states))
         if not done:
-            print("no arm end point: no START (the report says incomplete)")
+            print("no valid arm end point: no START (the report says incomplete)")
             return 1
         st = bind().start(OUT, done, {a: REFS[a] for a in done})
         print(json.dumps({k: v for k, v in st.items() if k != "wrong_picture"}, indent=1))
