@@ -1,0 +1,30 @@
+# exp72 arm k (docs/experiments/2026-10-19-exp72-k-supervision-plan.md; critic EXP72-PREP-01 / -R1-01): from EXP68-X's
+# frozen end (2e5b272e / 87f82281) -- its decision head and merged earlier LoRA as they are, a fresh LoRA r16 on top
+# (zero-initialised B, so training starts from EXP68-X's function) trained with that head -- EXP68-X's recipe exactly,
+# on data/exp72/train_K.jsonl (comparison-led, 3,800 items, 475 updates of 8, the plan equal to the other arm's).
+# The two arms differ only by the K block on temperature states. Validation: the 240-question training slice. Run only by
+# scripts/exp72/run.sh.
+name: exp72-k
+device: mps
+common:
+  log_every: 25
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp68-x/stage2
+  data: data/exp72/train_K.jsonl
+  val: data/exp72/slice_K.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    text_only: true
+    micro_batch: 8
+    eval_batch: 8
+    lora_r: 16
+    lr_lora: 5.0e-05
+    lr_head: 1.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 0
+    amp: 'off'
+    seed: 1
