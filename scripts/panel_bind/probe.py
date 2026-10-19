@@ -162,7 +162,9 @@ def main(argv=None) -> int:
     open(os.path.join(a.out, "random.jsonl"), "w").write("".join(json.dumps(x) + "\n" for x in r["rows"]))
     n = run_numbers(d, head, images, dev, samples)
     open(os.path.join(a.out, "numbers.jsonl"), "w").write("".join(json.dumps(x) + "\n" for x in n["rows"]))
-    json.dump({"checkpoint": a.checkpoint, "random": r["summary"], "rows": len(samples)}, open(os.path.join(a.out, "summary.json"), "w"), indent=1)
+    tmp = os.path.join(a.out, "summary.json.tmp")             # written last and atomically: a summary means the end point finished
+    json.dump({"checkpoint": a.checkpoint, "random": r["summary"], "rows": len(samples)}, open(tmp, "w"), indent=1)
+    os.replace(tmp, os.path.join(a.out, "summary.json"))
     print(json.dumps(r["summary"], indent=1))
     return 0
 

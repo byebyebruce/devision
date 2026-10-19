@@ -32,6 +32,15 @@ EXP74 D1 的混合补词差值从 0.029 升到 0.250（门槛 0.30，未过）�
   - 披露错图里量名相同的比例：错图支持的是一般的依图性，不能单独隔离标签绑定。
 - **启动记录**（START.json，前向之前写出）：各端点 model / config / tokenizer 的 SHA；MLM 头文件 SHA；题单和 1,000 张图实际字节的摘要；代码 SHA（probe、report、align）；错图映射；复现参照和容差。逐行明细（random.jsonl、numbers.jsonl）可以不用模型复算统计。
 
+## 报告先核证据（PANEL-BIND-R1-01 / R1-02）
+
+- 冻结题单来自 START：核对题单 sha 等于 START，并重新推出错图映射，必须等于 START 记录的映射。START 缺失时报告记为 incomplete（没有身份，不给结论）；START 截断或不符记为 invalid。两种情况都照样写出 report.json。
+- 每个端点：summary、random、numbers 三个文件逐个读取。缺文件记为 missing / incomplete；空文件或截断记为 invalid，不会崩溃。
+- random：(id, mode) 必须每个恰好一次，与题单 × {真图, 错图} 完全相同；family 和实际图片等于冻结映射；token 计数合法。由逐题计数重算数字、其余和总体的命中、分母和准确率，必须与 summary 完全一致，否则 invalid；复现判定只用重算值，并报告与参照的实际差值（不称逐位复现）。
+- numbers：(id, mode) 同样完整唯一；family、图片、gold 等于冻结题单；token_right 非空且全为 bool；exact 是显式 bool，并且等于 all(token_right)；pred 是字符串。
+- 只有通过全部检查的端点才进入统计和跨端点配对；其他已完成的端点照常保留。summary 和 report 都先写临时文件再原子替换。
+- 口径（NOTE-01）："exact" 预先定义为数字跨度的全部 token 都正确（字段名 `*_exact_all_tokens`）；解码后的字符串与 gold 相等只作描述（`*_string_equal_descriptive`），不替代原口径。
+
 ## 状态和失败收尾
 
 - 每个端点：completed / missing（没跑完或被停止）/ invalid（复现超出容差或行数不全）。总体：全部 completed 才是 completed，有 invalid 就是 invalid，否则 incomplete。已完成的端点照常报告。
@@ -50,7 +59,9 @@ D1 总共 47.5 分钟：1,250 步约 2.0 s/步，约 41.7 分钟；其余约 5 �
 
 ## 验证（CPU，已完成）
 
-`scripts/panel_bind/test_panel_bind.py` 9 passed：
+`scripts/panel_bind/test_panel_bind.py` 19 passed（R1 之后）：
+- 报告证据核对 11 项：完整 → completed；缺 random → incomplete；保持行数不变的 shuffled 重复、错图映射不符、gold 不符、summary 与明细矛盾、exact 与 token_right 不一致、summary 截断、numbers 截断 → invalid。其余端点都保留为 completed，未核过的端点不参与配对，report.json 总会写出。另外 START 缺失 → incomplete，START 截断 → invalid，两者都写出报告。
+- 原有：
 - 真实 tokenizer 下 1,000 条 caption 全部精确解析；
 - 3 种拒绝（缺句点、顺序错、不是数字）；
 - tiny 模型上 random 模式与 align._evaluate 逐位相等，数字与其余的分母、命中数还原总数；

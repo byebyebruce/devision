@@ -102,27 +102,119 @@ def test_number_stats():
              "token_right": {"A": [True], "B": [True]}}]
     s = rep.number_stats(rows, "real")
     assert s["different"]["rows"] == 2 and s["different"]["swapped"] == 0.5 and s["different"]["same_prediction"] == 0.5
-    assert s["different"]["both_exact"] == 0 and s["different"]["wrong_end_is_other_gold"] == 1.0 and s["equal"]["both_exact"] == 1.0
+    assert s["different"]["both_exact_all_tokens"] == 0 and s["different"]["wrong_end_is_other_gold"] == 1.0
+    assert s["equal"]["both_exact_all_tokens"] == 1.0 and s["A_string_equal_descriptive"] == 2 / 3
     assert s["number_token_accuracy"] == 0.5
 
 
-def test_report_statuses(tmp_path):
+@pytest.fixture
+def world(tmp_path, monkeypatch):
+    """A frozen 20-row question list, its START, and a writer of consistent end-point records."""
     rep = load("report")
-    st = {"val": {"rows": 1}, "tolerance": 0.003, "references": {n: {"real": 0.9, "shuffled": 0.6} for n in ("start", "d1", "exp26")}}
-    os.makedirs(tmp_path / "out")
-    json.dump(st, open(tmp_path / "out" / "START.json", "w"))
-    row = lambda mode, ok: {"id": "r0", "family": "f0", "mode": mode, "gold": {"A": "5", "B": "7"}, "pred": {"A": "5", "B": "7"} if ok else {"A": "7", "B": "5"},
-                            "exact": {"A": ok, "B": ok}, "token_right": {"A": [ok], "B": [ok]}, "quantity_same_as_shown": True}
-    for name, shuffled in (("start", 0.6), ("d1", 0.6)):
-        os.makedirs(tmp_path / "out" / name)
-        json.dump({"random": {"real": {"all": {"accuracy": 0.9}}, "shuffled": {"all": {"accuracy": shuffled}}}}, open(tmp_path / "out" / name / "summary.json", "w"))
-        open(tmp_path / "out" / name / "numbers.jsonl", "w").write(json.dumps(row("real", True)) + "\n" + json.dumps(row("shuffled", False)) + "\n")
-    res = rep.report(str(tmp_path / "out"))
-    assert res["endpoints"]["exp26"]["status"] == "missing" and res["status"] == "incomplete"
-    assert res["endpoints"]["d1"]["status"] == "completed" and res["endpoints"]["d1"]["true_minus_wrong_both_exact"]["value"] == 1.0
-    json.dump({"random": {"real": {"all": {"accuracy": 0.9}}, "shuffled": {"all": {"accuracy": 0.61}}}}, open(tmp_path / "out" / "start" / "summary.json", "w"))
-    res = rep.report(str(tmp_path / "out"))
-    assert res["endpoints"]["start"]["status"].startswith("invalid") and res["status"] == "invalid"
+    monkeypatch.chdir(tmp_path)
+    os.makedirs("data")
+    rows = [{"id": "r%02d" % i, "family": "f%02d" % i, "image": "img/%02d.png" % i,
+             "captions": ["A: %s %d m. B: %s %d m." % ("speed" if i % 2 else "length", 10 + i, "speed" if i % 2 else "length", 10 + (i * 7) % 5)]}
+            for i in range(20)]
+    open("data/val.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    exp, wrong = rep.expected_rows({"val": {"file": "data/val.jsonl"}})
+
+    def records(name, right=0.9):
+        rnd, nums = [], []
+        for k, r in enumerate(rows):
+            for mode in ("real", "shuffled"):
+                ok = (k % 10) < (right * 10 if mode == "real" else 3)
+                e = exp[r["id"]]
+                rnd.append({"id": r["id"], "family": r["family"], "mode": mode, "picture": e[mode], "tokens": {"number": [int(ok), 1], "other": [2, 3]}})
+                pred = dict(e["gold"]) if ok else {"A": e["gold"]["B"], "B": e["gold"]["A"]}
+                tr = {x: [pred[x] == e["gold"][x]] for x in ("A", "B")}
+                nums.append({"id": r["id"], "family": r["family"], "mode": mode, "picture": e[mode], "gold": e["gold"], "pred": pred,
+                             "token_right": tr, "exact": {x: all(tr[x]) for x in ("A", "B")}, "quantity_same_as_shown": True})
+        cnt = {m: {k: [0, 0] for k in ("number", "other", "all")} for m in ("real", "shuffled")}
+        for x in rnd:
+            for k in ("number", "other"):
+                for kk in (k, "all"):
+                    cnt[x["mode"]][kk][0] += x["tokens"][k][0]
+                    cnt[x["mode"]][kk][1] += x["tokens"][k][1]
+        summ = {"random": {m: {k: {"right": v[0], "n": v[1], "accuracy": v[0] / v[1]} for k, v in c.items()} for m, c in cnt.items()}}
+        d = os.path.join("out", name)
+        os.makedirs(d, exist_ok=True)
+        json.dump(summ, open(os.path.join(d, "summary.json"), "w"))
+        for f, rs in (("random", rnd), ("numbers", nums)):
+            open(os.path.join(d, f + ".jsonl"), "w").write("".join(json.dumps(x) + "\n" for x in rs))
+        return {m: summ["random"][m]["all"]["accuracy"] for m in ("real", "shuffled")}
+
+    refs = {name: records(name, right) for name, right in (("start", 0.3), ("d1", 0.9), ("exp26", 0.9))}
+    st = {"val": {"file": "data/val.jsonl", "sha256": rep.sha("data/val.jsonl"), "rows": 20}, "wrong_picture": wrong, "tolerance": 0.003,
+          "references": refs}
+    json.dump(st, open("out/START.json", "w"))
+    return rep
+
+
+def edit(path, fn):
+    rs = [json.loads(x) for x in open(path)]
+    rs = fn(rs)
+    open(path, "w").write("".join(json.dumps(x) + "\n" for x in rs))
+
+
+def test_complete_records_complete(world):
+    res = world.report("out")
+    assert res["status"] == "completed" and all(e["status"] == "completed" for e in res["endpoints"].values())
+    assert res["d1_minus_start_both_exact"]["value"] > 0 and json.load(open("out/report.json"))["status"] == "completed"
+
+
+@pytest.mark.parametrize("case,where,want", [
+    ("missing_random", "d1", "incomplete"),
+    ("shuffled_dup", "d1", "invalid"),            # one shuffled row replaced by a copy of another: same length
+    ("wrong_picture", "d1", "invalid"), ("wrong_gold", "d1", "invalid"), ("summary_mismatch", "d1", "invalid"),
+    ("exact_inconsistent", "d1", "invalid"), ("truncated_summary", "exp26", "invalid"), ("truncated_numbers", "exp26", "invalid")])
+def test_bad_records_never_complete(world, case, where, want):
+    d = os.path.join("out", where)
+    if case == "missing_random":
+        os.remove(os.path.join(d, "random.jsonl"))
+    elif case == "shuffled_dup":
+        def f(rs):
+            sh = [k for k, r in enumerate(rs) if r["mode"] == "shuffled"]
+            rs[sh[1]] = dict(rs[sh[0]])
+            return rs
+        edit(os.path.join(d, "numbers.jsonl"), f)
+    elif case == "wrong_picture":
+        edit(os.path.join(d, "random.jsonl"), lambda rs: [dict(r, picture="img/00.png") if r["mode"] == "shuffled" and r["id"] == "r05" else r for r in rs])
+    elif case == "wrong_gold":
+        edit(os.path.join(d, "numbers.jsonl"), lambda rs: [dict(r, gold={"A": "1", "B": "2"}) if r["id"] == "r03" else r for r in rs])
+    elif case == "summary_mismatch":
+        s = json.load(open(os.path.join(d, "summary.json")))
+        s["random"]["real"]["number"]["right"] += 1
+        json.dump(s, open(os.path.join(d, "summary.json"), "w"))
+    elif case == "exact_inconsistent":
+        edit(os.path.join(d, "numbers.jsonl"), lambda rs: [dict(r, exact={"A": True, "B": True}) if r["id"] == "r09" and r["mode"] == "real" else r for r in rs])
+    elif case == "truncated_summary":
+        t = open(os.path.join(d, "summary.json")).read()
+        open(os.path.join(d, "summary.json"), "w").write(t[: len(t) // 2])
+    else:
+        t = open(os.path.join(d, "numbers.jsonl")).read()
+        open(os.path.join(d, "numbers.jsonl"), "w").write(t[: len(t) // 2])
+    res = world.report("out")
+    assert res["endpoints"][where]["status"].startswith(want) and res["status"] != "completed", res["endpoints"][where]
+    others = [n for n in ("start", "d1", "exp26") if n != where]
+    assert all(res["endpoints"][n]["status"] == "completed" for n in others)          # the other end points are kept
+    if where == "d1":
+        assert "d1_minus_start_both_exact" not in res                                 # an unchecked end point is never compared
+    else:
+        assert "d1_minus_start_both_exact" in res and "d1_minus_exp26_both_exact" not in res
+    assert json.load(open("out/report.json"))["status"] == res["status"]
+
+
+@pytest.mark.parametrize("case,want", [("missing", "incomplete"), ("truncated", "invalid")])
+def test_start_problems_still_write_a_report(world, case, want):
+    if case == "missing":
+        os.remove("out/START.json")
+    else:
+        t = open("out/START.json").read()
+        open("out/START.json", "w").write(t[:10])
+    res = world.report("out")
+    assert res["status"] == want and "no conclusion" in res["reason"] or res["status"] == want
+    assert json.load(open("out/report.json"))["status"] == want and not res["endpoints"]
 
 
 STUB = """#!/bin/bash
