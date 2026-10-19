@@ -179,7 +179,7 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - config 一变，组合身份就跟着变，按既有流程需要重新 bind / freeze；
   - rebind 的白名单本来就包含这个字段。
 - **正式写入**：scripts/release/route_temps.py。
-  - 来源只能是已登记的校准运行：registry 里 route_calibration.json、CALIB.json、records.jsonl 的哈希；CALIB 记录的题单和候选 config 的哈希；由登记的 records 重算 completeness 和 analyse，结果必须与已写报告一致；必须是分支 1，且两个温度都是有限且大于 0 的数。
+  - 来源只能是已验收的那次校准运行（ROUTE-TEMP-R1-01 修正后）：runs/v04-k-calib 的 START.json / registry.json / report.json 三个 SHA 固定在脚本里（ACCEPTED）；再按 registry 核对 route_calibration.json、CALIB.json、records.jsonl 和 rl_calib 题单，按 CALIB 和 registry 核对写入前的候选 config；直接读出报告里的两个全量温度，不重新拟合，也不重算 bootstrap（不加载 route_calib）；必须是分支 1，且两个温度都是有限且大于 0 的数。
   - 只写入登记时的那个候选，只能在 bind 之前写，只改这一个字段，不能写第二次。
   - 不重新核对那次运行的代码身份：本改动有意修改推理模块，那次运行的代码在运行时已经核过，并已由 V04-K-CALIB-RESULT-01 验收。
   - 用真实文件做只读核对（没有写入任何东西）：source_temperatures(runs/v04-k-calib) 得到 {'temperature': 3.238142943837961, 'magnets': 4.664590270988126}，与登记的报告完全一致。
@@ -191,7 +191,7 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
     - 普通题、没有图、reading off、旧 config 都不变，空字段不会被写入 config；
     - 原始温度时全部为 1；6 种非法值都被拒绝；
     - save / load 后概率相同；正式 evaluate 记录的 by_route 等于 check_eval 的冻结表，空的时候两边都没有这一项。
-  - tests/release/test_route_temps.py（2 项）：
-    - 能正确写入，并且只改这一个字段；
-    - 以下情况都被拒绝：写第二次、写到别的候选、候选已有 reading/、报告被改、报告重新登记但与重算结果不一致、不是分支 1。
+  - tests/release/test_route_temps.py（10 项，R1 修正后）：
+    - 写入的值精确等于 3.238142943837961 / 4.664590270988126，只改这一个字段；route_calib 被设为一加载就失败，读取和写入仍然成功；
+    - 以下情况都被拒绝：另一套内部自洽的分支 1 校准、report / registry / route_calibration / records / 题单被替换、不是分支 1、写到别的候选、候选已有 reading/、候选 config 不是登记时的那份、写第二次。
 - 全部 tests 445 项通过，pyright 0 错误。真实候选的 config 没有写，没有 bind / freeze，没有运行模型。
