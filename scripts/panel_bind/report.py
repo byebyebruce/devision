@@ -39,24 +39,26 @@ def tree(p: str) -> str:
     return h.hexdigest()
 
 
-def reference(name: str) -> dict:
-    path, i = REFERENCE[name]
+def reference(name: str, refs=None) -> dict:
+    path, i = (refs or REFERENCE)[name]
     v = json.load(open(path))["val"][i]
     return {"file": path, "step": v["step"], "real": v["val/mlm_acc_real"], "shuffled": v["val/mlm_acc_shuffled"]}
 
 
-def start(out: str = OUT) -> dict:
+def start(out: str = OUT, endpoints=None, refs=None) -> dict:
+    """endpoints / refs default to this probe's three end points; another probe (scripts/panel_number) names its own."""
+    endpoints = endpoints or ENDPOINTS
     from huggingface_hub import hf_hub_download
     rows = [json.loads(x) for x in open(VAL) if x.strip()]
     pics = hashlib.sha256(json.dumps([sha(os.path.join("data", r["image"])) for r in rows]).encode()).hexdigest()
     wrong = {r["id"]: rows[b + ((i - b + 1) % len(rows[b:b + 16]))]["id"] for b in range(0, len(rows), 16) for i, r in enumerate(rows[b:b + 16], b)}
     here = os.path.dirname(os.path.abspath(__file__))
     st = {"endpoints": {n: {"path": p, "model.safetensors": sha(os.path.join(p, "model.safetensors")), "config.json": sha(os.path.join(p, "config.json")),
-                            "tokenizer": tree(os.path.join(p, "tokenizer"))} for n, p in ENDPOINTS.items()},
+                            "tokenizer": tree(os.path.join(p, "tokenizer"))} for n, p in endpoints.items()},
           "mlm_head": {"repo": HEAD, "model.safetensors": sha(hf_hub_download(HEAD, "model.safetensors"))},
           "val": {"file": VAL, "sha256": sha(VAL), "rows": len(rows), "pictures_sha256": pics},
           "code": {f: sha(f) for f in (os.path.join(here, "probe.py"), os.path.join(here, "report.py"), "src/devision/train/align.py")},
-          "wrong_picture": wrong, "references": {n: reference(n) for n in ENDPOINTS}, "tolerance": TOLERANCE}
+          "wrong_picture": wrong, "references": {n: reference(n, refs) for n in endpoints}, "tolerance": TOLERANCE}
     os.makedirs(out, exist_ok=False)
     json.dump(st, open(os.path.join(out, "START.json"), "w"), indent=1)
     return st
@@ -198,7 +200,7 @@ def report(out: str = OUT) -> dict:
         res["status"], res["reason"] = "invalid", "START: %s" % err
         return write(out, res)
     both = {}
-    for name in ENDPOINTS:
+    for name in st.get("endpoints") or ENDPOINTS:
         d = os.path.join(out, name)
         e: dict = {}
         res["endpoints"][name] = e

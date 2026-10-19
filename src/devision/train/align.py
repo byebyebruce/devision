@@ -122,13 +122,25 @@ def _masked_batch(tok, captions: Sequence[str], c: AlignConfig, rng: random.Rand
 NUMBER_PATTERNS = [("mass", re.compile(r"mass of each particle ([\d,]+(?:\.\d+)?) u")),
                    ("speed", re.compile(r"average particle speed ([\d,]+(?:\.\d+)?) m/s")),
                    ("distance", re.compile(r"(\d[\d,]*(?:\.\d+)?) (?:in|cm|mm) apart"))]
-NUMBERS_EXPECTED = {"Sample": 4, "Pair": 2}   # a real-layout caption: 2 samples x (mass, speed), 2 pairs x distance
+NUMBERS_EXPECTED = {"Sample": 4, "Pair": 2, "Panel": 2}   # real layout: 2 samples x (mass, speed), 2 pairs x distance
+# an EXP26 two-panel caption, "A: <quantity> <number> <unit>. B: <quantity> <number> <unit>." (PANEL-NUMBER-PREP-01; the
+# rule scripts/panel_bind/probe.py reads with)
+PANEL_PATTERN = re.compile(r"^A: (?P<qa>.+?) (?P<a>[\d,]+(?:\.\d+)?) (?P<ua>\S+)\. B: (?P<qb>.+?) (?P<b>[\d,]+(?:\.\d+)?) (?P<ub>\S+)\.$")
+
+
+def _kind(caption: str) -> Optional[str]:
+    return "Sample" if caption.startswith("Sample") else "Pair" if caption.startswith("Pair") else \
+        "Panel" if PANEL_PATTERN.match(caption) else None
 
 
 def number_spans(caption: str) -> List[Dict[str, Any]]:
     """[{field, start, end, text}] of the numbers of a real-layout caption -- the digits (with "," / ".") after
     "mass of each particle", "average particle speed" and before "<unit> apart"; never a "Pair 1" / "Sample A"
-    label or a unit (the rule scripts/exp35/mlm_numbers.py read with)."""
+    label or a unit (the rule scripts/exp35/mlm_numbers.py read with) -- or of a two-panel caption (PANEL_PATTERN):
+    the A and B numbers."""
+    m = PANEL_PATTERN.match(caption)
+    if m:                                        # a two-panel caption: the A and B numbers, never a label / quantity / unit
+        return [{"field": f, "start": m.start(f.lower()), "end": m.end(f.lower()), "text": m.group(f.lower())} for f in ("A", "B")]
     out = [{"field": f, "start": m.start(1), "end": m.end(1), "text": m.group(1)}
            for f, pat in NUMBER_PATTERNS for m in pat.finditer(caption)]
     return sorted(out, key=lambda x: x["start"])
@@ -140,7 +152,7 @@ def _number_rows(tok, captions: Sequence[str], rows: Sequence[int], input_ids, t
     for i in rows:
         cap = captions[i]
         spans = number_spans(cap)
-        kind = "Sample" if cap.startswith("Sample") else "Pair" if cap.startswith("Pair") else None
+        kind = _kind(cap)
         if kind is None or len(spans) != NUMBERS_EXPECTED[kind]:
             raise ValueError("number mask: %r does not hold the expected numbers" % cap)
         enc = tok(cap, add_special_tokens=False, return_offsets_mapping=True)
