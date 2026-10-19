@@ -14,17 +14,29 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
 
 ## PREP-02：校准编排（按 prep03 第 5.1–5.3、5.5 节）
 
-### rl_calib（scripts/release/rl_calib.py）
+### rl_calib（scripts/release/rl_calib.py；第 1 轮按 R1-01 修正）
 
-- 规则：用 real_layout 的场景、孪生和渲染器，换新 seed 20261019，按「温度、磁力」交替抽族；每个视图一张图，只保留比较题。
-- 隔离：一个族的场景和孪生的 canonical case 都不能出现在 data/ 下任何 JSONL 的 case 字段里（覆盖 real_layout 的 train / tune / confirm、facts、exp6x / exp7x、protect 等，共 5,282 个 case），也不能是转写过的 ScienceQA 场景；rl_calib 内部的 case 也不重复。
-- **数量不足，如实报告**（`--dry-run` 实际结果，没有画任何图）：
-  - 温度：300 族，满额；
-  - 磁力：**只有 104 族**，计划是 300 族，少 196 族。原因是磁力的 case 空间很小：3 个单位的距离组合加大小、相等，一共 769 个 case，其中 646 个已经被现有数据用掉，只剩 123 个空闲；
-  - 合计 404 族、808 张图，与已用 case 的重叠为 0。
-  - 我没有为了凑数放宽隔离（例如允许与 real_layout train 的 case 重叠）。磁力一侧的区间会更宽，规则照常按「合并 + 各域点估计」判定。如果评审认为必须凑满 300 族，最小的替代方案是只对磁力放宽为「与 tune / confirm / 开发集的 case 不相交，但允许与 train 的 case 重叠」；这样做的代价是可能因为训练见过同一数值组合而高估校准。我不采用这个方案。
-- 完整生成要等规则验收后再运行：`uv run python scripts/release/rl_calib.py --root data`，只用 CPU，约 1–2 分钟，写入 data/rl_calib/。
-- 确认集还没有生成。以后生成独立渲染器的合成确认时，必须同时排除 rl_calib 的 case（MANIFEST 会列出这些 case）。
+- **场景与题目**：用 real_layout 的场景、孪生和渲染器，新 seed 20261019，按「温度、磁力」交替抽族；每个视图一张图，只保留比较题。
+- **隔离**：一个族的两个视图的 canonical case 都必须同时满足：
+  - 不出现在 data/ 下任何 JSONL 的 case 字段里（共 5,282 个）；
+  - 不是转写场景；
+  - 在 rl_calib 内部不重复；
+  - 落在固定哈希分区的「calib」一侧：sha256('v04-route-calib-partition:' + repr(case)) < 0.5 为 calib，否则为 confirm。confirm 一侧留给冻结后才生成的合成确认。
+- **磁力数值池**：原值池几乎用完（769 个 case 用掉 646 个，剩余的 109 / 7 / 7 分别是 distance / size / equal）。所以只在这个新构建器里用更密的固定值池，单位、范围和小数精度都与原来相同，用整数刻度生成，旧值都包含在内：
+  - in：0.25–5.00，步长 0.05，共 96 个值；
+  - cm：0.10–8.00，步长 0.05，共 159 个值；
+  - mm：5.5–70.2，步长 0.1，共 648 个值。
+  - 绘制用 real_layout 原来的渲染器，只在画图时把值池换进去（force_geometry 按值在单位值表里的排名决定间距，所以同一单位只有一种映射，间距随距离增大），画完就恢复。real_layout 的默认行为和旧数据都不变。
+- **分层**：磁力的基础场景分为 distance / size / equal 各 100 族。equal 的孪生按原规则变成 distance，所以最终视图的分布是 distance 300、size 200、equal 100。
+- **实际数量**（--dry-run，没有画图）：
+  - 温度 300 族、磁力 300 族，共 1,200 张图；
+  - 与已用 case 的重叠为 0；落在 confirm 一侧的 calib case 为 0；
+  - 跳过的抽取：转写场景 16、与已有 case 重叠 154、rl_calib 内部重复 137、落在 confirm 一侧 1,136。
+- **确认余量**（confirm 一侧未被使用的磁力 case）：distance 113,225，size 431，equal 419，都远多于合成确认需要的每类 20 个。温度的 case 空间约 2,670 万，已用 4,636 个。
+- 完整生成要等规则验收后再运行：`uv run python scripts/release/rl_calib.py --root data`，只用 CPU，约 2–3 分钟，写入 data/rl_calib/。确认集还没有生成。
+- **夹具**：
+  - tests/release/test_rl_calib.py：值池的范围、个数，且包含旧值；分区；分层；画出了旧值池里没有的值，图中标注文字等于数值和单位；间距随距离单调增加；real_layout 的值池在构建后恢复。
+  - tests/release/test_k_source.py 里的 tiny 校准用的就是这个构建器（6 + 6 族）。
 
 ### 路由校准分析（scripts/release/route_calib.py）
 
@@ -56,11 +68,11 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
 | 步骤 | 请求 / 题 | 依据 | 估计 |
 |---|---|---|---|
 | 普通校准 | 3,892 题（带图，每题一次前向） | 带局部视图的图片前向约每秒 3–6 题（还没有实测这个入口） | 约 11–22 分钟 + 加载 |
-| collect | 808 个读取请求 | LIVE-K live_p 实测每秒 2.15 个 | 约 6.3 分钟 + 加载 |
+| collect | 1,200 个读取请求 | LIVE-K live_p 实测每秒 2.15 个 | 约 9.3 分钟 + 加载 |
 | analyse | — | CPU | < 1 分钟 |
 | 报告 | — | | 约 1 分钟 |
 
-  - 合计约 20–32 分钟。建议总上限 45 分钟，最后 180 秒留给报告，一次启动；runner 沿用已有的 start / watch / report 框架，在许可前再实现并送审。普通校准的吞吐以首窗为准，预计赶不上就判 incomplete，不删题。
+  - 合计约 23–35 分钟。建议总上限 45 分钟（这是待 runner 首窗实测的估计），最后 180 秒留给报告，一次启动；runner 沿用已有的 start / watch / report 框架，在许可前再实现并送审。普通校准的吞吐以首窗为准，预计赶不上就判 incomplete，不删题。
 
 ## PREP-03：交付顺序与能力声明
 
@@ -69,7 +81,7 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   1. 来源与 K 生命周期验收（PREP-01）；
   2. 普通校准 + 路由校准（PREP-02）；
   3. 最终组合和代码身份冻结（bind → freeze，记录运行身份）；
-  4. 已验收的独立渲染器合成确认，加 v0.3 同题对照（120 张图 + 240 个基线请求，约 5–8 分钟）。冻结之后才生成或揭示确认答案；判据和样本数不变；失败按 5.3 否决当前组合，不在确认集上调参；它也填补不了真实来源的缺口；
+  4. 合成确认（确认方案已经验收，独立渲染器本身的实现还要另行验收），加 v0.3 同题对照：候选的真图 120、错图 120、选项倒序 120 个请求（倒序是原方案就有的对照，不是新加的），读数题照常保留；v0.3 的真图 / 错图 240 个请求。约 6–9 分钟。冻结之后才生成或揭示确认答案；判据和样本数不变；失败按 5.3 否决当前组合，不在确认集上调参；它也填补不了真实来源的缺口；
   5. 29 个集合加 extras 的全评（约 8.6–9 小时）、CPU 延迟、真实候选的干净安装与接口核验；
   6. 发布判定。
   - 便宜的合成确认放在全评之前。confirm_property、confirm_chartqa 及其对照照常保留；已暴露的集合不改名为 heldout。真实来源缺口如实披露，但不因为等一个还没取得的来源而停下能做完的工程准备。
@@ -77,9 +89,9 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
 
 | 步骤 | 请求 | 普通 / 读取 | 估计 |
 |---|---|---|---|
-| 校准（PREP-02） | 3,892 题 + 808 | 普通 / 读取 | 约 20–32 分钟 |
+| 校准（PREP-02） | 3,892 题 + 1,200 | 普通 / 读取 | 约 23–35 分钟 |
 | 冻结 | — | — | < 1 分钟 |
-| 合成确认 + v0.3 基线 | 约 120 + 120 错图 + 240 | 读取 / 普通 | 约 5–8 分钟 |
+| 合成确认 + v0.3 基线 | 候选：真图 120 + 错图 120 + 选项倒序 120；v0.3：真图 / 错图 240 | 读取 / 普通 | 约 6–9 分钟 |
 | 全评（29 集合 + extras，含对照） | 约 55,900 题（29 集）+ 12,468 题（extras） | 读取题约 726 道，其余普通 | 约 8.6–9 小时（盘点粗估） |
 | CPU 延迟 + 干净安装 / 接口核验 | 少量 | — | 约 15–20 分钟 |
 | 加载与报告 | — | — | 每段 1–3 分钟 |
@@ -91,3 +103,10 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - dev_sqa 的温度 100 %、磁力 50.8 % 明确标为开发集成绩；
   - 保护只说「没有触发预写的代价线」；
   - 最终温度改变之后，概率证据必须属于最终身份，不沿用 LIVE-K 原始温度下的数字。
+
+## PREP-02 第 1 轮修正（V04-K-PREP-02-R1-01–04）
+
+- R1-01：rl_calib 改用更密的固定值池，加上 calib / confirm 分区，恢复为 300 + 300 族、1,200 张图（见上文 rl_calib 一节）。
+- R1-02：ordinary 温度改用产品自己的 pick_temperature，按精确的桶名取（包括 choice:11+），取不到时退回题型温度；温度必须有限且大于 0。夹具用了普通校准真实会产生的桶名，而且 11+ 排在前面。
+- R1-03：正式的 collect 在加载之前核对并登记校准身份（来源、候选推理文件和 config、绑定这个 config 的临时 bundle、题单、全部图片、代码），连同 records 一起写进 CALIB.json。正式的 analyse 先重算身份并核对 records 的哈希，再核对完整性（每题恰好一次，选项、gold、family、域都对得上，两个域都有，每族两个视图都有），之后才做统计。temp_bundle 和 identity 都调用 rebind.candidate_problems（候选权重不变、config 只有白名单字段有差异）。夹具覆盖：config 改动、records 改动、题单改动、缺一个域、缺一个视图、重复题、gold 错、少题，以及非白名单的 config 字段。
+- R1-04：NLL 改用 log p / T 的稳定 logsumexp。p = 1e-30、T = e^−3 时结果为 1374.230651，有限，与参考值一致；原始概率为 0 或 NaN 仍然拒绝。
