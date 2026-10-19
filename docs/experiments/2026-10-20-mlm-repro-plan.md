@@ -19,6 +19,12 @@
   - 三者的命中分别记录；只要三者有不一致的 token，就记录 gold、三个预测、CPU 上 top-2 的差和非有限值个数。
   - 每次只保留一批的 logits（约 16 × 41 × 50k 个 float），不缓存全量词表 logits。
 
+## 第 1 轮修正（MLM-REPRO-R1-01 / R1-02）
+
+- **身份先行（加载任何东西之前）**：复用已验收的 EXP75 START（runs/panel-number/START.json 1827f65d…），核对 N 的 model / config / tokenizer 树、缓存的 MLM 头文件、题单 SHA、1,000 张图的实际字节摘要和固定错图映射。任何一项不符：写 identity.json（ok false 和原因），exit 12，不加载模型。runner 里原有的 model / align_report 检查保留。identity.json 同时记录本次的代码 SHA（repro、probe、align）。
+- **A / B 的实际调用证据**：A（align._evaluate）和 B（probe.run_random）运行时，在 align 模块上临时包装 _masked_batch / _logits_in_parts（运行结束后恢复，不修改 align.py 或 probe.py 源码）。每批记录实际 input ids / attention / targets / 图片张量的 SHA 和按 align 方式计的命中，与 C 逐批对齐；仍然只做 378 次前向。C 的不一致记录增加批内行号和 token 位置；align 方式的命中同时保留设备上和 CPU 上的计数。
+- **逐段落盘与无模型收尾**：A、B 各自结束时立即写 batches.jsonl 和原子写入的 summary.json；C 逐批追加写入，最后写 summary。runner 无论正常、失败还是到限，都用剩余时间运行 `repro.py finalize`（不加载模型）：核对每段的批数（126）和 summary；三段都完整才逐批比较并给出 input_equal / differences，否则记为 partial，保留已完成的段，不给结论。总预算仍是 600 s：模型步骤在截止前 60 s 结束，finalize 在剩余时间内完成。
+
 ## 解释（运行前写下，不在其外声称根因）
 
 - 输入相同但 A ≠ B：差异在计分或调用路径；哪一种与训练摘要相等就指向哪里。
@@ -37,7 +43,7 @@
 
 ## 验证（CPU，已完成）
 
-`scripts/mlm_repro/test_mlm_repro.py` 3 passed：
+`scripts/mlm_repro/test_mlm_repro.py` 18 passed（第 1 轮之后）：未改动的路径下 A / B / C 逐批对齐（input_equal，三种计分相同）；在 B 的入口改图片或改遮罩会被逐批发现（pictures / target_hash）；C 截断、缺 summary、缺 B 时报告 partial、保留已完成的段、不给结论；身份检查 6 种（正常，以及 START、config、题单、图片字节、MLM 头被改）；身份不符时不加载；不一致记录带行号 / token 位置；runner：身份不符 exit 12，正常、失败（exit 7）、超时（exit 124，在上限内）三种情况都会运行 finalize，只启动一次。原有的 3 项：
 - tiny 模型上 C 的三种计分、A（align._evaluate）、B（probe.run_random）的准确率完全相等，没有不一致；
 - 每批都有 input / 图片的 SHA；真图和错图批次的 input SHA 相同、图片 SHA 不同；
 - 不一致记录的结构：命中、非有限值、top-2 差；

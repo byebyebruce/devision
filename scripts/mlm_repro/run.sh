@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # MLM-REPRO-PREP-01 short reproduction (docs/experiments/2026-10-20-mlm-repro-plan.md). One start ever
 # (runs/mlm-repro.started); the saved N end point and its training report must be the accepted ones (sha256) before
-# anything loads; one process, three passes on one loaded instance (scripts/mlm_repro/repro.py). Hard limit start + 600 s
-# (REPRO_LIMIT for fixtures), the run ends 60 s before it (TERM, KILL 10 s later). Nothing retrained, nothing chained.
+# anything loads; one process, three passes on one loaded instance (scripts/mlm_repro/repro.py run), each written when it
+# finishes; then always the no-model finalize. Hard limit start + 600 s (REPRO_LIMIT for fixtures): the run ends 60 s
+# before it (TERM, KILL 10 s later), the finalize in what is left. Nothing retrained, nothing chained.
 #   nohup bash scripts/mlm_repro/run.sh > runs/mlm-repro.out 2>&1 &
 set -u
 cd "$(dirname "$0")/../.."
@@ -28,7 +29,12 @@ DEADLINE=$(( $(date +%s) + ${REPRO_LIMIT:-600} ))
   echo "n model $N_MODEL"; echo "n report $N_REPORT"; } > "$MARK" || { log "cannot write $MARK"; exit 1; }
 . scripts/exp35/guard.sh
 log "repro: deadline $(date -r "$DEADLINE" '+%F %T')"
-run_capped $(( DEADLINE - $(date +%s) - 60 )) 10 uv run python scripts/mlm_repro/repro.py --checkpoint runs/exp75-panel-n/n --out runs/mlm-repro
+run_capped $(( DEADLINE - $(date +%s) - 60 )) 10 uv run python scripts/mlm_repro/repro.py run --checkpoint runs/exp75-panel-n/n --out runs/mlm-repro
 rc=$?
 log "repro exit $rc"
+# always: the no-model finalize inside the remaining time keeps every finished segment and marks the rest (R1-02)
+left=$(( DEADLINE - $(date +%s) - 5 ))
+if [ "$left" -gt 0 ]; then run_capped "$left" 5 uv run python scripts/mlm_repro/repro.py finalize --out runs/mlm-repro; frc=$?; else frc=1; log "no time left to finalize"; fi
+log "finalize exit $frc"
+[ $rc = 0 ] && rc=$frc
 exit $rc
