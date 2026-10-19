@@ -87,10 +87,10 @@ sys.exit(3 if mode == "fail" else 0)
 def guard(tmp_path, mode, limit=60):
     fake = tmp_path / "fake.py"
     fake.write_text(FAKE)
-    env = {**os.environ, "GUARD_GRACE": "2", "GUARD_POLL": "0.3"}
+    env = {**os.environ, "GUARD_GRACE": "2", "GUARD_POLL": "0.3", "GUARD_KILL_CHECK": "1"}
     t0 = time.time()
     p = subprocess.run([sys.executable, GUARD, "--record", str(tmp_path / "rec.json"), "--watch", str(tmp_path / "logs"),
-                        "--out", str(tmp_path / "out.txt"), "--limit", str(limit), "--", sys.executable, str(fake), mode, str(tmp_path / "logs")],
+                        "--out", str(tmp_path / "out.txt"), "--deadline", str(time.time() + limit), "--", sys.executable, str(fake), mode, str(tmp_path / "logs")],
                        env=env, capture_output=True, text=True, timeout=90)
     return p, json.load(open(tmp_path / "rec.json")), time.time() - t0
 
@@ -104,7 +104,7 @@ def test_gpu_error_in_a_late_log_ends_the_group(tmp_path):
     try:
         p, rec, took = guard(tmp_path, "gpu_late_log")
         assert p.returncode == 70 and "command buffer exited" in rec["gpu_error"]["line"] and rec["gpu_error"]["file"].endswith("d2.log")
-        assert rec["end"]["kill"] and took < 30 and group_gone(rec["pgid"])            # the TERM-ignoring child was KILLed
+        assert rec["end"]["kill"] and rec["end"]["confirmed"] and rec["cleanup_confirmed"] and took < 30 and group_gone(rec["pgid"])
         assert bystander.poll() is None                                                 # outside the group: untouched
     finally:
         bystander.kill()
@@ -116,15 +116,48 @@ def test_gpu_error_found_after_a_clean_exit(tmp_path):
 
 
 def test_limit_and_clean_runs(tmp_path):
-    p, rec, took = guard(tmp_path / "a" if (tmp_path / "a").mkdir() is None else tmp_path, "slow", limit=3)
-    assert p.returncode == 124 and rec["end"]["why"] == "limit" and took < 30 and group_gone(rec["pgid"])
+    p, rec, took = guard(tmp_path / "a" if (tmp_path / "a").mkdir() is None else tmp_path, "slow", limit=8)
+    assert p.returncode == 124 and rec["end"]["why"] == "limit" and took < 8 and group_gone(rec["pgid"])   # stopped AND cleaned by the deadline
     (tmp_path / "b").mkdir()
     p, rec, _ = guard(tmp_path / "b", "fail")
     assert p.returncode == 3 and "gpu_error" not in rec and group_gone(rec["pgid"])        # the leftover child was cleared too
 
 
-@pytest.mark.parametrize("rec,valid", [({"exit": 0}, True), ({"exit": 70, "gpu_error": {"line": "x"}}, False),
-                                       ({"exit": 0, "gpu_error": {"line": "x", "after_exit": True}}, False), ({"exit": 124}, False), (None, False)])
+def test_an_unreapable_group_still_returns_by_the_deadline(tmp_path, monkeypatch):
+    """EXP76-RETRY-R1-01: a command that never gets reaped and a member that never leaves (CPU stand-ins -- no real
+    unkillable process): the guard stops trying by its deadline, records the PIDs left and "not confirmed", exit 71."""
+    g = load("guarded")
+    monkeypatch.setattr(g, "GRACE", 1.0)
+    monkeypatch.setattr(g, "KILL_CHECK", 1.0)
+    monkeypatch.setattr(g, "POLL", 0.2)
+
+    class Stuck:
+        pid = 2 ** 22 + 7                                   # no such process / group: every signal is a no-op
+        returncode = None
+
+        def __init__(self, *a, **k):
+            pass
+
+        def wait(self, timeout=None):
+            if timeout is None:
+                raise AssertionError("an unbounded wait")
+            time.sleep(timeout)
+            raise subprocess.TimeoutExpired("stuck", timeout)
+    monkeypatch.setattr(g.subprocess, "Popen", Stuck)
+    monkeypatch.setattr(g, "members", lambda pgid: [pgid + 1])
+    deadline = time.time() + 6
+    rc = g.main(["--record", str(tmp_path / "rec.json"), "--out", str(tmp_path / "out.txt"), "--deadline", str(deadline), "--", "x"])
+    assert rc == 71 and time.time() <= deadline
+    rec = json.load(open(tmp_path / "rec.json"))
+    assert rec["cleanup_confirmed"] is False and rec["end"]["why"] == "limit" and rec["end"]["left"] == [Stuck.pid + 1]
+    assert rec["end"]["child_reaped"] is False and rec["end"]["kill"]
+
+
+@pytest.mark.parametrize("rec,valid", [({"exit": 0, "cleanup_confirmed": True}, True), ({"exit": 70, "gpu_error": {"line": "x"}, "cleanup_confirmed": True}, False),
+                                       ({"exit": 0, "gpu_error": {"line": "x", "after_exit": True}, "cleanup_confirmed": True}, False),
+                                       ({"exit": 124, "cleanup_confirmed": True}, False), (None, False),
+                                       ({"exit": 71, "cleanup_confirmed": False, "end": {"left": [5], "child_reaped": False}}, False),
+                                       ({"exit": 0}, False), ({"exit": 3, "cleanup_confirmed": True}, False)])
 def test_report_execution_first(tmp_path, monkeypatch, rec, valid):
     m = load("report_r2")
     g = tmp_path / "guard.json"
@@ -188,4 +221,40 @@ def test_run_r2_end_to_end(tmp_path, mode, limit, reserve, rc, want):
     p2 = subprocess.run(["bash", str(root / "scripts/panel_decision/run_r2.sh")], env=env, capture_output=True, text=True, cwd=str(root))
     assert p2.returncode == 1 and "already started once" in p2.stdout
     s = open(os.path.join(HERE, "run_r2.sh")).read()
-    assert "EXP76_LIMIT:-5700" in s and "EXP76_RESERVE:-120" in s and "GUARD_GRACE:-15" in s
+    assert "EXP76_LIMIT:-5700" in s and "EXP76_RESERVE:-120" in s
+
+
+STUCK_GUARD = r'''
+import json, sys, time
+a = sys.argv[1:]
+rec, deadline = a[a.index("--record") + 1], float(a[a.index("--deadline") + 1])
+time.sleep(max(0, deadline - time.time() - 0.5))          # a cleanup that uses its whole budget and still fails
+json.dump({"exit": 71, "cleanup_confirmed": False, "end": {"why": "limit", "left": [123], "child_reaped": False}}, open(rec, "w"))
+print("== stuck guard: exit 71", flush=True)
+sys.exit(71)
+'''
+
+
+def test_run_r2_keeps_the_report_reserve_when_cleanup_fails(tmp_path):
+    root = tmp_path / "repo"
+    for rel in ("scripts/panel_decision/run_r2.sh", "scripts/panel_decision/preflight_r2.py", "scripts/panel_decision/report_r2.py",
+                "scripts/panel_learn/report.py", "configs/exp76-panel-decision-r2.yaml", "scripts/exp35/guard.sh", "scripts/exp38/steps.sh"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(os.path.join(ROOT, rel), root / rel)
+    (root / "scripts/panel_decision/guarded.py").write_text(STUCK_GUARD)        # the guard's failed-cleanup outcome, stood in
+    (root / "runs").mkdir()
+    b = tmp_path / "bin"
+    b.mkdir()
+    for name, body in {"uv": STUB, "pgrep": "#!/bin/bash\nexit 1\n", "ps": "#!/bin/bash\nexit 0\n"}.items():
+        (b / name).write_text(body)
+        (b / name).chmod((b / name).stat().st_mode | stat.S_IEXEC)
+    env = {**os.environ, "PATH": "%s:%s" % (b, os.environ["PATH"]), "MARK_CALLS": str(tmp_path / "calls"), "FAKE_PY": "-", "FAKE_MODE": "-",
+           "EXP76_LIMIT": "40", "EXP76_RESERVE": "20"}
+    p = subprocess.run(["bash", str(root / "scripts/panel_decision/run_r2.sh")], env=env, capture_output=True, text=True, timeout=60, cwd=str(root))
+    assert p.returncode == 71, p.stdout + p.stderr
+    deadline = int(open(root / "runs/exp76-panel-decision-r2.started").readline().split()[1])
+    guard_end = time.mktime(time.strptime(next(x for x in p.stdout.splitlines() if "guarded pipeline exit" in x)[3:22], "%Y-%m-%d %H:%M:%S"))
+    assert deadline - guard_end >= 20 - 1                                    # the full report reserve is left (1 s clock granularity)
+    assert "no further model is started" in p.stdout and "report exit 1" in p.stdout
+    rep = json.load(open(root / "runs/exp76-panel-decision-r2/report.json"))
+    assert rep["outcome"].startswith("incomplete: execution failed (cleanup not confirmed") and rep["execution"]["valid"] is False

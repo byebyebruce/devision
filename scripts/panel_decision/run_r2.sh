@@ -30,11 +30,15 @@ RESERVE=${EXP76_RESERVE:-120}
            scripts/panel_decision/report_r2.py scripts/panel_learn/report.py runs/$NAME-preflight.json runs/$NAME.START.json; do
     echo "sha256 $(shasum -a 256 "$f")"; done; } > "$MARK" || { log "cannot write $MARK"; exit 1; }
 log "EXP76 r2: deadline $(date -r "$DEADLINE" '+%F %T')"
-LIMIT=$(( DEADLINE - RESERVE - ${GUARD_GRACE:-15} - $(date +%s) ))   # the TERM / KILL grace inside the budget
-uv run python scripts/panel_decision/guarded.py --record runs/$NAME-guard.json --watch runs/$NAME/logs --out runs/$NAME-pipeline.out \
-  --limit "$LIMIT" -- uv run devision-pipeline configs/$NAME.yaml
+# one absolute deadline for the whole model phase (EXP76-RETRY-R1-01): the guard starts any stop early enough to end
+# by GUARD_END (polling, TERM grace and KILL check included) and returns by then even if the group cannot be reaped;
+# run_capped ends the guard itself at the reserve boundary as an outer bound; the report keeps its full RESERVE.
+GUARD_END=$(( DEADLINE - RESERVE - 5 ))
+run_capped $(( DEADLINE - RESERVE - $(date +%s) )) 2 uv run python scripts/panel_decision/guarded.py --record runs/$NAME-guard.json \
+  --watch runs/$NAME/logs --out runs/$NAME-pipeline.out --deadline "$GUARD_END" -- uv run devision-pipeline configs/$NAME.yaml
 rc=$?
 log "guarded pipeline exit $rc"
+[ $rc = 71 ] && log "cleanup of the model process group not confirmed: no further model is started"
 . scripts/exp38/steps.sh
 final_report uv run python scripts/panel_decision/report_r2.py
 rrc=$?

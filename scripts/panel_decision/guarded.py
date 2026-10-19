@@ -5,9 +5,12 @@ first line naming a GPU command-buffer error / GPU recovery (PATTERNS) it record
 <record>, sends TERM to the group, and KILL to whatever of the group is left after GRACE s. A limit ends the group the
 same way (recorded as "limit"). Only this group is signalled; nothing is killed by name.
 
-    python scripts/panel_decision/guarded.py --record R --watch DIR --out FILE --limit SECONDS -- cmd ...
-Exit: the command's own code when it ended by itself without a GPU error; 70 after a GPU error (whatever the command
-returned); 124 at the limit.
+    python scripts/panel_decision/guarded.py --record R --watch DIR --out FILE --deadline EPOCH -- cmd ...
+Every wait -- polling, the TERM grace, the KILL check, waiting for the command -- is bounded by one absolute deadline
+(EXP76-RETRY-R1-01): a stop starts early enough to end by it, and the guard writes its record and returns by then even
+if the group cannot be reaped. Exit: the command's own code when it ended by itself without a GPU error and the group is
+gone; 70 after a GPU error (whatever the command returned); 124 at the limit; 71 when the cleanup is not confirmed
+(a live member or an unreaped command is left; no further model may start).
 """
 import argparse
 import json
@@ -68,24 +71,39 @@ def signal_group(pgid: int, sig) -> None:
             pass
 
 
-def end_group(pgid: int, why: str, log) -> dict:
+KILL_CHECK = float(os.environ.get("GUARD_KILL_CHECK", "5"))   # the longest wait after KILL before reporting what is left
+STOP_MARGIN = 1.0                                               # scan / bookkeeping time kept free before the deadline
+
+
+def end_group(child, pgid: int, why: str, log, deadline: float) -> dict:
+    """TERM the group, KILL whatever is left after GRACE s, then wait at most KILL_CHECK s -- every wait bounded by the
+    absolute `deadline`. Returns what happened, with "confirmed": True only when the group has no live member and the
+    command itself was reaped; otherwise the PIDs still there (a KILL sent is not a process gone)."""
     t: dict = {"why": why, "term": time.strftime("%F %T")}
-    if not members(pgid):
-        return dict(t, gone_before_term=True)
-    signal_group(pgid, signal.SIGTERM)
-    end = time.time() + GRACE
-    while time.time() < end:
-        if not members(pgid):
-            return dict(t, ended=time.strftime("%F %T"), kill=False)
+    if members(pgid):
+        signal_group(pgid, signal.SIGTERM)
+        until = min(time.time() + GRACE, deadline - KILL_CHECK)
+        while time.time() < until and members(pgid):
+            time.sleep(0.2)
+        left = members(pgid)
+        if left:
+            signal_group(pgid, signal.SIGKILL)
+            t.update(kill=time.strftime("%F %T"), killed=left)
+            log("KILL: %s" % left)
+    else:
+        t["gone_before_term"] = True
+    until = deadline
+    while members(pgid) and time.time() < until:
         time.sleep(0.2)
+    try:
+        child.wait(timeout=max(0.0, until - time.time()))
+        reaped = True
+    except subprocess.TimeoutExpired:
+        reaped = False
     left = members(pgid)
-    signal_group(pgid, signal.SIGKILL)
-    t.update(kill=time.strftime("%F %T"), killed=left)
-    log("KILL after %.0f s: %s" % (GRACE, left))
-    end = time.time() + 5
-    while members(pgid) and time.time() < end:
-        time.sleep(0.2)
-    t["left_after_kill"] = members(pgid)
+    t.update(left=left, child_reaped=reaped, confirmed=reaped and not left, ended=time.strftime("%F %T"))
+    if not t["confirmed"]:
+        log("cleanup not confirmed: still %s, command reaped %s -- no further model may start" % (left, reaped))
     return t
 
 
@@ -94,38 +112,38 @@ def main(argv=None) -> int:
     ap.add_argument("--record", required=True)
     ap.add_argument("--watch", action="append", default=[])
     ap.add_argument("--out", required=True)
-    ap.add_argument("--limit", type=float, required=True)
+    ap.add_argument("--deadline", type=float, required=True, help="absolute epoch seconds: the guard has returned by then")
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     a = ap.parse_args(argv)
     cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
 
     def log(msg):
         print("== %s guard: %s" % (time.strftime("%F %T"), msg), flush=True)
-    end_at = time.time() + a.limit
+    deadline = a.deadline
+    stop_at = deadline - GRACE - KILL_CHECK - POLL - STOP_MARGIN     # a stop started then still ends by the deadline
     with open(a.out, "ab") as out:
         child = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
     pgid = child.pid
-    log("started pid / pgid %d: %s" % (pgid, " ".join(cmd)))
+    log("started pid / pgid %d: %s (stop by %s, return by %s)" % (pgid, " ".join(cmd), time.strftime("%T", time.localtime(stop_at)),
+                                                                  time.strftime("%T", time.localtime(deadline))))
     watch = Watch([a.out], a.watch)
-    rec: dict = {"pgid": pgid, "cmd": cmd, "started": time.strftime("%F %T")}
+    rec: dict = {"pgid": pgid, "cmd": cmd, "started": time.strftime("%F %T"), "deadline": deadline}
     code = None
     while code is None:
         hit = watch.scan()
         if hit:
             rec.update(gpu_error=dict(hit, seen=time.strftime("%F %T")))
             log("GPU error in %s: %s" % (hit["file"], hit["line"]))
-            rec["end"] = end_group(pgid, "gpu_error", log)
-            child.wait()
+            rec["end"] = end_group(child, pgid, "gpu_error", log, deadline - STOP_MARGIN)
             code = 70
             break
-        if time.time() >= end_at:
+        if time.time() >= stop_at:
             log("limit reached")
-            rec["end"] = end_group(pgid, "limit", log)
-            child.wait()
+            rec["end"] = end_group(child, pgid, "limit", log, deadline - STOP_MARGIN)
             code = 124
             break
         try:
-            code = child.wait(timeout=POLL)
+            code = child.wait(timeout=max(0.0, min(POLL, stop_at - time.time())))
         except subprocess.TimeoutExpired:
             code = None
     if "gpu_error" not in rec:                        # the last scan after the command ended
@@ -134,8 +152,12 @@ def main(argv=None) -> int:
             rec.update(gpu_error=dict(hit, seen=time.strftime("%F %T"), after_exit=True))
             log("GPU error found after exit in %s: %s" % (hit["file"], hit["line"]))
             code = 70
-    if members(pgid):                                   # leftovers of the group after the command itself ended
-        rec["leftovers"] = end_group(pgid, "leftovers", log)
+    if "end" not in rec and members(pgid):              # leftovers of the group after the command itself ended
+        rec["leftovers"] = end_group(child, pgid, "leftovers", log, deadline - STOP_MARGIN)
+    stop = rec.get("end") or rec.get("leftovers")
+    rec["cleanup_confirmed"] = stop["confirmed"] if stop else (child.returncode is not None and not members(pgid))
+    if not rec["cleanup_confirmed"]:
+        code = 71
     rec.update(exit=code, child_returncode=child.returncode, ended=time.strftime("%F %T"))
     tmp = a.record + ".tmp"
     json.dump(rec, open(tmp, "w"), indent=1)

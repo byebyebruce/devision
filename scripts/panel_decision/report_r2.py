@@ -29,15 +29,24 @@ def d2():
 
 
 def execution(guard: str = GUARD) -> dict:
+    """Valid only for an explicit success: the guard's record exists, no GPU error, the command exited 0 by itself and
+    the cleanup of its process group was confirmed (EXP76-RETRY-R1-01). Anything else is an execution failure."""
     try:
         rec = json.load(open(guard))
     except (OSError, ValueError) as e:
         return {"valid": False, "why": "no readable guard record (%s)" % e.__class__.__name__}
     if rec.get("gpu_error"):
-        return {"valid": False, "why": "GPU execution error", "gpu_error": rec["gpu_error"], "end": rec.get("end")}
+        return {"valid": False, "why": "GPU execution error", "gpu_error": rec["gpu_error"], "end": rec.get("end"),
+                "cleanup_confirmed": rec.get("cleanup_confirmed")}
+    if rec.get("cleanup_confirmed") is not True:
+        stop = rec.get("end") or rec.get("leftovers") or {}
+        return {"valid": False, "why": "cleanup not confirmed (left %s, command reaped %s)" % (stop.get("left"), stop.get("child_reaped")),
+                "end": stop}
     if rec.get("exit") == 124:
         return {"valid": False, "why": "stopped at the limit", "end": rec.get("end")}
-    return {"valid": True, "exit": rec.get("exit")}
+    if rec.get("exit") != 0:
+        return {"valid": False, "why": "the pipeline exited %r" % rec.get("exit")}
+    return {"valid": True, "exit": 0, "cleanup_confirmed": True}
 
 
 def report(run: str = RUN, guard: str = GUARD, sealed: str = SEALED, config: str = CONFIG) -> dict:
