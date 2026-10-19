@@ -271,3 +271,16 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
 - **bind**：rebind bind 成功，K 规则在；reading.json 9f397a0d…，rules 59478275…；lineage.json ff3667fa…；model.safetensors、encoder、vision、tokenizer 与来源相同。
 - **freeze**：check_eval freeze configs/v04-full-eval.yaml --extras configs/v04-extra-evidence.yaml，写出 runs/v04-k/eval/IDENTITY.json（c14863e2…）。温度表包含 by_route；code 的 9 个模块都指向 devision-v04-freeze/src，7 个必需模块齐全。confirm.freeze_problems、rebind.lineage_problems 都没有发现问题；temperature_table 等于 IDENTITY。
 - 之后的合成确认、全评和安装核验都必须在这个 worktree 的代码下运行，冻结后不再改动它的推理代码。runs/v04-k-confirm、data/v04_k_confirm 和一次性 started 标记都还不存在；没有加载模型，没有生成确认集。
+
+## 合成确认结果（V04-K-CONFIRM-RUN-01，2026-10-19 13:19:12–13:24:35，完整；HEAD 05c83b4，START 3f482ef2…）
+
+- 只运行了一次，五个条件都是 completed，report 54c2e041…。分支：synthetic confirmation passed（合成确认，不是新真实来源上的确认）。
+- 主判据（120 道比较题按图配对，2,000 次图片重采样）：
+  - 候选 − v0.3 = +0.133 [+0.042, +0.233]（56/120 对 40/120）；
+  - 候选自身 真图 − 错图 = +0.125 [+0.025, +0.233]。
+  - 两项都通过。
+- 只报告的项：
+  - 读数按图聚类：候选真图 force 0.800、temp 0.533；v0.3 真图 force 0.517、temp 0.342；
+  - 倒序翻转率：force 0.117、temp 0.353（准确率不变，翻转在答错的题之间）；
+  - equal 类比较题：候选 temp 2/15、force 2/20，是明显弱点。
+- 下一阶段（全评）等评审核实后再开始。
