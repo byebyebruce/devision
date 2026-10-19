@@ -261,3 +261,13 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - 缺一个条件 → incomplete；明细被改、或者把一题改到别的图上（连登记也一起改）→ invalid；
   - start 遇到没有冻结的组合、或 v0.3 文件不是固定的那份，都会拒绝；同一个阶段不能跑两次；
   - run.sh：阶段顺序；cand_rev 失败时 finalize 且不再继续；缺 CONFIRM_IDENTITY 时直接退出、不调用任何阶段；上限 1,200 / 120。
+
+## 整合与冻结（V04-K-FREEZE-PREP-01，2026-10-19 13:08–13:16；worktree devision-v04-freeze，分支 v04-freeze）
+
+- **整合**：从 route-temp 9c9a920 拉出，合并确认 runner 1ccbca3（f6cff48）；只有本计划文档冲突，两边都是追加的章节，两节都保留。136da37 加了一个 tiny 夹具：候选 config 有 temperature_by_route 时，check_eval 冻结表和 confirm 的 temperature_of 都带上 by_route；模型运行时没有它就判为 invalid。全量 491 tests 通过，数据脚本 228 项通过，pyright 0 错误。
+- **全评配置**（6be0963）：checkpoint 改为 runs/v04-k/cand；history 在原 17 个之外加入 46 个非训练集合，来自 exp30 到 protect-k / LIVE-K / 两次校准的脚本和配置（各阶段 --val / --eval、runner 的筛选集、读数拟合、路由校准题单），训练文件不列入。29 个集合、15 个 extras、显式角色和对照都不变；用 build_plan 比较，加入前后 29 个集合的角色完全相同。test_count_fresh 和 test_bind_gqa 各与旧 history 共享 1 张 COCO 图，这在 v0.3 的配置里就已存在，它们的显式 heldout 不改。
+- **来源**：对现有 runs/v04-k/reading_lineage/source.json（c9c7d12e…，等于校准 registry 登记的值）做只读核对，rebind.check_source 和 candidate_problems 都通过；没有重新 clone，也没有重做校准。
+- **写值**：写入前的 config 原字节留存在 runs/v04-k/meta/config_before_route_temps.json（186f175c…，只读）。route_temps.py 写入 temperature 3.238142943837961、magnets 4.664590270988126；config 从 186f175c… 变为 7fb24ad3…，只多了这一个字段。
+- **bind**：rebind bind 成功，K 规则在；reading.json 9f397a0d…，rules 59478275…；lineage.json ff3667fa…；model.safetensors、encoder、vision、tokenizer 与来源相同。
+- **freeze**：check_eval freeze configs/v04-full-eval.yaml --extras configs/v04-extra-evidence.yaml，写出 runs/v04-k/eval/IDENTITY.json（c14863e2…）。温度表包含 by_route；code 的 9 个模块都指向 devision-v04-freeze/src，7 个必需模块齐全。confirm.freeze_problems、rebind.lineage_problems 都没有发现问题；temperature_table 等于 IDENTITY。
+- 之后的合成确认、全评和安装核验都必须在这个 worktree 的代码下运行，冻结后不再改动它的推理代码。runs/v04-k-confirm、data/v04_k_confirm 和一次性 started 标记都还不存在；没有加载模型，没有生成确认集。
