@@ -157,10 +157,21 @@ def _number_rows(tok, captions: Sequence[str], rows: Sequence[int], input_ids, t
             target[i, 1 + t] = tid if h else -100
 
 
+def _full_picture(model, pixels: torch.Tensor) -> torch.Tensor:
+    """The whole picture of a batch: as is, or -- for a model with fixed local views, whose pixels are packed by
+    image.local_pixels -- its full-picture channels, the same picture model.visual_inputs projects into the visual
+    tokens (PANEL-LEARN-PREP-01; the views only feed the conditioning, which caption alignment does not use)."""
+    n = getattr(model, "local_views", 0)
+    if not n:
+        return pixels
+    from ..image import unpack_local
+    return unpack_local(pixels, n)[0]
+
+
 def _mlm_logits(model, head, input_ids, attention, pixels, device) -> torch.Tensor:
     """Vocabulary logits at text positions 1.. (they line up with labels[:, 1:])."""
     with torch.no_grad():
-        patches = model.vision_patches(pixels.to(device))
+        patches = model.vision_patches(_full_picture(model, pixels.to(device)))
     visual = model.projector(patches)
     h, _ = model.encode(input_ids.to(device), attention.to(device), visual)
     return head(h[:, visual.size(1) + 1:]).float()

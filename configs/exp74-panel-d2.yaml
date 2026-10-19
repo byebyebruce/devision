@@ -1,0 +1,46 @@
+# EXP74 D2 -- read -> decision on the bound panel representation, with PROTECT's picture and text / K replay
+# (PANEL-LEARN-PREP-01; docs/experiments/2026-10-19-panel-learn-plan.md). Not a round, no release candidate. Runs only
+# after D1's gate passed. mixed_input: only the (new) LoRA and the decision head train; projector, conditioning,
+# SigLIP and every reading component stay frozen. Monitors (step 0, each epoch end, final): fit (training families,
+# the learnability gate), dev16 (unseen families, original rule, development monitor), erased control, PROTECT's K text
+# slice and the frozen reading step's sealed states on the real ScienceQA temperature / magnet questions. After it:
+# exist / science protection probes through devision-eval.
+name: exp74-panel-d2
+device: mps
+common:
+  log_every: 25
+stages:
+  - name: d2
+    kind: train
+    init: runs/exp74-panel-d1/d1
+    data: data/panel_learn/train.jsonl
+    val: data/panel_learn/fit.jsonl
+    eval:
+      dev16: data/panel_learn/dev16.jsonl
+      erased: data/panel_learn/erased.jsonl
+      k_text: data/protect_p/slice_K_text.jsonl
+      rs_temp: data/panel_learn/read_states_sqa_temp.jsonl
+      rs_force: data/panel_learn/read_states_sqa_force.jsonl
+      rs_temp_mism: data/panel_learn/read_states_sqa_temp_mism.jsonl
+      rs_force_mism: data/panel_learn/read_states_sqa_force_mism.jsonl
+    params:
+      epochs: 2
+      mixed_input: true
+      objective: ce
+      micro_batch: 8
+      eval_batch: 8
+      lora_r: 16
+      lr_lora: 5.0e-5
+      lr_head: 1.0e-5
+      warmup: 100
+      eval_every: 0
+      save_every: 0
+      amp: "off"
+      seed: 1
+      monitor_details: true
+evaluate:
+  checkpoint: d2
+  controls: false
+  sets:
+    exist: {path: data/r13b/panel_exist.jsonl, role: monitoring}
+    science: {path: data/r13b/panel_science.jsonl, role: monitoring}
