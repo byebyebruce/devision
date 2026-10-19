@@ -110,3 +110,12 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
 - R1-02：ordinary 温度改用产品自己的 pick_temperature，按精确的桶名取（包括 choice:11+），取不到时退回题型温度；温度必须有限且大于 0。夹具用了普通校准真实会产生的桶名，而且 11+ 排在前面。
 - R1-03：正式的 collect 在加载之前核对并登记校准身份（来源、候选推理文件和 config、绑定这个 config 的临时 bundle、题单、全部图片、代码），连同 records 一起写进 CALIB.json。正式的 analyse 先重算身份并核对 records 的哈希，再核对完整性（每题恰好一次，选项、gold、family、域都对得上，两个域都有，每族两个视图都有），之后才做统计。temp_bundle 和 identity 都调用 rebind.candidate_problems（候选权重不变、config 只有白名单字段有差异）。夹具覆盖：config 改动、records 改动、题单改动、缺一个域、缺一个视图、重复题、gold 错、少题，以及非白名单的 config 字段。
 - R1-04：NLL 改用 log p / T 的稳定 logsumexp。p = 1e-30、T = e^−3 时结果为 1374.230651，有限，与参考值一致；原始概率为 0 或 NaN 仍然拒绝。
+- R1-03 剩余两处（R2）：
+  - A：新增 bundle_problems，在 identity 里（collect 加载之前）和 analyse 重算 identity 时都会调用。逐项核对临时 bundle 的实际 selector / head / corrector 文件，以及 reading.json 里记录的哈希，都等于已批准来源的 bundle_on；K 规则、规则哈希和 dims 与源 bundle 相同；sources 指回当前的 source.json 和候选。三个组件的实际哈希登记在 CALIB 里。
+  - B：collect 跑完后登记 runtime_code（实际载入的 devision 模块，含路径、内容哈希和版本）。register 和 analyse 都按模块名比较内容：每个模块必须等于本实现里同名的源文件，必需的模块必须载入；路径只用来追溯。固定源码表里缺文件时拒绝，不再静默跳过。
+  - 夹具：
+    - 自洽但外来的 head（包内哈希已更新，绑定同一个候选；这个 bundle 本身可以被 Reading.load 加载）在加载前被拒绝；
+    - 登记之后改动组件，analyse 拒绝；
+    - 实际运行的模块内容不同、缺少必需模块，都不能登记；登记之后实现被改，analyse 拒绝；
+    - 内容相同、路径不同的模块可以通过；
+    - 固定源码缺失时拒绝。

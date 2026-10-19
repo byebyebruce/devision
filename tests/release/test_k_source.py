@@ -185,7 +185,8 @@ def tiny_calibration(tmp_path, monkeypatch):
     rd = R.Reading.load(str(cand), str(tmp_path / "calib_bundle"), device="cpu", full_rules=True)
     recs = rc.collect(rd, rows, str(tmp_path))
     paths = {"candidate": str(cand), "bundle": str(tmp_path / "calib_bundle"), "rows": str(rows_path), "data_root": str(tmp_path)}
-    rc.register(str(tmp_path / "calib"), ident, recs, paths)
+    from devision.train.evaluate import runtime_code
+    rc.register(str(tmp_path / "calib"), ident, recs, paths, runtime_code(), ROOT)
     return rc, pins, cand, recs, rows, ident, paths
 
 
@@ -233,7 +234,8 @@ def test_registered_calibration_refusals(tmp_path, monkeypatch, damage, why):
         p2 = dict(paths, rows=str(rows_path))
         ident2 = rc.identity(paths["candidate"], paths["bundle"], str(rows_path), paths["data_root"], pins, ROOT)
         out = str(tmp_path / "calib2")
-        rc.register(out, ident2, rcs, p2)
+        from devision.train.evaluate import runtime_code
+        rc.register(out, ident2, rcs, p2, runtime_code(), ROOT)
     with pytest.raises(SystemExit, match=why):
         rc.analyse_registered(out, pins, ROOT)
 
@@ -247,3 +249,68 @@ def test_temporary_bundle_refuses_a_changed_candidate(tmp_path):
     (cand / "config.json").write_text(json.dumps(c))
     with pytest.raises(SystemExit, match="not allowed"):
         rb.temp_bundle(str(cand), str(tmp_path / "calib_bundle"), pins)
+
+
+def test_a_self_consistent_foreign_component_is_refused_before_loading(tmp_path, monkeypatch):
+    """R1-03 A: another head with the temporary bundle's own hashes updated (fully self-consistent, same candidate)."""
+    rc, pins, cand, recs, rows, ident, paths = tiny_calibration(tmp_path, monkeypatch)
+    import shutil
+    foreign = tmp_path / "foreign_bundle"
+    shutil.copytree(paths["bundle"], foreign)
+    torch.manual_seed(99)
+    torch.save(R.CharHead(32).state_dict(), foreign / "head.pt")
+    j = json.loads((foreign / "reading.json").read_text())
+    j["sha256"]["head.pt"] = R.sha(str(foreign / "head.pt"))
+    (foreign / "reading.json").write_text(json.dumps(j))
+    R.Reading.load(str(cand), str(foreign), device="cpu", full_rules=True)            # the bundle itself loads: it is self-consistent
+    with pytest.raises(SystemExit, match="head.pt is not the approved source's"):
+        rc.identity(str(cand), str(foreign), paths["rows"], paths["data_root"], pins, ROOT)
+
+
+def test_a_component_changed_after_registration_is_refused(tmp_path, monkeypatch):
+    rc, pins, cand, recs, rows, ident, paths = tiny_calibration(tmp_path, monkeypatch)
+    assert set(ident["temporary_components"]) == {"selector.pt", "head.pt", "corrector.pt"}
+    with open(os.path.join(paths["bundle"], "selector.pt"), "ab") as fh:
+        fh.write(b"x")
+    with pytest.raises(SystemExit, match="identity refused|does not verify"):
+        rc.analyse_registered(str(tmp_path / "calib"), pins, ROOT)
+
+
+@pytest.mark.parametrize("case", ["other_content", "missing_module", "same_content_other_path", "changed_after"])
+def test_runtime_code_must_be_this_implementation(tmp_path, monkeypatch, case):
+    """R1-03 B: the modules collect ran, by name and content (paths only traced)."""
+    import copy
+    rc, pins, cand, recs, rows, ident, paths = tiny_calibration(tmp_path, monkeypatch)
+    from devision.train.evaluate import runtime_code
+    rt = copy.deepcopy(runtime_code())
+    if case == "changed_after":                                  # the registered run, then this implementation changes
+        fake = tmp_path / "reading_edited.py"
+        fake.write_text(open(os.path.join(ROOT, "src", "devision", "reading.py")).read() + "\n# edited\n")
+        real = rc.module_source
+        monkeypatch.setattr(rc, "module_source", lambda n, root: str(fake) if n == "devision.reading" else real(n, root))
+        with pytest.raises(SystemExit, match="runtime code"):
+            rc.analyse_registered(str(tmp_path / "calib"), pins, ROOT)
+        return
+    if case == "other_content":
+        rt["modules"]["devision.reading"]["sha256"] = "0" * 64
+    elif case == "missing_module":
+        rt["modules"].pop("devision.image")
+    else:
+        copy_path = tmp_path / "elsewhere" / "reading.py"
+        copy_path.parent.mkdir()
+        copy_path.write_text(open(rt["modules"]["devision.reading"]["path"]).read())
+        rt["modules"]["devision.reading"]["path"] = str(copy_path)
+    out = str(tmp_path / "calib_rt")
+    if case == "same_content_other_path":
+        rc.register(out, ident, recs, paths, rt, ROOT)
+        assert rc.analyse_registered(out, pins, ROOT)["branch"][0] in "1234"
+    else:
+        with pytest.raises(SystemExit, match="did not run this implementation"):
+            rc.register(out, ident, recs, paths, rt, ROOT)
+
+
+def test_fixed_sources_cannot_be_silently_missing(tmp_path, monkeypatch):
+    rc, pins, cand, recs, rows, ident, paths = tiny_calibration(tmp_path, monkeypatch)
+    monkeypatch.setattr(rc, "CODE", rc.CODE + ("scripts/release/not_there.py",))
+    with pytest.raises(SystemExit, match="fixed source scripts/release/not_there.py missing"):
+        rc.identity(paths["candidate"], paths["bundle"], paths["rows"], paths["data_root"], pins, ROOT)

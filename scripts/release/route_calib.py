@@ -178,6 +178,60 @@ def collect(reading, rows: List[Dict], data_root: str) -> List[Dict]:
 CODE = ("scripts/release/route_calib.py", "scripts/release/rebind.py", "scripts/release/rl_calib.py", "src/devision/reading.py",
         "src/devision/infer.py", "src/devision/model.py", "src/devision/train/evaluate.py")
 DOMAIN_OF_KIND = {"temp": "temperature", "force": "magnets"}
+REQUIRED_MODULES = ("devision.reading", "devision.infer", "devision.model", "devision.image", "devision.train.evaluate")
+
+
+def bundle_problems(bundle: str, rec: Dict, candidate: str, source_json: str) -> List[str]:
+    """The temporary bundle is the approved source's components, rule and dims bound to this candidate -- by its actual
+    files, not only its own self-consistent hashes (critic V04-K-PREP-02-R2 R1-03 A): selector / head / corrector present
+    exactly as in source.bundle_on and their files hashing to it; the K rule, rules hash and dims of the source bundle; its
+    sources pointing back to this source.json and candidate."""
+    import os
+    rb = _rb()
+    rj = json.load(open(os.path.join(bundle, "reading.json")))
+    src = json.load(open(os.path.join(rec["bundle"], "reading.json")))
+    out = []
+    want = {c for c in rb.COMPONENTS if c in rec["bundle_on"]}
+    have = {c for c in rb.COMPONENTS if c in rj["sha256"] or os.path.exists(os.path.join(bundle, c))}
+    if have != want:
+        out.append("temporary bundle components %s, the source has %s" % (sorted(have), sorted(want)))
+    for c in sorted(want & have):
+        f = os.path.join(bundle, c)
+        if not os.path.exists(f) or _sha(f) != rec["bundle_on"][c] or rj["sha256"].get(c) != rec["bundle_on"][c]:
+            out.append("temporary bundle %s is not the approved source's" % c)
+    if ("k_rule" in rj) != ("k_rule" in src) or rj.get("k_rule") != src.get("k_rule") or rj.get("rules_sha256") != src.get("rules_sha256"):
+        out.append("temporary bundle's K rule / rules hash is not the source's")
+    if rj.get("dims") != src.get("dims"):
+        out.append("temporary bundle's dims are not the source's")
+    srcs = rj.get("sources") or {}
+    if srcs.get("source_json_sha256") != source_json or os.path.abspath(str(srcs.get("temporary_calibration_bundle_of"))) != os.path.abspath(candidate):
+        out.append("temporary bundle does not point back to this source.json / candidate")
+    return out
+
+
+def module_source(name: str, root: str) -> Optional[str]:
+    """The repository file of a devision module (src/<name as path>.py or its package __init__.py), or None."""
+    import os
+    base = os.path.join(root, "src", *name.split("."))
+    for p in (base + ".py", os.path.join(base, "__init__.py")):
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def runtime_problems(rt: Dict, root: str = ".") -> List[str]:
+    """The modules a collect process actually ran (devision.train.evaluate.runtime_code) belong to this implementation
+    (critic R1-03 B): every loaded devision module's content equals the repository file of the same module; the required
+    modules were loaded. Compared by module name and content; the path is for tracing only."""
+    mods = (rt or {}).get("modules") or {}
+    out = ["module %s: required but not loaded" % n for n in REQUIRED_MODULES if n not in mods]
+    for n, m in sorted(mods.items()):
+        src = module_source(n, root)
+        if src is None:
+            out.append("module %s: no source file in this implementation" % n)
+        elif _sha(src) != m.get("sha256"):
+            out.append("module %s: the content run is not this implementation's (%s)" % (n, m.get("path")))
+    return out
 
 
 def _sha(path: str) -> str:
@@ -208,23 +262,33 @@ def identity(candidate: str, bundle: str, rows_path: str, data_root: str, pins: 
         bad.append("the temporary bundle is not bound to the candidate's current config / weights")
     if "k_rule" not in rj:
         bad.append("the temporary bundle has no K rule")
+    source_json = _sha(os.path.join(rb.lineage_dir(candidate), "source.json"))
+    bad += bundle_problems(bundle, rec, candidate, source_json)
+    missing = [f for f in CODE if not os.path.exists(os.path.join(root, f))]
+    bad += ["fixed source %s missing" % f for f in missing]
     if bad:
         raise SystemExit("calibration identity refused:\n  " + "\n  ".join(bad))
     rows = [json.loads(x) for x in open(rows_path) if x.strip()]
-    return {"source_json": _sha(os.path.join(rb.lineage_dir(candidate), "source.json")),
+    return {"source_json": source_json,
             "candidate": {f: rb.digest(os.path.join(candidate, f)) for f in rb.FILES},
-            "temporary_bundle": _sha(os.path.join(bundle, "reading.json")), "rows": _sha(rows_path),
-            "pictures": {r["image"]: _sha(os.path.join(data_root, r["image"])) for r in rows},
-            "code": {f: _sha(os.path.join(root, f)) for f in CODE if os.path.exists(os.path.join(root, f))}, "temperature": "raw (1)"}
+            "temporary_bundle": _sha(os.path.join(bundle, "reading.json")),
+            "temporary_components": {c: _sha(os.path.join(bundle, c)) for c in rb.COMPONENTS if os.path.exists(os.path.join(bundle, c))},
+            "rows": _sha(rows_path), "pictures": {r["image"]: _sha(os.path.join(data_root, r["image"])) for r in rows},
+            "code": {f: _sha(os.path.join(root, f)) for f in CODE}, "temperature": "raw (1)"}
 
 
-def register(out_dir: str, ident: Dict, recs: List[Dict], paths: Dict[str, str]) -> Dict:
+def register(out_dir: str, ident: Dict, recs: List[Dict], paths: Dict[str, str], runtime: Dict, root: str = ".") -> Dict:
+    """records.jsonl + CALIB.json: the identity, the records' hash and the collect process's runtime code (refused when
+    it is not this implementation)."""
     import os
+    bad = runtime_problems(runtime, root)
+    if bad:
+        raise SystemExit("the collect process did not run this implementation:\n  " + "\n  ".join(bad))
     os.makedirs(out_dir, exist_ok=False)
     rp = os.path.join(out_dir, "records.jsonl")
     with open(rp, "w") as fh:
         fh.write("".join(json.dumps(r) + "\n" for r in recs))
-    reg = {**ident, "records": _sha(rp), "paths": {k: os.path.abspath(v) for k, v in paths.items()}}
+    reg = {**ident, "records": _sha(rp), "paths": {k: os.path.abspath(v) for k, v in paths.items()}, "runtime_code": runtime}
     json.dump(reg, open(os.path.join(out_dir, "CALIB.json"), "w"), indent=1)
     return reg
 
@@ -270,6 +334,9 @@ def analyse_registered(out_dir: str, pins: Optional[Dict[str, str]] = None, root
     changed = sorted(k for k in now if now[k] != reg.get(k))
     if changed or _sha(os.path.join(out_dir, "records.jsonl")) != reg["records"]:
         raise SystemExit("calibration registration does not verify: %s" % (changed or ["records"]))
+    bad = runtime_problems(reg.get("runtime_code") or {}, root)
+    if bad:
+        raise SystemExit("calibration registration does not verify (runtime code):\n  " + "\n  ".join(bad))
     recs = [json.loads(x) for x in open(os.path.join(out_dir, "records.jsonl")) if x.strip()]
     rows = [json.loads(x) for x in open(P["rows"]) if x.strip()]
     bad = completeness(recs, rows)
@@ -298,7 +365,8 @@ def main(argv=None) -> int:
         reading = Reading.load(a.candidate, a.bundle, device=a.device, full_rules=True)
         rows = [json.loads(x) for x in open(a.rows) if x.strip()]
         recs = collect(reading, rows, a.data_root)
-        register(a.out_dir, ident, recs, {"candidate": a.candidate, "bundle": a.bundle, "rows": a.rows, "data_root": a.data_root})
+        from devision.train.evaluate import runtime_code
+        register(a.out_dir, ident, recs, {"candidate": a.candidate, "bundle": a.bundle, "rows": a.rows, "data_root": a.data_root}, runtime_code())
         print("%d records registered in %s" % (len(recs), a.out_dir))
         return 0
     res = analyse_registered(a.calib_dir)
