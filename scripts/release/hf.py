@@ -183,6 +183,8 @@ def results(round_dir: str, config: Dict[str, Any]) -> Dict[str, Any]:
                            "temperature": {"choice": config["temperature"][0], "noul": config["temperature"][2],
                                            "by_options": config.get("temperature_by_options", {})},
                            "test_sets": {}, "laya_vision": {}}
+    if config.get("temperature_by_route"):             # V04-ROUTE-TEMP-NOTE-01: only cards whose config has the field
+        res["temperature"]["by_route"] = dict(config["temperature_by_route"])
     for name, _ in TEST_SETS:
         p = os.path.join(ev, name + ".json")
         if os.path.exists(p):
@@ -262,6 +264,12 @@ def temperature_table(res: Dict[str, Any]) -> str:
     rows = ["| Bucket | Temperature |", "|---|---:|"]
     rows += ["| %s | %.4f |" % (names.get(k, k), v) for k, v in sorted(t["by_options"].items())]
     rows += ["| Choice, any other count | %.4f |" % t["choice"]]
+    routes = {"temperature": "Read questions, temperature diagrams", "magnets": "Read questions, magnet diagrams"}
+    rows += ["| %s | %.4f |" % (routes.get(k, k), v) for k, v in sorted(t.get("by_route", {}).items())]
+    if t.get("by_route"):
+        rows += ["", "The read-question temperatures replace the bucket temperature only for a question the reading step "
+                 "actually read (a supported temperature / magnet question with a picture, reading on); every other "
+                 "question uses the buckets above."]
     return "\n".join(rows)
 
 
