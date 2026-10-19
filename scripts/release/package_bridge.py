@@ -11,7 +11,8 @@ of loosening that check, this script writes an explicit hand-over record that on
 The approved source (APPROVED, by the frozen IDENTITY.json's sha256): the freeze commit and the digest of its complete
 src/devision file list ("manifest": path under src/ -> sha256 of the content). The manifest is read from that commit
 in any clone (`--repo`; the same content at another path is the same source), must hash to the pinned digest, and its
-files must hold every frozen module with exactly its frozen content. Both packages are checked against this one list:
+files must hold every frozen module with exactly its frozen content; the commit's README.md / LICENSE / version-less
+pyproject.toml must hash to the pinned extra digest (both pins are checked again when a record is used). Both packages are checked against this one list:
 
   wheel  every devision/ file equal to the manifest, no file more or less; METADATA Name devision, Version the final
          release of the frozen development version (0.3.0.dev1 -> 0.3.0; never an rc, post, local or other version);
@@ -45,10 +46,13 @@ from typing import Any, Dict, List, Optional
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 KIND = "devision package hand-over (evaluated development package -> final release)"
 # V04-K-FREEZE-ACCEPT-01: runs/v04-k/eval/IDENTITY.json was frozen from devision-v04-freeze at 05c83b4; the 19 files of
-# its src/devision (the nine frozen modules among them, content-checked) hash to the manifest digest below.
+# its src/devision (the nine frozen modules among them, content-checked) hash to the manifest digest below, and its
+# README.md / LICENSE / version-less pyproject.toml to the extra digest.
 APPROVED = {"c14863e21c0a4a1466d0ad7de0c8955486c6c6773e601f31a36ba5af23c8fee0":
             {"commit": "05c83b46be9a44a40df3a2a4ed502e404d4c4682",
-             "manifest_sha256": "ccfa0d9f4561a786a1ab88237181f21233715f767d0e56856d0ba58abf7f798a"}}
+             "manifest_sha256": "ccfa0d9f4561a786a1ab88237181f21233715f767d0e56856d0ba58abf7f798a",
+             # README.md / LICENSE / pyproject.toml without its version value, at that commit (critic PACKAGE-R2-01)
+             "extra_sha256": "26102aec2cd7dc543bff0b9634ac9023a8e030b7e7ad1ba36e06dcd121930b02"}}
 SDIST_EXTRA = ("README.md", "LICENSE", "pyproject.toml")
 FIELDS = {"kind": str, "release": bool, "identity": dict, "from_version": str, "to_version": str, "python": str,
           "modules": dict, "source": dict, "wheel": dict, "sdist": (dict, type(None)), "uv_lock_sha256": str}
@@ -193,6 +197,8 @@ def make(identity: str, repo: str, wheel: str, sdist: Optional[str], lock: Optio
     manifest = {k: hb(v) for k, v in src.items() if not k.startswith(":")}
     extra = {k[1:]: hb(_versionless(v) if k == ":pyproject.toml" else v) for k, v in src.items() if k.startswith(":")}
     problems = manifest_problems(manifest, ident, ap)
+    if digest(extra) != ap["extra_sha256"]:
+        problems.append("the source's README.md / LICENSE / pyproject.toml are not the approved ones")
     w = wheel_info(wheel)
     problems += package_problems("wheel", w, manifest, target)
     s = sdist_info(sdist) if sdist else None
@@ -202,7 +208,8 @@ def make(identity: str, repo: str, wheel: str, sdist: Optional[str], lock: Optio
         raise SystemExit("no hand-over:\n  " + "\n  ".join(problems))
     return {"kind": KIND, "release": s is not None, "identity": {"sha256": sha(identity), "checkpoint": ident.get("checkpoint")},
             "from_version": code["version"], "to_version": target, "python": code["python"], "modules": frozen_modules(ident),
-            "source": {"commit": ap["commit"], "manifest_sha256": digest(manifest), "manifest": manifest, "extra": extra},
+            "source": {"commit": ap["commit"], "manifest_sha256": digest(manifest), "manifest": manifest, "extra": extra,
+                       "extra_sha256": digest(extra)},
             "wheel": {"file": w["file"], "sha256": w["sha256"]},
             "sdist": {"file": s["file"], "sha256": s["sha256"]} if s else None,
             "uv_lock_sha256": sha(lock or os.path.join(ROOT, "uv.lock"))}
@@ -242,8 +249,10 @@ def record_problems(record: Any, identity: str, folder: Optional[str], lock: Opt
         out.append("the hand-over's modules are not exactly the frozen modules")
     src = record["source"]
     if ap is not None and (src["commit"] != ap["commit"] or src["manifest_sha256"] != ap["manifest_sha256"]
-                           or not isinstance(src["manifest"], dict) or digest(src["manifest"]) != ap["manifest_sha256"]):
-        out.append("the hand-over's source is not the approved source (commit / manifest)")
+                           or not isinstance(src["manifest"], dict) or digest(src["manifest"]) != ap["manifest_sha256"]
+                           or not isinstance(src["extra"], dict) or digest(src["extra"]) != ap["extra_sha256"]
+                           or src.get("extra_sha256") != ap["extra_sha256"]):
+        out.append("the hand-over's source is not the approved source (commit / manifest / README, LICENSE, pyproject)")
     elif ap is not None:
         out += manifest_problems(src["manifest"], ident, ap)
     if not record["release"] or not record["sdist"]:

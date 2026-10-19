@@ -102,7 +102,8 @@ def ws(tmp_path):
     ident = tmp_path / "IDENTITY.json"
     ident.write_text(json.dumps({"checkpoint": "runs/v04-k/cand", "files": {}, "reading": {"x": 1}, "code": code}))
     manifest = {k: h(v) for k, v in FILES.items()}
-    approved = {pb.sha(str(ident)): {"commit": commit, "manifest_sha256": pb.digest(manifest)}}
+    extra = {k: pb.hb(pb._versionless(v.encode()) if k == "pyproject.toml" else v.encode()) for k, v in EXTRA.items()}
+    approved = {pb.sha(str(ident)): {"commit": commit, "manifest_sha256": pb.digest(manifest), "extra_sha256": pb.digest(extra)}}
     lock = tmp_path / "uv.lock"
     lock.write_text("pins\n")
     dist = tmp_path / "dist"
@@ -135,7 +136,8 @@ def test_the_real_approved_source_is_pinned():
     pb = load("package_bridge_p", "scripts/release/package_bridge.py")
     assert pb.APPROVED == {"c14863e21c0a4a1466d0ad7de0c8955486c6c6773e601f31a36ba5af23c8fee0":
                            {"commit": "05c83b46be9a44a40df3a2a4ed502e404d4c4682",
-                            "manifest_sha256": "ccfa0d9f4561a786a1ab88237181f21233715f767d0e56856d0ba58abf7f798a"}}
+                            "manifest_sha256": "ccfa0d9f4561a786a1ab88237181f21233715f767d0e56856d0ba58abf7f798a",
+                            "extra_sha256": "26102aec2cd7dc543bff0b9634ac9023a8e030b7e7ad1ba36e06dcd121930b02"}}
 
 
 def test_a_foreign_tree_changed_with_the_wheel_is_refused(ws, tmp_path):
@@ -146,7 +148,7 @@ def test_a_foreign_tree_changed_with_the_wheel_is_refused(ws, tmp_path):
     w, s = pair(dist, w={"change": {"devision/serve.py": "# changed\n"}}, s={"change": {"devision/serve.py": "# changed\n"}})
     with pytest.raises(subprocess.CalledProcessError):                      # the approved commit is not in that tree
         pb.make(ident, str(foreign), w, s, lock=lock, approved=approved)
-    self_approved = {pb.sha(ident): {"commit": commit, "manifest_sha256": approved[pb.sha(ident)]["manifest_sha256"]}}
+    self_approved = {pb.sha(ident): dict(approved[pb.sha(ident)], commit=commit)}
     with pytest.raises(SystemExit, match="source manifest is not the approved one"):
         pb.make(ident, str(foreign), w, s, lock=lock, approved=self_approved)
     with pytest.raises(SystemExit, match="not an approved frozen identity"):
@@ -293,3 +295,22 @@ def test_without_a_bridge_the_old_path_is_unchanged(ic_ws, tmp_path):
     ic, pb, ident, repo, lock, dist, code, approved, seen = ic_ws
     ic.install_check("ck", [], ident, workdir=str(tmp_path / "w3"), record=str(tmp_path / "r3.json"))
     assert seen["install"] == [None] and seen["probe"] == 2 and seen["reference"] == code       # builds this tree, strict reference
+
+
+def test_a_record_whose_extra_and_sdist_were_changed_together_is_refused_before_install(ic_ws, tmp_path):
+    """R2-01: the sdist's pyproject.toml changed beyond its version, the record's source.extra / extra_sha256 and
+    sdist sha256 rewritten to match -- self-consistent, but not the approved source: refused, nothing installed."""
+    ic, pb, ident, repo, lock, dist, code, approved, seen = ic_ws
+    rec = pb.make(ident, str(repo), *pair(dist), lock=lock, approved=approved)
+    changed = EXTRA["pyproject.toml"].replace("0.3.0.dev1", "0.3.0") + '\n[project.scripts]\nevil = "x:y"\n'
+    s = sdist(dist / "devision-0.3.0.tar.gz", extra_change={"pyproject.toml": changed})
+    rec["source"]["extra"]["pyproject.toml"] = pb.hb(pb._versionless(changed.encode()))
+    rec["source"]["extra_sha256"] = pb.digest(rec["source"]["extra"])
+    rec["sdist"]["sha256"] = pb.sha(s)
+    bridge = dist / "PACKAGE_BRIDGE.json"
+    bridge.write_text(json.dumps(rec))
+    problems = ic.install_check("ck", [], ident, workdir=str(tmp_path / "w4"), record=str(tmp_path / "r4.json"), bridge=str(bridge))
+    assert any("not the approved source" in x and "pyproject" in x for x in problems), problems
+    assert seen["install"] == [] and seen["probe"] == 0
+    with pytest.raises(SystemExit, match="README.md / LICENSE / pyproject.toml are not the approved ones"):
+        pb.make(ident, str(repo), *pair(dist), lock=lock, approved={pb.sha(ident): dict(approved[pb.sha(ident)], extra_sha256="0" * 64)})
