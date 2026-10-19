@@ -162,7 +162,7 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - **正式入口 generate**：
     - 在画任何东西之前，先用 freeze_problems 核对：IDENTITY.json 完整（files / reading / code），是这个 checkpoint 的；checkpoint 的整棵目录树仍与它一致；reading bundle 和 LIVE-K lineage 与冻结时相同（check_eval.reading_identity，即 rebind 的发布来源）；带 K 规则。
     - 输出目录必须是新的。
-    - seed 取 int(sha256(IDENTITY.json)[:16], 16)：冻结之前这个集合和它的答案根本不存在，无法预先算出。
+    - seed 取 int(sha256(IDENTITY.json)[:16], 16)，与本次运行的排除记录（数据文件和 rl_calib）一起确定这个集合。这是流程约束：只在冻结之后、按一次许可、从一份冻结输入生成一次；它不是「冻结前没人能算出来」的密码学保证。
     - 输出 confirm.jsonl、confirm_mism.jsonl 和 MANIFEST（类别、温度题答案的分布、隔离结果、渲染器代码哈希和字体、身份哈希、请求契约）。
   - **preview**：必须给出 seed，每个域最多 4 张图，id 以 preview: 开头，只用来检查渲染器，不是确认集。
   - **outcome**：预写的主要判定。每张图一道比较题，120 张图等权，按图重抽 2,000 次（seed 0）：候选减 v0.3 的准确率 ≥ +0.10 且下界 > 0，并且候选自身「真图减错图」的下界 > 0。这是候选自己的看图收益，不是 68:114 那种增量。三组记录覆盖的图片不一致时，不给结论。
@@ -174,4 +174,15 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - 错图是每个域内部的错位排列；
   - 正式入口：tiny LIVE-K 式候选的冻结身份可以通过 freeze_problems（没有生成集合）；以下情况都在任何选择或绘制之前被拒绝，输出目录也不会被创建：没有身份文件、身份不完整、身份属于另一个 checkpoint、来源不是发布来源、冻结后改动了组件；输出目录已经存在也会拒绝；
   - outcome：通过、准确率差不够、没有看图收益、记录集不一致这四种情况。
-- 没有生成正式确认集，也没有在正式 seed 上遍历；也无法遍历，因为 seed 只有冻结之后才存在。preview 只在 /tmp 和 pytest 的临时目录里画过 7 张以内的图。
+- 没有生成正式确认集，也没有在正式 seed 上遍历。preview 只在 /tmp 和 pytest 的临时目录里画过 7 张以内的图。
+
+### CONFIRM-PREP 第 1 轮修正（V04-K-CONFIRM-R1-01 / R1-02、NOTE-01）
+
+- R1-01：freeze_problems 在任何选择或绘制之前调用 code_problems，核对冻结的 code：
+  - 必须是真实的运行身份记录（modules 每项都有 64 位 sha256，并有 version 和 python）；
+  - 必需模块必须齐全；
+  - 每个模块的内容必须等于本仓库当前同名源文件（复用 route_calib.runtime_problems，按模块名和内容比较，路径只用来追溯）。
+  - 夹具：伪造的非空 code、缺 devision.image、冻结后 reading.py 的内容变了，都在选择之前被拒绝，输出目录不会被创建；同内容换路径可以通过。
+- R1-02：outcome 改为接收正式集合的 picture id（picture_ids 从 confirm.jsonl 读取），要求正好 120 个互不相同的 id；三组记录都必须正好覆盖这 120 个 id，值必须是显式的 bool。
+  - 夹具：三组共同缺一图、只剩一图、全空、同样数量的外来 id、值为 "yes" 或 1，在 expected 取完整 / 一张 / 空三种情况下都没有结论；完整情况下的通过 / 未通过 / 没有看图收益三个分支保持不变。
+- NOTE-01：seed 的措辞收窄为流程约束（见上文）。

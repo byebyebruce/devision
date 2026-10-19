@@ -152,11 +152,63 @@ def test_the_formal_entry_writes_only_new_output(cf, tmp_path, monkeypatch):
 
 
 def test_outcome(cf):
-    ids = ["p%d" % i for i in range(120)]
+    ids = ["v04-confirm:p%03d" % i for i in range(120)]
     v03 = {i: n % 2 == 0 for n, i in enumerate(ids)}                        # 0.5
     good = {i: n % 10 != 0 for n, i in enumerate(ids)}                      # 0.9
     wrong = {i: n % 3 == 0 for n, i in enumerate(ids)}
-    assert cf.outcome(good, wrong, v03)["branch"] == "synthetic confirmation passed"
-    assert cf.outcome(v03, wrong, v03)["branch"].startswith("synthetic confirmation not passed")
-    assert cf.outcome(good, good, v03)["branch"].startswith("synthetic confirmation not passed")    # no own picture gain
-    assert cf.outcome(good, wrong, dict(list(v03.items())[:-1]))["branch"].startswith("no verdict")
+    assert cf.outcome(good, wrong, v03, ids)["branch"] == "synthetic confirmation passed"
+    assert cf.outcome(v03, wrong, v03, ids)["branch"].startswith("synthetic confirmation not passed")
+    assert cf.outcome(good, good, v03, ids)["branch"].startswith("synthetic confirmation not passed")    # no own picture gain
+    assert cf.outcome(good, wrong, dict(list(v03.items())[:-1]), ids)["branch"].startswith("no verdict")
+
+
+@pytest.mark.parametrize("case", ["common_missing", "one_picture", "empty", "foreign_ids", "not_bool", "not_bool_int"])
+def test_outcome_needs_the_whole_formal_set(cf, case):
+    """critic V04-K-CONFIRM-R1-02: the formal 120 ids, each once in every set, explicit bools -- else no verdict."""
+    ids = ["v04-confirm:p%03d" % i for i in range(120)]
+    t: dict = {i: True for i in ids}
+    w = {i: False for i in ids}
+    v = {i: False for i in ids}
+    if case == "common_missing":
+        for d in (t, w, v):
+            d.pop(ids[5])
+    elif case == "one_picture":
+        t, w, v = ({ids[0]: x} for x in (True, False, False))
+    elif case == "empty":
+        t, w, v = {}, {}, {}
+    elif case == "foreign_ids":
+        t, w, v = ({"other:%03d" % i: x for i in range(120)} for x in (True, False, False))
+    elif case == "not_bool":
+        t[ids[3]] = "yes"
+    else:
+        t[ids[3]] = 1
+    for expected in (ids, ids[:1], []):
+        res = cf.outcome(t, w, v, expected)
+        assert res["branch"].startswith("no verdict"), (case, len(expected), res["branch"])
+    assert cf.outcome({i: True for i in ids}, {i: False for i in ids}, {i: False for i in ids}, ids)["branch"] == "synthetic confirmation passed"
+
+
+@pytest.mark.parametrize("case,why", [("forged", "not a runtime code record"), ("missing_module", "required but not loaded"),
+                                      ("changed_module", "not this implementation"), ("moved_same_content", None)])
+def test_the_frozen_code_must_be_this_implementation(cf, tmp_path, monkeypatch, case, why):
+    """critic V04-K-CONFIRM-R1-01: checked before anything is selected or drawn."""
+    pins, cand, ident = frozen_tiny(tmp_path, monkeypatch)
+    j = json.loads(ident.read_text())
+    if case == "forged":
+        j["code"] = {"anything": 1}
+    elif case == "missing_module":
+        j["code"]["modules"].pop("devision.image")
+    elif case == "changed_module":
+        j["code"]["modules"]["devision.reading"]["sha256"] = "0" * 64      # the frozen reading.py is not today's
+    else:
+        j["code"]["modules"]["devision.reading"]["path"] = "/elsewhere/devision/reading.py"
+    edited = tmp_path / "IDENTITY_edited.json"
+    edited.write_text(json.dumps(j))
+    monkeypatch.setattr(cf, "select", lambda *a, **k: pytest.fail("selected before the freeze checks"))
+    out = tmp_path / "confirm"
+    if why is None:
+        assert cf.freeze_problems(str(edited), str(cand), pins) == []
+        return
+    with pytest.raises(SystemExit, match=why):
+        cf.generate(str(out), str(edited), str(cand), pins=pins)
+    assert not out.exists()

@@ -15,13 +15,16 @@ and four wordings of force_items, the dense magnet pool and the case partition o
   - a fixed wrong picture per picture (a derangement inside its domain) for the mismatched control.
 
 The formal entry (generate) refuses unless the final combination is frozen: a complete IDENTITY.json (check_eval freeze:
-files / reading / code) of this very checkpoint, its reading bundle with the K rule and the LIVE-K lineage (rebind's
-release source), checked before anything is drawn; its seed is derived from that frozen identity's bytes, so the set and
-its answers do not exist before the freeze. Output must be new. preview draws at most 4 + 4 pictures with an explicit seed
+files / reading / code) of this very checkpoint, its frozen code a real runtime record that is this implementation now,
+its reading bundle with the K rule and the LIVE-K lineage (rebind's release source) -- all checked before anything is
+selected or drawn. Its seed is taken from the frozen identity's bytes; together with the exclusion record (data files and
+rl_calib) of the run it fixes the set. This is a process rule -- the set is generated once, under one permission, from one
+frozen input -- not a cryptographic guarantee that nobody could compute it earlier. Output must be new. preview draws at most 4 + 4 pictures with an explicit seed
 and "preview:" ids for checking the renderer -- never the confirmation.
 
 Request contract (models run only with separate permission): candidate true / fixed-wrong / reversed options 120 each;
-v0.3 true / the same wrong 120 each. Primary (`outcome`): one comparison per picture, 120 pictures equally weighted, picture
+v0.3 true / the same wrong 120 each. Primary (`outcome`, against the formal set's 120 ids from its confirm.jsonl -- each
+once in all three record sets, explicit bools, else no verdict): one comparison per picture, equally weighted, picture
 resampling seed 0 x 2,000: candidate - v0.3 accuracy >= +0.10 with lower bound > 0, and the candidate's own true - wrong
 accuracy lower bound > 0 (its own picture gain -- not 68:114's increment). Readings clustered by picture, per domain /
 class reported only.
@@ -290,9 +293,9 @@ def freeze_problems(identity: str, checkpoint: str, pins: Optional[Dict[str, str
     missing = [k for k in ("checkpoint", "files", "reading", "code") if not ident.get(k)]
     if missing:
         return ["%s lacks %s: not a complete frozen identity" % (identity, missing)]
+    out = code_problems(ident["code"])
     ce = _load("confirm_check_eval", "scripts/release/check_eval.py")
     setattr(ce, "SOURCE_PINS", pins)
-    out = []
     named = ident["checkpoint"]
     if os.path.realpath(named if os.path.isabs(named) else os.path.join(ROOT, named)) != os.path.realpath(checkpoint):
         out.append("%s is frozen for %s, not %s" % (identity, named, checkpoint))
@@ -309,6 +312,19 @@ def freeze_problems(identity: str, checkpoint: str, pins: Optional[Dict[str, str
     if not os.path.exists(rj) or "k_rule" not in json.load(open(rj)):
         out.append("the frozen combination has no K rule")
     return out
+
+
+def code_problems(code: Any) -> List[str]:
+    """The frozen code reference (check_eval freeze: evaluate.runtime_code of a fresh probe process) is a real one and
+    is this implementation now (critic V04-K-CONFIRM-R1-01): {"modules": {name: {"path", "sha256"}}, "version", "python"},
+    the required inference modules present, every module's content equal to this repository's file of the same module
+    (route_calib.runtime_problems: by name and content; paths only traced)."""
+    if not isinstance(code, dict) or not isinstance(code.get("modules"), dict) or not code["modules"] \
+            or not all(isinstance(v, dict) and isinstance(v.get("sha256"), str) and len(v["sha256"]) == 64 for v in code["modules"].values()) \
+            or not code.get("version") or not code.get("python"):
+        return ["the frozen code is not a runtime code record (modules with sha256, version, python)"]
+    rc = _load("confirm_route_calib", "scripts/release/route_calib.py")
+    return ["frozen code: %s" % x for x in rc.runtime_problems(code, ROOT)]
 
 
 def generate(out: str, identity: str, checkpoint: str, root: str = "data", pins: Optional[Dict[str, str]] = None) -> Dict:
@@ -335,12 +351,28 @@ def generate(out: str, identity: str, checkpoint: str, root: str = "data", pins:
 
 # ------------------------------------------------------------------ the pre-written outcome
 
-def outcome(cand_true: Dict[str, bool], cand_wrong: Dict[str, bool], v03_true: Dict[str, bool]) -> Dict:
-    """Per picture id, whether the comparison question was right (candidate true / fixed wrong, v0.3 true). The 120
-    pictures equally weighted; 95 % percentile interval of 2,000 picture resamples, seed 0."""
-    ids = sorted(cand_true)
-    if set(cand_wrong) != set(ids) or set(v03_true) != set(ids):
-        return {"branch": "no verdict: the three record sets do not cover the same pictures"}
+PICTURES = 120
+
+
+def picture_ids(confirm_jsonl: str) -> List[str]:
+    """The formal set's picture ids, from its confirm.jsonl (one comparison question per picture)."""
+    return [json.loads(x)["id"] for x in open(confirm_jsonl) if x.strip()]
+
+
+def outcome(cand_true: Dict[str, bool], cand_wrong: Dict[str, bool], v03_true: Dict[str, bool], expected: List[str], n: int = PICTURES) -> Dict:
+    """Per picture id, whether the comparison question was right (candidate true / fixed wrong, v0.3 true), against the
+    formal set's ids (`expected`, from its manifest's confirm.jsonl): exactly those n pictures, each once in every record
+    set, every value an explicit bool -- otherwise no verdict (critic V04-K-CONFIRM-R1-02). The pictures equally weighted;
+    95 % percentile interval of 2,000 picture resamples, seed 0."""
+    ids = sorted(expected)
+    if len(ids) != n or len(set(ids)) != n:
+        return {"branch": "no verdict: the formal set does not hold %d distinct pictures" % n}
+    for name, recs in (("candidate true", cand_true), ("candidate wrong", cand_wrong), ("v0.3 true", v03_true)):
+        if set(recs) != set(ids):
+            return {"branch": "no verdict: %s does not cover exactly the formal pictures (missing %d, foreign %d)"
+                              % (name, len(set(ids) - set(recs)), len(set(recs) - set(ids)))}
+        if not all(type(v) is bool for v in recs.values()):
+            return {"branch": "no verdict: %s holds a value that is not true / false" % name}
     rng = random.Random(0)
 
     def stat(f):
