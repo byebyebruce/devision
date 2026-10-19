@@ -81,7 +81,8 @@ def ws(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "TRAIN", "data/train.jsonl")
 
     def make(fit=0.95, erased=0.2, rs_temp=1.0, exist=0.95, updates=100, stop_before_report=False, drop_probe=None,
-             drop_question=None, duplicate=None, probe_ckpt=None):
+             drop_question=None, duplicate=None, probe_ckpt=None, empty=None, truncate=None, final_empty=False,
+             final_drop=None, final_metric_off=None, probe_summary_off=None):
         d2 = "runs/d2"
         if os.path.exists(d2):
             shutil.rmtree(d2)
@@ -90,17 +91,28 @@ def ws(tmp_path, monkeypatch):
         step = d2 + "/d2/monitor/step%d" % updates
         shares = {"val": fit, "dev16": 0.5, "erased": erased, "k_text": 1.0, "rs_temp": rs_temp, "rs_force": 0.5, "rs_temp_mism": 0.4,
                   "rs_force_mism": 0.4}
+        final_metrics = {}
         for n, rows in data.items():
             rs = recs(rows, shares[n])
+            final_metrics["%s/accuracy" % n] = sum(r["correct"] for r in rs) / len(rs)
+            if not final_empty and n != final_drop:
+                wj("%s/d2/monitor/final/%s.details.jsonl" % (d2, n), rs)
             if n == drop_question:
                 rs = rs[1:]
             if n == duplicate:
                 rs = rs + rs[:1]
             wj("%s/%s.details.jsonl" % (step, n), rs)
+            if n == empty:
+                open("%s/%s.details.jsonl" % (step, n), "w").close()
+            if n == truncate:
+                text = open("%s/%s.details.jsonl" % (step, n)).read()
+                open("%s/%s.details.jsonl" % (step, n), "w").write(text[: len(text) // 2])
+        if final_metric_off:
+            final_metrics[final_metric_off + "/accuracy"] -= 0.1
+        os.makedirs(d2 + "/d2/monitor/final", exist_ok=True)
         if stop_before_report:
             return d2
-        os.makedirs(d2 + "/d2/monitor/final")
-        json.dump({"losses": [0.1] * updates, "evals": [{"step": updates}]}, open(d2 + "/d2/train_report.json", "w"))
+        json.dump({"losses": [0.1] * updates, "evals": [{"step": updates}], "final": final_metrics}, open(d2 + "/d2/train_report.json", "w"))
         open(d2 + "/d2/model.safetensors", "w").write("w")
         for n, rows in probes.items():
             if n == drop_probe:
@@ -108,7 +120,7 @@ def ws(tmp_path, monkeypatch):
             acc = exist if n == "exist" else 0.64
             rs = recs(rows, acc)
             wj("%s/eval/%s.details.jsonl" % (d2, n), rs)
-            json.dump({"accuracy_all": sum(r["correct"] for r in rs) / len(rs),
+            json.dump({"n": len(rs), "accuracy_all": sum(r["correct"] for r in rs) / len(rs) + (0.05 if n == probe_summary_off else 0),
                        "run": {"checkpoint": probe_ckpt or d2 + "/d2", "data_sha256": m.sha("data/%s.jsonl" % n)}},
                       open("%s/eval/%s.json" % (d2, n), "w"))
         return d2
@@ -135,6 +147,30 @@ def test_missing_or_wrong_evidence_never_gets_an_outcome(ws, kw, want):
     m, make = ws
     got = outcome(m, make(**kw))
     assert got.startswith(want) and not got[:2] in ("A:", "B:", "C:", "D:"), got
+
+
+@pytest.mark.parametrize("kw,want", [({"empty": "erased"}, "invalid"), ({"truncate": "dev16"}, "invalid"),
+                                     ({"final_empty": True}, "incomplete"), ({"final_drop": "rs_temp"}, "incomplete"),
+                                     ({"final_metric_off": "val"}, "invalid"), ({"probe_summary_off": "exist"}, "invalid")])
+def test_r2_failures_end_in_a_report_without_an_outcome(ws, kw, want):
+    """PANEL-D2-R2: an empty erased file / a truncated file (no crash), an empty or partial final, final records that do
+    not give train_report.final, a probe summary contradicting its records: a readable report, no A / B / C / D, and the
+    other valid sets still reported."""
+    m, make = ws
+    out = m.d2_report(make(**kw), "sealed", "configs/d2.yaml", planned=100)
+    assert out["outcome"].startswith(want) and out["outcome"][:2] not in ("A:", "B:", "C:", "D:"), out["outcome"]
+    json.dumps(out)
+    if kw.get("empty") == "erased":
+        assert out["sets"]["end/erased"] == "invalid" and out["parts"]["fit"]["read"]["value"] > 0.8      # fit still reported
+        assert out["parts"]["fit"]["read_class"].startswith("void")
+
+
+def test_no_run_directory_still_writes_a_report(ws):
+    m, _ = ws
+    m.CONFIG = "configs/d2.yaml"
+    assert m.main(["d2", "runs/never", "sealed"]) == 0
+    rep = json.load(open("runs/never/report.json"))
+    assert rep["outcome"].startswith("incomplete") and "no run.json" in rep["outcome"]
 
 
 def test_the_real_plan_is_one_pass_of_1054_updates():

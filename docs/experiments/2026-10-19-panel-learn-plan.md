@@ -73,6 +73,9 @@
   - **invalid**：run.json 的 stages 不是 D2 配置；训练数据不是 MANIFEST 里的那份；更新次数不等于 plan_mixed 规划的次数（1,054）；终点监测的题键有重复，或与数据文件不完全相同；选项、gold 或 correct 与数据不符；探针不属于这次 D2 端点（checkpoint 路径、数据 sha 不符，或者早于保存的权重）。
   - **incomplete**：没有 run.json；没有 train_report（训练没有完成）；最后一次更新时没有评估；没有 final 监测；终点缺某个监测文件；缺 exist / science 探针。
   - 不再取"最大 step 目录"作为终点：终点是 train_report 里最后一次评估的步数，必须等于实际更新次数。缺探针时判 incomplete，不会因为缺证据而判成 B。
+  - 逐个集合先判有效性（PANEL-D2-R2-01）：缺文件判 incomplete；读不出（截断）、空文件、题键或内容不符判 invalid。只有有效且有分母的集合才进入统计，其他有效集合的成绩照常报告；没有 run 目录时也写出报告。
+  - 合并后的端点（PANEL-D2-R2-02）：final/ 下每个监测集合都要完整且内容正确，并且由逐题记录重算的准确率等于 train_report.final 里对应的值；空的 final 目录、缺文件或数值不符都不能证明端点完整。诊断的主读数仍是最后一遍结束时的监测（训练端点），final 用来核对保存的合并端点。
+  - 探针准确率从核过的明细重算；与 summary 的 n 或 accuracy_all 不符就判 invalid，不用 summary 覆盖明细。
   - 只有全部证据都完整有效时，才按下面的规则判 A / B / C / D。
 - **D2**（看这一遍结束时的监测）：
   - 有效性：擦除对照的读数 < 0.50 且比较 < 0.55（delivery.py 的规则），否则 invalid。

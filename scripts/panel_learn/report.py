@@ -102,23 +102,41 @@ def planned_updates(config: str = CONFIG) -> int:
     return sum(len(plan_mixed(its, st["params"]["micro_batch"])) for _ in range(st["params"]["epochs"]))
 
 
+def load_set(path: str, name: str, want) -> tuple:
+    """(records or None, "incomplete" | "invalid" | None, message): a missing file is incomplete; an unreadable /
+    truncated file, an empty one or one whose questions / content differ from the data is invalid (critic
+    PANEL-D2-R2-01: decided per set before any statistic)."""
+    if not os.path.exists(path):
+        return None, "incomplete", "%s missing" % name
+    try:
+        recs = jsonl(path)
+    except ValueError:
+        return None, "invalid", "%s: unreadable or truncated" % name
+    bad = content_problems(name, recs, want)
+    if bad:
+        return None, "invalid", "; ".join(bad)
+    return recs, None, None
+
+
 def d2_report(d2: str = D2, sealed: str = SEALED, config: str = CONFIG, planned: int = 0):
-    """Evidence first (critic PANEL-D2-R1-02): invalid when an identity or content check fails, incomplete when the run
-    did not reach its planned end or a monitor / probe is missing; A / B / C / D only from complete, valid evidence.
-    Whatever finished is still reported."""
+    """Evidence first (critic PANEL-D2-R1-02, R2-01 / R2-02): every monitor set (at the last epoch end and after the
+    merge, `final`) and every probe is checked on its own; only valid sets enter a statistic; invalid when an identity
+    or content check fails, incomplete when the run did not reach its planned end or a file is missing; A / B / C / D
+    only from complete, valid evidence. Whatever finished and checks out is still reported."""
     invalid: list = []
     incomplete: list = []
-    out: dict = {"parts": {}}
+    out: dict = {"parts": {}, "sets": {}}
+
+    def note(kind, msg):
+        (invalid if kind == "invalid" else incomplete).append(msg)
+
     run = os.path.join(d2, "run.json")
     if os.path.exists(run):
-        cfg = json.load(open(run))["config"]
-        want = __import__("yaml").safe_load(open(config))
-        if cfg.get("stages") != want.get("stages"):
+        if json.load(open(run))["config"].get("stages") != __import__("yaml").safe_load(open(config)).get("stages"):
             invalid.append("run.json's stages are not %s" % config)
     else:
         incomplete.append("no run.json (D2 did not start)")
-    man = json.load(open("data/panel_learn/MANIFEST.json"))
-    if sha(TRAIN) != man["train_sha256"]:
+    if sha(TRAIN) != json.load(open("data/panel_learn/MANIFEST.json"))["train_sha256"]:
         invalid.append("the training data is not the manifest's")
     rep_path = os.path.join(d2, "d2", "train_report.json")
     rep = json.load(open(rep_path)) if os.path.exists(rep_path) else None
@@ -134,23 +152,34 @@ def d2_report(d2: str = D2, sealed: str = SEALED, config: str = CONFIG, planned:
             incomplete.append("no evaluation at the last update")
         else:
             end = os.path.join(d2, "d2", "monitor", "step%d" % n)
-        if not os.path.isdir(os.path.join(d2, "d2", "monitor", "final")):
-            incomplete.append("no final monitor")
+    wants = {name: expected(data) for name, data in MONITOR.items()}
     rec = {}
-    if end is not None:
-        for name, data in MONITOR.items():
-            p = os.path.join(end, name + ".details.jsonl")
-            if not os.path.exists(p):
-                incomplete.append("monitor %s missing at the end step" % name)
+    if end is not None:                                  # the last epoch end: the diagnostic's reading
+        for name in MONITOR:
+            r, kind, msg = load_set(os.path.join(end, name + ".details.jsonl"), "monitor " + name, wants[name])
+            out["sets"]["end/" + name] = kind or "valid"
+            if r is None:
+                note(kind, msg)
+            else:
+                rec[name] = r
+    if rep is not None:                                  # the merged, saved end point: every set complete and = train_report.final
+        final = os.path.join(d2, "d2", "monitor", "final")
+        for name in MONITOR:
+            r, kind, msg = load_set(os.path.join(final, name + ".details.jsonl"), "final " + name, wants[name])
+            out["sets"]["final/" + name] = kind or "valid"
+            if r is None:
+                note(kind, msg)
                 continue
-            rec[name] = jsonl(p)
-            invalid += content_problems(name, rec[name], expected(data))
+            got, want = accuracy(r), (rep.get("final") or {}).get("%s/accuracy" % name)
+            if want is None or got is None or abs(got - want) > 1e-9:
+                invalid.append("final %s: accuracy %s from the records, %s in train_report.final" % (name, got, want))
+                out["sets"]["final/" + name] = "invalid"
     probes = {}
     model = os.path.join(d2, "d2", "model.safetensors")
     for name, data in PROBES.items():
         p, det, s = os.path.join(d2, "eval", name + ".json"), os.path.join(d2, "eval", name + ".details.jsonl"), os.path.join(sealed, name + ".json")
         probes[name] = {"sealed": json.load(open(s))["accuracy_all"], "d2": None}
-        if not (os.path.exists(p) and os.path.exists(det)):
+        if not os.path.exists(p):
             incomplete.append("probe %s missing" % name)
             continue
         summ = json.load(open(p))
@@ -159,20 +188,34 @@ def d2_report(d2: str = D2, sealed: str = SEALED, config: str = CONFIG, planned:
                 or not os.path.exists(model) or os.path.getmtime(p) < os.path.getmtime(model):
             invalid.append("probe %s is not of this D2 endpoint / data" % name)
             continue
-        invalid += content_problems("probe " + name, jsonl(det), expected(data))
-        probes[name]["d2"] = summ["accuracy_all"]
+        recs, kind, msg = load_set(det, "probe " + name, expected(data))
+        if recs is None:
+            note(kind, msg)
+            continue
+        acc = accuracy(recs)
+        if summ.get("n") != len(recs) or acc is None or abs(acc - summ.get("accuracy_all", -1)) > 1e-9:
+            invalid.append("probe %s: its summary (n %s, accuracy %s) is not its records (%d, %s)" % (
+                name, summ.get("n"), summ.get("accuracy_all"), len(recs), acc))
+            continue
+        probes[name]["d2"] = acc                          # recomputed from the checked records, never the summary
     out["probes"] = probes
-    if rec.keys() >= {"erased", "val", "dev16"}:
+    stats = {}
+    if "erased" in rec:
         e = syn_index(rec["erased"])
         erased = {w: syn_stat(e, None, w) for w in ("read", "cmp")}
-        valid = erased["read"]["value"] < 0.50 and erased["cmp"]["value"] < 0.55
-        f, d = syn_index(rec["val"]), syn_index(rec["dev16"])
-        fit = {w: syn_stat(f, 16, w) for w in ("read", "cmp")}
-        dev = {w: syn_stat(d, 16, w) for w in ("read", "cmp")}
-        for st in (fit, dev):
-            for w in ("read", "cmp"):
-                st[w + "_class"] = classify(st[w]) if valid else "void: erased control invalid"
-        out["parts"].update(erased=dict(erased, valid=valid), fit=fit, dev16=dev)
+        if all(erased[w]["value"] is not None for w in ("read", "cmp")):
+            erased["valid"] = erased["read"]["value"] < 0.50 and erased["cmp"]["value"] < 0.55
+            stats["erased"] = erased
+    for key, name in (("fit", "val"), ("dev16", "dev16")):
+        if name in rec:
+            idx = syn_index(rec[name])
+            st = {w: syn_stat(idx, 16, w) for w in ("read", "cmp")}
+            if all(st[w]["value"] is not None for w in ("read", "cmp")):
+                for w in ("read", "cmp"):
+                    st[w + "_class"] = (classify(st[w]) if stats.get("erased", {}).get("valid") else
+                                        "void: erased control invalid" if "erased" in stats else "void: no valid erased control")
+                stats[key] = st
+    out["parts"].update(stats)
     acc = {n: accuracy(rec[n]) for n in ("k_text", "rs_temp", "rs_force", "rs_temp_mism", "rs_force_mism") if n in rec}
     out["parts"]["accuracy"] = acc
     out["monitor"] = end
@@ -183,12 +226,14 @@ def d2_report(d2: str = D2, sealed: str = SEALED, config: str = CONFIG, planned:
     if incomplete:
         out["outcome"] = "incomplete: " + "; ".join(incomplete[:3])
         return out
-    kept = {n: (acc[n] or 0) >= LINES[n] for n in LINES}
+    if not all(k in stats for k in ("erased", "fit")):
+        out["outcome"] = "invalid: a required set has no statistic"
+        return out
+    kept = {n: (acc.get(n) or 0) >= LINES[n] for n in LINES}
     kept.update({n: (v["d2"] or 0) >= v["sealed"] - 0.03 for n, v in probes.items()})
     out["kept"] = kept
-    fit = out["parts"]["fit"]
-    classes = [fit["read_class"], fit["cmp_class"]]
-    if not out["parts"]["erased"]["valid"]:
+    classes = [stats["fit"]["read_class"], stats["fit"]["cmp_class"]]
+    if not stats["erased"]["valid"]:
         out["outcome"] = "invalid: the erased control reads digits"
     elif all(c == "pass" for c in classes):
         out["outcome"] = "A: fit learned, protection kept" if all(kept.values()) else "B: fit learned, protection broken"
@@ -205,8 +250,10 @@ def main(argv=None) -> int:
         out = gate().decide(json.load(open(argv[1] if len(argv) > 1 else D1)))
         print(json.dumps(out, indent=1))
         return 0 if out["run_phase_b"] else 10
-    out = d2_report(argv[1] if len(argv) > 1 else D2, argv[2] if len(argv) > 2 else SEALED)
-    json.dump(out, open(os.path.join(argv[1] if len(argv) > 1 else D2, "report.json"), "w"), indent=1)
+    d2 = argv[1] if len(argv) > 1 else D2
+    out = d2_report(d2, argv[2] if len(argv) > 2 else SEALED, CONFIG)
+    os.makedirs(d2, exist_ok=True)                       # a run that never created its directory still gets its report
+    json.dump(out, open(os.path.join(d2, "report.json"), "w"), indent=1)
     print(json.dumps(out, indent=1))
     return 0
 
