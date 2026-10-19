@@ -193,6 +193,35 @@ def fmt(value: str) -> str:
     return ",".join([whole] + groups) + dot + frac
 
 
+# LIVE-K-PREP-01 (docs/experiments/2026-10-19-live-k-plan.md): the optional K rule, EXP70's fixed K block computed from
+# the table actually read -- off unless the bundle declares it (reading.json "k_rule", part of its rules hash)
+K_RULE = {"name": "temperature-k-v1", "header": "Computed from the values above (mass times speed squared, no unit):",
+          "quantity": "mass times speed squared", "objects": ["Sample A", "Sample B"],
+          "inputs": ["mass of each particle", "average particle speed"], "formula": "mass * speed ** 2, exact integers",
+          "defined": "all four values readable and integral; otherwise no K block", "applies_to": "temperature questions only"}
+
+
+def k_block(table: List[List[str]]) -> Optional[str]:
+    """EXP70's K block (scripts/exp70/build.py k_block) from a read table: K = mass x speed^2 per sample, A then B, exact
+    integers with thousands separators -- or None when a value is missing, unreadable or not an integer (the request is
+    then decided without K). Nothing but the table's own values is used."""
+    vals = {(o, q): v for o, q, v in table}
+    ks = []
+    for obj in K_RULE["objects"]:
+        pair = [vals.get((obj, q)) for q in K_RULE["inputs"]]
+        if any(v is None or v == UNREADABLE for v in pair):
+            return None
+        try:
+            m, v = (float(str(x).replace(",", "")) for x in pair)
+        except ValueError:
+            return None
+        if m != int(m) or v != int(v):
+            return None
+        ks.append(int(m) * int(v) * int(v))
+    return "%s\n%s: %s = %s\n%s: %s = %s" % (K_RULE["header"], "Sample A", K_RULE["quantity"], fmt(str(ks[0])),
+                                            "Sample B", K_RULE["quantity"], fmt(str(ks[1])))
+
+
 def serialise(state_text: str, table: List[List[str]]) -> str:
     """exp54's table serialisation (header and one row per value)."""
     lines = ["%s: %s = %s" % (o, q, v) for o, q, v in table]
@@ -309,6 +338,8 @@ def check_rules(ident: Dict[str, Any], full: bool = False) -> List[str]:
     for k in ("header", "table_format"):
         if (k in ident or full) and ident.get(k) != code[k]:
             bad.append(k)
+    if "k_rule" in ident and ident["k_rule"] != json.loads(json.dumps(K_RULE)):
+        bad.append("k_rule")
     if ("rules_sha256" in ident or full) and ident.get("rules_sha256") != rules_sha(declared_rules(ident)):
         bad.append("rules_sha256")
     return bad
@@ -316,7 +347,8 @@ def check_rules(ident: Dict[str, Any], full: bool = False) -> List[str]:
 
 def declared_rules(ident: Dict[str, Any]) -> Dict[str, Any]:
     """The rule entries of a reading.json (the corrector rule only when the bundle has a corrector)."""
-    keys = ["policy", "grid", "templates", "domains", "header", "table_format"] + (["corrector"] if "corrector.pt" in ident.get("sha256", {}) else [])
+    keys = ["policy", "grid", "templates", "domains", "header", "table_format"] + (["corrector"] if "corrector.pt" in ident.get("sha256", {}) else []) \
+        + (["k_rule"] if "k_rule" in ident else [])
     return {k: ident.get(k) for k in keys}
 
 
@@ -330,7 +362,8 @@ class Reading:
         self.decider, self.selector, self.head, self.identity = decider, selector.eval(), head.eval(), identity
         self.corrector = corrector.eval() if corrector is not None else None     # optional (exp69): speed templates only
         self.reading_status: Dict[str, Any] = {"mode": "on", "reading_json_sha256": None, "rules_sha256": identity.get("rules_sha256"),
-                                               "corrector": corrector is not None}
+                                               "corrector": corrector is not None, "k_rule": "k_rule" in identity}
+        self.k_rule = "k_rule" in identity                                   # LIVE-K: off unless the bundle declares it
         for p in list(selector.parameters()) + list(head.parameters()) + (list(corrector.parameters()) if corrector is not None else []):
             p.requires_grad_(False)
 
@@ -479,19 +512,29 @@ class Reading:
         others = {k: q for k, q in questions.items() if k not in supported}
         r = self.read(picture, templates)
         text = text_state if isinstance(text_state, str) else (json.dumps(text_state) if text_state else "")
-        res = self.decider._decide(serialise(text, r["table"]), supported, None)
+        plain = serialise(text, r["table"])
+        kb = k_block(r["table"]) if self.k_rule else None
+        hot = {k: q for k, q in supported.items() if kb and domain_of(q.get("instructions", "")) == "temperature"}
+        cold = {k: q for k, q in supported.items() if k not in hot}
+        res = self.decider._decide(plain + "\n" + str(kb), hot, None) if hot else {"answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
+        if cold:                                     # magnets (and every question without a defined K): the old contract
+            part = self.decider._decide(plain, cold, None)
+            res["answers"].update(part["answers"])
+            res["usage"] = {k: res["usage"].get(k, 0) + part["usage"].get(k, 0) for k in part["usage"]}
+            res.setdefault("model", part.get("model"))
         if others:
             rest = self.decider._decide(text_state, others, picture)
             res["answers"].update(rest["answers"])
             res["usage"] = {k: res["usage"].get(k, 0) + rest["usage"].get(k, 0) for k in res["usage"]}
         res["answers"] = {k: res["answers"][k] for k in questions}       # the request's question order
         if diagnostics is not None:
-            diagnostics.update(table=r["table"], reads=r["reads"], read_seconds=r["seconds"], state=serialise(text, r["table"]))
+            diagnostics.update(table=r["table"], reads=r["reads"], read_seconds=r["seconds"], state=plain + ("\n" + str(kb) if hot else ""),
+                               k_block=kb if hot else None)
         return res
 
 
 def write_bundle(out_dir: str, decision_dir: str, selector_pt: str, head_pt: str, sources: Dict, dims: Optional[Dict] = None,
-                 corrector_pt: Optional[str] = None) -> Dict:
+                 corrector_pt: Optional[str] = None, k_rule: bool = False) -> Dict:
     """A reading bundle: the frozen component files copied as they are (the optional exp69 speed corrector too), and
     reading.json binding them and the decision checkpoint (weights / config / tokenizer) by sha256 (no tensor is
     loaded). Without corrector_pt the bundle is exactly the earlier two-component one."""
@@ -511,6 +554,8 @@ def write_bundle(out_dir: str, decision_dir: str, selector_pt: str, head_pt: str
     if corrector_pt is not None:
         ident["sha256"]["corrector.pt"] = sha(os.path.join(out_dir, "corrector.pt"))
         ident["corrector"] = CORRECTOR
+    if k_rule:                                       # LIVE-K: a different combination, its own reading.json / rules hash
+        ident["k_rule"] = K_RULE
     ident = json.loads(json.dumps(ident))
     ident["rules_sha256"] = rules_sha(declared_rules(ident))
     with open(os.path.join(out_dir, "reading.json"), "w") as fh:
@@ -518,4 +563,4 @@ def write_bundle(out_dir: str, decision_dir: str, selector_pt: str, head_pt: str
     return ident
 
 
-__all__ = ["Reading", "write_bundle", "bundle_state", "rules", "check_rules", "reads_for", "domain_of", "TEMPLATES", "UNREADABLE", "fmt", "decode"]
+__all__ = ["Reading", "write_bundle", "bundle_state", "k_block", "K_RULE", "rules", "check_rules", "reads_for", "domain_of", "TEMPLATES", "UNREADABLE", "fmt", "decode"]
