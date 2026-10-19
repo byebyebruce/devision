@@ -108,6 +108,8 @@ def test_collect_reads_every_rl_calib_question_through_the_k_combination(tmp_pat
     rl = importlib.util.module_from_spec(spec2)
     spec2.loader.exec_module(rl)
     monkeypatch.setattr(rl, "used_cases", lambda root: set())
+    import sys
+    monkeypatch.delitem(sys.modules, "build", raising=False)      # real_layout imports exp28's build; other tests load another "build"
     man = rl.build(str(tmp_path), want={"temp": 1, "force": 1})
     rows = [__import__("json").loads(x) for x in open(tmp_path / "rl_calib" / "questions.jsonl")]
     assert man["pictures"] == 4 and all(list(r["questions"]) == ["q0"] for r in rows)
