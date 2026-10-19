@@ -317,14 +317,17 @@ def freeze_problems(identity: str, checkpoint: str, pins: Optional[Dict[str, str
 def code_problems(code: Any) -> List[str]:
     """The frozen code reference (check_eval freeze: evaluate.runtime_code of a fresh probe process) is a real one and
     is this implementation now (critic V04-K-CONFIRM-R1-01): {"modules": {name: {"path", "sha256"}}, "version", "python"},
-    the required inference modules present, every module's content equal to this repository's file of the same module
+    the formal evaluation's required modules present (devision.train.evaluate.REQUIRED_MODULES: devision, infer, image,
+    model, reading, train.evaluate, train.cli), every module's content equal to this repository's file of the same module
     (route_calib.runtime_problems: by name and content; paths only traced)."""
     if not isinstance(code, dict) or not isinstance(code.get("modules"), dict) or not code["modules"] \
             or not all(isinstance(v, dict) and isinstance(v.get("sha256"), str) and len(v["sha256"]) == 64 for v in code["modules"].values()) \
             or not code.get("version") or not code.get("python"):
         return ["the frozen code is not a runtime code record (modules with sha256, version, python)"]
+    from devision.train.evaluate import REQUIRED_MODULES                # the formal evaluation's seven (critic R2)
     rc = _load("confirm_route_calib", "scripts/release/route_calib.py")
-    return ["frozen code: %s" % x for x in rc.runtime_problems(code, ROOT)]
+    out = ["frozen code: module %s: required but not loaded" % n for n in REQUIRED_MODULES if n not in code["modules"]]
+    return out + ["frozen code: %s" % x for x in rc.runtime_problems(code, ROOT)]
 
 
 def generate(out: str, identity: str, checkpoint: str, root: str = "data", pins: Optional[Dict[str, str]] = None) -> Dict:
@@ -359,14 +362,14 @@ def picture_ids(confirm_jsonl: str) -> List[str]:
     return [json.loads(x)["id"] for x in open(confirm_jsonl) if x.strip()]
 
 
-def outcome(cand_true: Dict[str, bool], cand_wrong: Dict[str, bool], v03_true: Dict[str, bool], expected: List[str], n: int = PICTURES) -> Dict:
+def outcome(cand_true: Dict[str, bool], cand_wrong: Dict[str, bool], v03_true: Dict[str, bool], expected: List[str]) -> Dict:
     """Per picture id, whether the comparison question was right (candidate true / fixed wrong, v0.3 true), against the
-    formal set's ids (`expected`, from its manifest's confirm.jsonl): exactly those n pictures, each once in every record
+    formal set's ids (`expected`, from its manifest's confirm.jsonl): exactly PICTURES (120) pictures, no override, each once in every record
     set, every value an explicit bool -- otherwise no verdict (critic V04-K-CONFIRM-R1-02). The pictures equally weighted;
     95 % percentile interval of 2,000 picture resamples, seed 0."""
     ids = sorted(expected)
-    if len(ids) != n or len(set(ids)) != n:
-        return {"branch": "no verdict: the formal set does not hold %d distinct pictures" % n}
+    if len(ids) != PICTURES or len(set(ids)) != PICTURES:
+        return {"branch": "no verdict: the formal set does not hold %d distinct pictures" % PICTURES}
     for name, recs in (("candidate true", cand_true), ("candidate wrong", cand_wrong), ("v0.3 true", v03_true)):
         if set(recs) != set(ids):
             return {"branch": "no verdict: %s does not cover exactly the formal pictures (missing %d, foreign %d)"

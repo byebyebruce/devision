@@ -186,9 +186,15 @@ def test_outcome_needs_the_whole_formal_set(cf, case):
         res = cf.outcome(t, w, v, expected)
         assert res["branch"].startswith("no verdict"), (case, len(expected), res["branch"])
     assert cf.outcome({i: True for i in ids}, {i: False for i in ids}, {i: False for i in ids}, ids)["branch"] == "synthetic confirmation passed"
+    import inspect
+    assert list(inspect.signature(cf.outcome).parameters) == ["cand_true", "cand_wrong", "v03_true", "expected"] and cf.PICTURES == 120
+    one = ids[:1]                                                        # a one-picture "set" can never pass (no n override)
+    assert cf.outcome({one[0]: True}, {one[0]: False}, {one[0]: False}, one)["branch"].startswith("no verdict")
 
 
 @pytest.mark.parametrize("case,why", [("forged", "not a runtime code record"), ("missing_module", "required but not loaded"),
+                                      ("missing_devision", "module devision: required but not loaded"),
+                                      ("missing_cli", "module devision.train.cli: required but not loaded"),
                                       ("changed_module", "not this implementation"), ("moved_same_content", None)])
 def test_the_frozen_code_must_be_this_implementation(cf, tmp_path, monkeypatch, case, why):
     """critic V04-K-CONFIRM-R1-01: checked before anything is selected or drawn."""
@@ -198,6 +204,10 @@ def test_the_frozen_code_must_be_this_implementation(cf, tmp_path, monkeypatch, 
         j["code"] = {"anything": 1}
     elif case == "missing_module":
         j["code"]["modules"].pop("devision.image")
+    elif case == "missing_devision":
+        j["code"]["modules"].pop("devision")
+    elif case == "missing_cli":
+        j["code"]["modules"].pop("devision.train.cli")
     elif case == "changed_module":
         j["code"]["modules"]["devision.reading"]["sha256"] = "0" * 64      # the frozen reading.py is not today's
     else:
