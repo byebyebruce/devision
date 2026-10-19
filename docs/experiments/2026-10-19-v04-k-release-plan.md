@@ -186,3 +186,31 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
 - R1-02：outcome 改为接收正式集合的 picture id（picture_ids 从 confirm.jsonl 读取），要求正好 120 个互不相同的 id；三组记录都必须正好覆盖这 120 个 id，值必须是显式的 bool。
   - 夹具：三组共同缺一图、只剩一图、全空、同样数量的外来 id、值为 "yes" 或 1，在 expected 取完整 / 一张 / 空三种情况下都没有结论；完整情况下的通过 / 未通过 / 没有看图收益三个分支保持不变。
 - NOTE-01：seed 的措辞收窄为流程约束（见上文）。
+
+### 确认 runner（V04-K-CONFIRM-PREP-02；CPU 实现，不是运行许可）
+
+- scripts/confirm/confirm_run.py 和 run.sh。阶段依次为 start → generate → cand_true → cand_mism → cand_rev → v03_true → v03_mism → report。
+  - **start**（不加载模型）：
+    - 必须给出 CONFIRM_IDENTITY / CONFIRM_CHECKPOINT；
+    - confirm.freeze_problems 必须为空（完整的冻结身份、冻结代码就是本实现、K、LIVE-K lineage）；
+    - v0.3 基线是 runs/r15-vision/stage2，model.safetensors 和 config.json 的哈希都已固定（110fea95… / 3a10bacd…）；
+    - 写 START，并登记代码、身份和候选权重；只启动一次。
+  - **generate**（CPU）：confirm.generate 只运行一次，必须正好 120 张图、480 道题；登记 MANIFEST、confirm.jsonl、confirm_mism.jsonl，以及全部图片哈希的摘要。
+  - **五个模型条件**（MPS，串行，在 watch 下）：
+    - 候选经 devision.load(reading="on") 加载，必须是 mode = on 且带 k_rule，使用自己冻结的温度；
+    - v0.3 经 devision.load(reading="off") 加载，使用自己的温度；
+    - 都走正式的 evaluate_records：真图和错图条件的 control 为 none；错图条件直接用 confirm_mism.jsonl 里的固定映射，不在评测时重新抽；选项倒序条件的 control 为 reversed；
+    - 每个请求写一行进度；每个条件的明细都带身份行（START、题单、权重、control、reading 状态、runtime_code），并登记。
+  - **report**（不加载模型）：
+    - 先核对 START 和身份，再核对题单和图片没有变化；
+    - 每个条件：已登记、身份绑定、runtime_code 是本实现；每题恰好一次，用的是它那一行的图（错图条件就是固定的那张错图）；correct 是显式的 bool。缺失为 incomplete，其余问题为 invalid，都先于任何数字；
+    - 主要判定：confirm.outcome，用正式 120 个 id 的比较题；
+    - 读数题和比较题按域和类别、倒序对照、v0.3 的错图，都只作报告；
+    - 分支文字注明「合成确认，不是未见真实图片上的确认」。
+- 请求：5 个条件 × 120 个请求 = 600 个请求，5 × 480 = 2,400 道题。按 LIVE-K 和校准实测的每秒 2.2–3.4 个请求，约 4–5 分钟，加上两种模型各加载两次约 2–3 分钟，共约 6–8 分钟。
+- 总上限 1,200 秒（20 分钟），最后 120 秒留给报告；一次启动，不重试，后面不接任何任务。
+- 夹具 tests/release/test_confirm_run.py（6 项，只用假模型，没有生成确认集）：
+  - 用假的 120 张图集合（小图、480 道题、confirm.mismatched 产生的固定错图）走完五个条件：错图条件用的确实是固定映射；倒序条件是 480 题；主要判定为通过（候选减 v0.3 为 +0.5）；
+  - 缺一个条件 → incomplete；明细被改、或者把一题改到别的图上（连登记也一起改）→ invalid；
+  - start 遇到没有冻结的组合、或 v0.3 文件不是固定的那份，都会拒绝；同一个阶段不能跑两次；
+  - run.sh：阶段顺序；cand_rev 失败时 finalize 且不再继续；缺 CONFIRM_IDENTITY 时直接退出、不调用任何阶段；上限 1,200 / 120。
