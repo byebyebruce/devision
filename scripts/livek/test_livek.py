@@ -108,6 +108,7 @@ class FakeReading:
     def __init__(self, policy="right", tamper=False):
         from devision.reading import HEADER
         self.policy, self.tamper, self.k_rule, self.corrector = policy, tamper, True, object()
+        self.unreadable: dict = {}                    # (picture, template) -> "unreadable": a real read failure
         self.decider = FakeDecider({})
         self.p_tables, self.gold, self.wrong = {}, {}, set()
         for r in m.jsonl(m.TUNE_P):
@@ -126,7 +127,8 @@ class FakeReading:
         from devision.reading import TEMPLATES, domain_of, k_block, reads_for, serialise
         path = getattr(image, "_path")
         tmpls = reads_for(questions)
-        table = [row for row in self.p_tables.get(path, self.TABLE) if row[:2] in [list(TEMPLATES[t]) for t in tmpls]]
+        source = {tuple(row[:2]): row[2] for row in self.p_tables.get(path, self.TABLE)}
+        table = [[*TEMPLATES[t], self.unreadable.get((path, t), source[tuple(TEMPLATES[t])])] for t in tmpls]   # Reading.read's order
         plain = serialise(state, table)
         kb = k_block(table)
         states = {k: (plain + "\n" + kb if kb and domain_of(q["instructions"]) == "temperature" else plain)
@@ -134,7 +136,8 @@ class FakeReading:
         if self.tamper and states:
             states[next(iter(states))] += " tampered"
         if diagnostics is not None:
-            diagnostics.update(route={k: ("read" if k in states else "ordinary") for k in questions}, reads=[{"question": t} for t in tmpls],
+            reads = [{"question": t, "value": v, "valid": v != "unreadable", "decoded": v.replace(",", "")} for t, (_, _, v) in zip(tmpls, table)]
+            diagnostics.update(route={k: ("read" if k in states else "ordinary") for k in questions}, reads=reads or None,
                                table=table, states=states, k_block=kb if any(domain_of(q["instructions"]) == "temperature" for q in questions.values()) else None)
         ans = {}
         for k, q in questions.items():
@@ -228,3 +231,58 @@ def test_run_order_fidelity_stop_and_limit(tmp_path):
 
 def test_values_compare_without_thousands_separators():
     assert m.bare("1,270") == "1270" == m.bare("1270") and m.bare("unreadable") == "unreadable" and m.bare(None) is None
+
+
+def rewrite_reads(out, name, edit):
+    f = os.path.join(out, "reads_%s.jsonl" % name)
+    lines = [json.loads(x) for x in open(f)]
+    lines = edit(lines)
+    with open(f, "w") as fh:
+        fh.write("".join(json.dumps(x) + "\n" for x in lines))
+    m.register(out, "reads_" + name, {"reads_%s.jsonl" % name: m.sha(f)})       # registered again: only the content is wrong
+
+
+def first_read(lines):
+    return next(i for i, x in enumerate(lines) if x["table"])
+
+
+@data
+@pytest.mark.parametrize("damage", ["empty", "missing_request", "duplicate", "wrong_text", "value_not_table", "missing_template", "k_not_table"])
+def test_incomplete_or_inconsistent_reads_are_refused(started, tagged, damage):
+    """LIVE-K-RUNNER-R1-01: the reading evidence is checked against the source's requests and itself, after registration."""
+    chain(started, FakeReading("right"))
+    name = "sqa_temp" if damage != "missing_request" else "science"
+
+    def edit(lines):
+        i = first_read(lines)
+        if damage == "empty":
+            return []
+        if damage == "missing_request":
+            return lines[:-1]
+        if damage == "duplicate":
+            return lines + [lines[i]]
+        if damage == "wrong_text":
+            lines[i]["text"] += " (edited)"
+        elif damage == "value_not_table":
+            lines[i]["reads"][0]["value"] = "999"
+        elif damage == "missing_template":
+            lines[i]["reads"] = lines[i]["reads"][1:]
+        else:
+            lines[i]["k_block"] = "Computed from the values above (mass times speed squared, no unit):\nSample A: x = 1\nSample B: x = 2"
+        return lines
+    rewrite_reads(started, name, edit)
+    res = m.report(started)
+    assert res["states"][name].startswith("invalid") and res["branch"].startswith("invalid"), (res["states"][name], res["branch"])
+
+
+@data
+def test_an_unreadable_read_stays_valid_and_in_the_denominator(started, tagged):
+    reading = FakeReading("right")
+    src = m.jsonl(m.TRANSFER["sqa_temp"])
+    pic = src[0]["image"]
+    reading.unreadable[(pic, "What is the average particle speed in sample A?")] = "unreadable"
+    res = chain(started, reading)
+    assert res["states"]["sqa_temp"] == "completed" and res["accuracy"]["sqa_temp"] is not None
+    reads = [json.loads(x) for x in open(os.path.join(started, "reads_sqa_temp.jsonl"))]
+    hit = next(x for x in reads if x["image"] == pic)
+    assert any(r["value"] == "unreadable" for r in hit["reads"]) and hit["k_block"] is None   # no K, still decided and counted

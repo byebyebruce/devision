@@ -302,9 +302,7 @@ def stage_live(out: str, which: str, data_root: str = "data", reading=None) -> D
 
 def set_records(out: str, name: str, src: List[Dict], st: Dict, data_sha: str) -> List[Dict]:
     """A registered set after every check: identity bound to START / the K bundle, every source question once, each on its
-    own row's picture, the reads of that picture; for every read question its state is the request text + that picture's
-    table (+ K from that table for temperature questions, when defined)."""
-    from devision.reading import domain_of, k_block, serialise
+    own row's picture, and its reading evidence complete and consistent (check_reads)."""
     f = "details_%s.jsonl" % name
     if e54.check_registered(out, "decide_" + name).get(f) != sha(os.path.join(out, f)):
         raise SystemExit("%s not registered" % f)
@@ -320,20 +318,47 @@ def set_records(out: str, name: str, src: List[Dict], st: Dict, data_sha: str) -
     rf = "reads_%s.jsonl" % name
     if e54.check_registered(out, "reads_" + name).get(rf) != sha(os.path.join(out, rf)):
         raise SystemExit("%s not registered" % rf)
-    qs = {(r["id"], q): x for r in src for q, x in r["questions"].items()}
-    for x in jsonl(os.path.join(out, rf)):
-        for sid, qid in x["questions"]:
-            if image_of[(sid, qid)] != x["image"]:
-                raise SystemExit("%s: reads not of the row's own picture" % rf)
-            dom = domain_of(qs[(sid, qid)].get("instructions", ""))
-            state = x["states"].get("%s/%s" % (sid, qid))
-            if dom is None:
-                continue
-            plain = serialise(x["text"], x["table"])
-            kb = k_block(x["table"]) if dom == "temperature" else None
-            if state != (plain + "\n" + kb if kb else plain):
-                raise SystemExit("%s: %s/%s's state is not its picture's table (+ K)" % (rf, sid, qid))
+    check_reads(rf, src, jsonl(os.path.join(out, rf)))
     return list(got.values())
+
+
+def check_reads(rf: str, src: List[Dict], lines: List[Dict]) -> None:
+    """The reading evidence of a set, complete and consistent (critic LIVE-K-RUNNER-R1-01): exactly the requests EXP58's
+    grouping makes of the source, in order, each once -- picture, source text and question members; for a request with
+    read questions its reads name each of the request's reading templates once, in order, every read value is the table's
+    value for that template (an "unreadable" read is a valid failure and stays in the denominator), K is computed from that
+    table, and each read question's state is the request text + that table (+ K for a temperature question when K is
+    defined); a request without read questions carries no table. Anything else is refused."""
+    from devision.reading import TEMPLATES, domain_of, k_block, reads_for, serialise
+    want = e58.requests(src)
+    if len(lines) != len(want):
+        raise SystemExit("%s: %d requests registered, the source makes %d" % (rf, len(lines), len(want)))
+    by_id = {r["id"]: r for r in src}
+    for n, ((image, text, items), x) in enumerate(zip(want, lines)):
+        members = [[src[i]["id"], qid] for i, qid, _ in items]
+        if x.get("image") != image or x.get("text") != text or x.get("questions") != members:
+            raise SystemExit("%s: request %d is not the source's (picture / text / questions)" % (rf, n))
+        qs = {"%s/%s" % (sid, qid): by_id[sid]["questions"][qid] for sid, qid in members}
+        routed = {k: domain_of(q.get("instructions", "")) for k, q in qs.items() if domain_of(q.get("instructions", "")) is not None}
+        states = x.get("states") or {}
+        if not routed:
+            if x.get("table") or x.get("reads") or any(v is not None for v in states.values()):
+                raise SystemExit("%s: request %d has no read question but carries reads" % (rf, n))
+            continue
+        tmpls = reads_for(qs)
+        reads, table = x.get("reads") or [], x.get("table") or []
+        if [r.get("question") for r in reads] != tmpls:
+            raise SystemExit("%s: request %d's reads are not its reading templates once each" % (rf, n))
+        if table != [[*TEMPLATES[t], r.get("value")] for t, r in zip(tmpls, reads)]:
+            raise SystemExit("%s: request %d's table is not its reads' values" % (rf, n))
+        plain = serialise(text, table)
+        kb = k_block(table)
+        hot = kb is not None and any(d == "temperature" for d in routed.values())
+        if x.get("k_block") != (kb if any(d == "temperature" for d in routed.values()) else None):
+            raise SystemExit("%s: request %d's K block is not its table's" % (rf, n))
+        for k, d in routed.items():
+            if states.get(k) != (plain + "\n" + str(kb) if hot and d == "temperature" else plain):
+                raise SystemExit("%s: request %d, %s: the state is not the text + its table (+ K)" % (rf, n, k))
 
 
 def bare(value: Optional[str]) -> Optional[str]:

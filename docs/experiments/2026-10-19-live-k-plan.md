@@ -110,3 +110,16 @@ worktree devision-livek-run，分支 live-k-runner（live-k-prep 57532f6 合并�
   - 发布用的 rebind 还没有传 k_rule（NOTE-01，等 K 候选进入发布流程时再做）；
   - 不生成也不打开确认集；
   - 对外只说「自动读数 + 确定性数值计算 + 模型决策」。
+
+### runner 第 1 轮修正（LIVE-K-RUNNER-R1-01）
+
+- 问题：report 原来只遍历 reads 文件里已有的行，空文件或缺行时，迁移和 science 仍会判 completed；期望的 state 也只用记录自身的 text 和 table 来算，没有对回源请求和原始读数。
+- 修正：新增 check_reads，由正式 report（set_records）调用：
+  - 按源文件经 EXP58 分组得到的请求全集逐个对齐：数量、顺序、唯一性、图片、源文本、题目成员；缺请求、重复请求、文本被改都会被拒绝。
+  - 有读取题的请求：reads 必须正好是这个请求的读取模板，各一次、顺序一致；每个读数的值必须就是 table 里对应模板的值；K 必须由这张 table 算出；每道读取题的 state 必须等于「源文本 + table（温度题在 K 有定义时再加 K）」。
+  - 没有读取题的请求不能带读数。
+  - unreadable 是有效的读取失败：这道题照常作答、计入分母，只是没有 K。
+- 夹具（scripts/livek/test_livek.py，共 18 项全过）：
+  - 在登记合法的结果上，改动 reads 内容后重新登记（所以登记本身能通过），以下 7 种情况都判 invalid：空文件、少一个请求、重复一个请求、源文本被改、读数与 table 不一致、少一个模板、K 与 table 不一致；
+  - 一个温度读数是 unreadable 时，结果仍然 completed、计入准确率，那个请求没有 K；
+  - 假读取器补上了真实形状的 reads（模板、值、valid），按 Reading.read 的模板顺序生成 table。
