@@ -15,7 +15,13 @@ V04-EVIDENCE-R3-02, V04-ENTRY-R1-03). CPU only, loads no tensor. Every record li
           in ALLOWED keys, write <candidate>/reading/ from the source bundle's component files and lineage.json (with
           source.json's sha256). check_eval freeze binds both records; the release build checks them again.
 
-    uv run python scripts/release/rebind.py source --run runs/exp71 --decision runs/exp57/... --bundle runs/exp71/bundle_on --round runs/v04-candidate
+  Sources (critic V04-K-PREP-01): "livek" -- the release's (RELEASE_KIND): LIVE-K's run (START / registry / report pinned,
+  13 states completed, gates live_P / transfer / protection true, every registered file unchanged) and its K bundle
+  runs/livek/bundle_k (its reading.json is START's k_bundle, rules hash START's, the K rule present) with PROTECT's end
+  (START's protect end) and EXP71's three components (START's exp71 bundle_on); "exp71" -- the earlier no-K source
+  (bundles["on"] of EXP71's START), kept as it was. bind keeps the source bundle's K rule (and so its rules hash).
+
+    uv run python scripts/release/rebind.py source --kind livek --run runs/livek --decision runs/protect-k/stage2 --bundle runs/livek/bundle_k --round runs/v04-candidate
     uv run python scripts/release/rebind.py clone --round runs/v04-candidate --candidate runs/v04-candidate/stage
     uv run python scripts/release/rebind.py bind --candidate runs/v04-candidate/stage
 """
@@ -39,6 +45,13 @@ LINEAGE_DIR = "reading_lineage"
 PINS = {"START.json": "da4c3cec8811f5847ba2cb5953952eece452074e3cefea174e01a9bbcea6b943",
         "registry.json": "dc93c7a1f969581c06b9c075fc9e8f5e28d8a449a658085d36beedd120ea6b07",
         "report.json": "6869596dff0f36fb31f7ff32d3a910c7e26291f92ef670b08a6b4ec3367d6eea"}
+# LIVE-K-RUN-01 (LIVE-K-RESULT-01): PROTECT's end + EXP71's components + the K rule -- the v0.4 source
+PINS_LIVEK = {"START.json": "f9a10d6a7293722c3e04a9649ea092df3127ffaeefb11899eb79c28b75b57a32",
+              "registry.json": "aa6e0e7544ff58d29c179ff27abb97533d9434469c2dd39ba0a1b22d1cf05d66",
+              "report.json": "2e706f593fd1518823dc5a2df711e1bbfe23d85eaaca3e27611a25a84abfd560"}
+SOURCES = {"exp71": PINS, "livek": PINS_LIVEK}
+RELEASE_KIND = "livek"                 # what the release flow requires when no pins are given
+LIVEK_GATES = ("live_P", "transfer", "protection")
 
 
 def digest(path: str) -> str:
@@ -56,41 +69,87 @@ def files_of(decision: str, bundle: str) -> Dict[str, str]:
     return out
 
 
-def verify_source(run: str, decision: str, bundle: str, pins: Optional[Dict[str, str]] = None) -> List[str]:
+def expected_files(run: str, bundle: str, kind: str) -> Dict[str, str]:
+    """The files a source's START says it ran: EXP71's bundles.on; for LIVE-K its K bundle's reading.json (START's
+    k_bundle), EXP71's three components and PROTECT's end as START bound them, the tokenizer the pinned reading.json binds."""
+    st = json.load(open(os.path.join(run, "START.json")))
+    if kind == "exp71":
+        return dict(st["bundles"]["on"])
+    want = {"reading.json": st["k_bundle"]["reading.json"], **{c: st["exp71"]["bundle_on"][c] for c in COMPONENTS},
+            **{k: st["protect"]["end"][k] for k in ("model.safetensors", "config.json")}}
+    rj = os.path.join(bundle, "reading.json")
+    if os.path.exists(rj) and sha(rj) == want["reading.json"]:
+        want["tokenizer"] = json.load(open(rj))["sha256"]["tokenizer"]
+    return want
+
+
+def run_problems(run: str, bundle: str, kind: str) -> List[str]:
+    """LIVE-K's run as accepted: every state completed, the three gates true, every registered file unchanged, and its K
+    bundle with the K rule and START's rules hash (EXP71's run keeps the earlier checks)."""
+    if kind != "livek":
+        return []
+    out = []
+    rep = json.load(open(os.path.join(run, "report.json")))
+    if not rep.get("states") or any(v != "completed" for v in rep["states"].values()):
+        out.append("%s: not every state completed" % run)
+    if not all(rep.get("gates", {}).get(g) is True for g in LIVEK_GATES):
+        out.append("%s: gates %s not all true" % (run, LIVEK_GATES))
+    for files in json.load(open(os.path.join(run, "registry.json"))).values():
+        out += ["%s: registered %s changed" % (run, f) for f, h in files.items()
+                if not os.path.exists(os.path.join(run, f)) or sha(os.path.join(run, f)) != h]
+    st = json.load(open(os.path.join(run, "START.json")))
+    ident = json.load(open(os.path.join(bundle, "reading.json")))
+    if "k_rule" not in ident or ident.get("rules_sha256") != st["k_bundle"]["rules_sha256"]:
+        out.append("%s: the source bundle has no K rule or not START's rules hash" % bundle)
+    out += ["%s: rules differ from this code: %s" % (bundle, x) for x in check_rules(ident, full=True)]
+    return out
+
+
+def verify_source(run: str, decision: str, bundle: str, pins: Optional[Dict[str, str]] = None, kind: str = "exp71") -> List[str]:
     """The one read-only check of a source (used when source.json is written and every time it is used): the run's
-    pinned files (default PINS, EXP71) have exactly their pinned sha256 on disk now, and the bundle and decision
-    checkpoint are the files its START records as bundles.on."""
-    pins = PINS if pins is None else pins
+    pinned files (default SOURCES[kind]) have exactly their pinned sha256 on disk now, the run is the accepted one
+    (run_problems), and the bundle and decision checkpoint are the files its START records (expected_files)."""
+    if kind not in SOURCES:
+        return ["unknown source kind %r" % kind]
+    pins = SOURCES[kind] if pins is None else pins
     problems = ["%s/%s is not the pinned source (%s)" % (run, k, v[:12]) for k, v in pins.items()
                 if not os.path.exists(os.path.join(run, k)) or sha(os.path.join(run, k)) != v]
     if problems:
         return problems
-    want = json.load(open(os.path.join(run, "START.json")))["bundles"]["on"]
+    want = expected_files(run, bundle, kind)
     got = files_of(decision, bundle)
     diff = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
-    return ["%s / %s are not the files %s/START.json records as bundles.on (%s)" % (bundle, decision, run, diff)] if diff else []
+    if diff:
+        return ["%s / %s are not the files %s/START.json records%s (%s)" % (bundle, decision, run, " as bundles.on" if kind == "exp71" else "", diff)]
+    return run_problems(run, bundle, kind)
 
 
 def check_source(rec: Dict, pins: Optional[Dict[str, str]] = None) -> List[str]:
     """A source.json as it is consumed: written for the required pins, its run / bundle / decision verified again
     (`verify_source`, the pinned files' actual hashes), and its own bundle_on equal to that START's bundles.on (and so
     to the files now) -- a record replaced by another self-consistent source, or a changed pinned run, is refused."""
-    pins = PINS if pins is None else pins
+    kind = rec.get("kind", "exp71")
+    if pins is None:                                     # the release flow: only its own source kind
+        if kind != RELEASE_KIND:
+            return ["source.json is a %r source, the release requires %r" % (kind, RELEASE_KIND)]
+        pins = SOURCES[RELEASE_KIND]
     if rec.get("pins") != pins:
         return ["source.json pins %r, not the required source" % rec.get("pins")]
-    out = verify_source(rec["run"], rec["decision"], rec["bundle"], pins)
-    if not out and rec.get("bundle_on") != json.load(open(os.path.join(rec["run"], "START.json")))["bundles"]["on"]:
-        out.append("source.json bundle_on is not %s/START.json bundles.on" % rec["run"])
+    out = verify_source(rec["run"], rec["decision"], rec["bundle"], pins, kind)
+    if not out and rec.get("bundle_on") != expected_files(rec["run"], rec["bundle"], kind):
+        out.append("source.json bundle_on is not what %s/START.json records" % rec["run"])
     return out
 
 
-def source(run: str, decision: str, bundle: str, round_dir: str, pins: Optional[Dict[str, str]] = None) -> Dict:
-    pins = PINS if pins is None else pins
-    problems = verify_source(run, decision, bundle, pins)
+def source(run: str, decision: str, bundle: str, round_dir: str, pins: Optional[Dict[str, str]] = None, kind: str = "exp71") -> Dict:
+    if kind not in SOURCES:
+        raise SystemExit("unknown source kind %r" % kind)
+    pins = SOURCES[kind] if pins is None else pins
+    problems = verify_source(run, decision, bundle, pins, kind)
     if problems:
         raise SystemExit("refusing the source:\n  " + "\n  ".join(problems))
     got = files_of(decision, bundle)
-    rec = {"run": os.path.abspath(run), "pins": pins, "decision": os.path.abspath(decision), "bundle": os.path.abspath(bundle), "bundle_on": got}
+    rec = {"kind": kind, "run": os.path.abspath(run), "pins": pins, "decision": os.path.abspath(decision), "bundle": os.path.abspath(bundle), "bundle_on": got}
     os.makedirs(os.path.join(round_dir, LINEAGE_DIR), exist_ok=True)
     path = os.path.join(round_dir, LINEAGE_DIR, "source.json")
     if os.path.exists(path):
@@ -143,12 +202,15 @@ def bind(candidate: str, pins: Optional[Dict[str, str]] = None) -> Dict:
     lineage = {"source_json_sha256": sha(src_path), "candidate": os.path.abspath(candidate),
                "components": {c: rec["bundle_on"][c] for c in comps}, "unchanged": {f: digest(os.path.join(decision, f)) for f in SAME},
                "config_changes": {k: {"source": src_cfg.get(k), "candidate": cand_cfg.get(k)} for k in diff}}
+    keep_k = "k_rule" in ident                        # the source's K rule goes with it (V04-K-PREP-01)
     new = write_bundle(os.path.join(candidate, "reading"), candidate, os.path.join(bundle, "selector.pt"), os.path.join(bundle, "head.pt"),
                        {"source_json_sha256": lineage["source_json_sha256"], "source_reading_json_sha256": rec["bundle_on"]["reading.json"]},
-                       dims=ident["dims"], corrector_pt=os.path.join(bundle, "corrector.pt") if "corrector.pt" in comps else None)
-    if {c: new["sha256"][c] for c in comps} != lineage["components"] or set(COMPONENTS) & set(new["sha256"]) != set(comps):
+                       dims=ident["dims"], corrector_pt=os.path.join(bundle, "corrector.pt") if "corrector.pt" in comps else None, k_rule=keep_k)
+    if {c: new["sha256"][c] for c in comps} != lineage["components"] or set(COMPONENTS) & set(new["sha256"]) != set(comps) \
+            or ("k_rule" in new) != keep_k or (keep_k and new["rules_sha256"] != ident["rules_sha256"]):
         shutil.rmtree(os.path.join(candidate, "reading"))
-        raise SystemExit("the new bundle's components are not the source's")
+        raise SystemExit("the new bundle's components / rules are not the source's")
+    lineage.update(k_rule=keep_k, rules_sha256=new["rules_sha256"])
     lineage["reading_json_sha256"] = sha(os.path.join(candidate, "reading", "reading.json"))
     with open(os.path.join(meta, "lineage.json"), "w") as fh:
         json.dump(lineage, fh, indent=1)
@@ -175,6 +237,11 @@ def lineage_problems(candidate: str, pins: Optional[Dict[str, str]] = None) -> L
     out += ["candidate %s is not the source's" % f for f in SAME if digest(os.path.join(candidate, f)) != lin.get("unchanged", {}).get(f)]
     out += ["candidate reading/%s is not the source's" % c for c, v in lin.get("components", {}).items()
             if not os.path.exists(os.path.join(candidate, "reading", c)) or sha(os.path.join(candidate, "reading", c)) != v]
+    if os.path.exists(rj) and os.path.exists(os.path.join(rec["bundle"], "reading.json")):
+        cand, src = json.load(open(rj)), json.load(open(os.path.join(rec["bundle"], "reading.json")))
+        if ("k_rule" in cand) != ("k_rule" in src) or lin.get("k_rule") != ("k_rule" in src) \
+                or ("k_rule" in src and cand.get("rules_sha256") != src.get("rules_sha256")):
+            out.append("candidate reading's K rule / rules hash is not the source's")
     return out
 
 
@@ -184,6 +251,7 @@ def main(argv=None) -> int:
     s = sub.add_parser("source")
     for k in ("run", "decision", "bundle", "round"):
         s.add_argument("--" + k, required=True)
+    s.add_argument("--kind", choices=sorted(SOURCES), default=RELEASE_KIND)
     c = sub.add_parser("clone")
     c.add_argument("--round", required=True)
     c.add_argument("--candidate", required=True)
@@ -191,7 +259,7 @@ def main(argv=None) -> int:
     b.add_argument("--candidate", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "source":
-        print(json.dumps(source(a.run, a.decision, a.bundle, a.round), indent=1))
+        print(json.dumps(source(a.run, a.decision, a.bundle, a.round, kind=a.kind), indent=1))
     elif a.cmd == "clone":
         clone(a.round, a.candidate)
     else:
