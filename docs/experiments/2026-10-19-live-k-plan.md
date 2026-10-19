@@ -58,3 +58,55 @@
 - `test_states_fall_back_without_k`：不带 K 规则，或 K 没有定义时，每道读取题都是同一份不带 K 的 state，`state` 就是它。
 - 结果：test_reading_k 9 项全过；全部 tests 369 项通过；pyright 0 错误。
 - NOTE-01（scripts/release/rebind.py 重新绑定时没有传 k_rule）：推迟到 K 候选进入发布生命周期时一起做；现在绑定的 EXP71 来源本来就不带 K，不影响已验收的路径。
+
+## runner（LIVE-K-RUNNER-PREP-02；CPU 编排，不是运行许可）
+
+worktree devision-livek-run，分支 live-k-runner（live-k-prep 57532f6 合并了 protect-prep 9f0a038，没有冲突）。脚本 scripts/livek/livek.py 和 run.sh。
+
+- **身份（PREP-02-01）**：start 在任何前向之前写下 START，内容包括：
+  - PROTECT 的 START / report / registry 三个固定哈希，以及 registry 登记的全部文件；report 的 15 项状态都是 completed，A / B / C 都是 true；
+  - 冻结端点 185b9496 / 4f9ccf48；PROTECT 登记的无 K bundle 6459eb99；
+  - EXP71 的 bundle_on；
+  - start 时用 write_bundle(k_rule=True) 把同一份 EXP71 组件写成 K bundle（runs/livek/bundle_k）：组件已核对，k_rule、rules_sha256 和 reading.json 都是新身份，PROTECT 的无 K bundle 不动；
+  - tune_P、P_K、dev_sqa 的四个文件、七个面板、v0.3 明细、PROTECT 登记的 C_P_new；
+  - 本次会打开的全部 1,100 多张图片的 sha256（与 EXP58 清单里重合的部分要一致）；
+  - 代码。
+- **阶段（PREP-02-02）**：
+  1. **fid_text**：新端点在 P_K 的 600 个给定 state 上作答，必须与 PROTECT 已登记的 C_P_new 预测相同、概率差 ≤ 1e-5，否则停止，后面的阶段都不跑（run.sh 夹具已验证）。
+  2. **live_p**：K 组合在 tune_P 的全部 600 张图上实时读取。每行的输入是去掉表之后的原文（夹具已验证：原文加 EXP56 的表重新 serialise 后，逐字等于原 P state）。登记每个请求的读数、表、K 块，以及每题实际的 state。
+     - 读全部 600 张，而不是只读 300 张温度图：旧门槛的 P_use 还要看磁力的距离读数，磁力题不受 K 影响。
+     - 门槛沿用 C：温度比较 ≥ 0.65、P all ≥ 0.866、P_use。其中 read_right 按实时表计算（比较时去掉千位分隔符，因为 EXP56 的表和 target 都没有分隔符）。
+     - 另外描述：实时表与 EXP56 表的一致率、实时读数的正确率、温度请求中有 K 的数量。
+  3. **transfer**：K 组合在 dev_sqa 的温度 / 磁力真图和固定错图上作答；错图自己读、自己算 K，不复用真图的表。相对 v0.3 用 exp21 的 68:114 加权，判定：准确率差 ≥ +10 点且下界 > 0，看图收益差下界 > 0；两个域分开报告。
+  4. **guard_science**：K 组合重跑整个 science 面板（269 个请求，其中有 9 道温度读取题）。
+  5. **report**：
+     - 先查身份和保真；
+     - 每份明细都核对：已登记、身份绑定、源题逐题唯一、每题用的是它自己那一行的图、reads 来自那张图，而且每道读取题的 state 等于「请求原文 + 那张图的表（温度题再加由该表算出的 K）」，被改动就判 invalid；
+     - 保护：science 用本次重算的结果；其余六个面板引用 PROTECT-A 已登记的明细，报告里写明文件和哈希。复用的依据是：这六个面板没有一道题会路由到读取（start 时用 domain_of 逐题核对，science 如果出现在复用名单里会被拒绝），所以 K 规则碰不到它们；端点、温度、EXP58 的请求分组和 Reading.decide 的普通路径都相同。
+     - 分支：保真不过 → 停止；有缺失或无效 → 没有结论；有保护代价 → 不继续；迁移没达标 → 不继续；P 门槛不过 → 不继续；全部通过 → 开发结果。之后的独立确认、校准和全量发布都要分别许可；不是候选。
+- **请求数与预算（PREP-02-03）**：
+
+| 阶段 | 请求 | 依据 | 估计 |
+|---|---|---|---|
+| start（图片哈希、K bundle） | — | | < 0.5 分钟 |
+| fid_text | 600（文字） | PROTECT C 实测每秒 4.9 个 | 约 2 分钟 + 加载 0.5 分钟 |
+| live_p | 600（读取） | EXP71 / EXP73 实测每秒 2.3–3.1 个 | 约 3.2–4.3 分钟 + 加载 |
+| transfer | 41 + 120 + 41 + 120 = 322 | 同上 | 约 1.7–2.3 分钟 + 加载 |
+| guard_science | 269 | EXP73 实测每秒 2.9 个 | 约 1.5 分钟 + 加载 |
+| report | — | | 约 1 分钟 |
+| **合计** | | | **约 11–14 分钟** |
+
+  - 总上限 30 分钟，最后 120 秒留给报告；一次启动，不重试。
+- **CPU 夹具**（scripts/livek/test_livek.py，10 项全过）：
+  - START 绑定 PROTECT，换掉 report 的固定哈希就拒绝；K bundle 的组件与 EXP71 相同、身份与无 K bundle 不同；
+  - live 输入就是 P 去掉表；
+  - 只有不含读取题的面板可以复用（加入 science 会被拒绝）；
+  - 文字保真：用登记概率能复现，概率偏 2e-5 就拒绝；
+  - 用假读取器走完整链：全过 → 开发结果（science 是重算、六个面板标明复用、297 个温度请求有 K）；真图答错 → 迁移未达标；缺 science → incomplete；改一道题的 state → invalid；
+  - 去掉千位分隔符的比较；
+  - run.sh：顺序、保真失败时不跑后续、上限 1,800 / 120。
+- 全部 tests 384 项通过，pyright 0 错误。scripts/protect 自己的夹具现在在 setup 报错，因为真实的 runs/protect-k 已经存在，它的 start 只允许新目录；这与 EXP72 的情况相同，与本次改动无关。
+- 未实现 / 边界：
+  - 发布用的 rebind 还没有传 k_rule（NOTE-01，等 K 候选进入发布流程时再做）；
+  - 不生成也不打开确认集；
+  - 对外只说「自动读数 + 确定性数值计算 + 模型决策」。
