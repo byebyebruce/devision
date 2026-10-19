@@ -21,8 +21,14 @@ question route "read") and computes everything from them.
   bundle's identity and the code are recorded; its probabilities are calibration data only, never evidence for the final
   combination.
 
-    uv run python scripts/release/route_calib.py collect --candidate <dir> --bundle <tmp bundle> --rows data/rl_calib/questions.jsonl --out <records.jsonl>
-    uv run python scripts/release/route_calib.py analyse --records <records.jsonl> --config <candidate>/config.json --out <report.json>
+  The formal entries are registered (critic V04-K-PREP-02-R1-03): collect checks and records the calibration identity
+  before loading (identity: source, candidate files / config, temporary bundle bound to that config, rows, pictures, code)
+  and writes records.jsonl + CALIB.json; analyse re-verifies CALIB.json against the files and the records' completeness
+  against the source rows (every question once, options / gold / family / domain, both domains, both views) before any
+  statistic.
+
+    uv run python scripts/release/route_calib.py collect --candidate <dir> --bundle <tmp bundle> --rows data/rl_calib/questions.jsonl --out-dir <calib dir>
+    uv run python scripts/release/route_calib.py analyse --calib-dir <calib dir> --out <report.json>
 """
 import argparse
 import hashlib
@@ -169,29 +175,133 @@ def collect(reading, rows: List[Dict], data_root: str) -> List[Dict]:
     return [dict(r, family=fam[r["sample_id"]]) for r in recs]
 
 
+CODE = ("scripts/release/route_calib.py", "scripts/release/rebind.py", "scripts/release/rl_calib.py", "src/devision/reading.py",
+        "src/devision/infer.py", "src/devision/model.py", "src/devision/train/evaluate.py")
+DOMAIN_OF_KIND = {"temp": "temperature", "force": "magnets"}
+
+
+def _sha(path: str) -> str:
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+
+def _rb():
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location("calib_rebind", os.path.join(os.path.dirname(os.path.abspath(__file__)), "rebind.py"))
+    assert spec is not None and spec.loader is not None
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def identity(candidate: str, bundle: str, rows_path: str, data_root: str, pins: Optional[Dict[str, str]] = None, root: str = ".") -> Dict:
+    """What a calibration run is bound to (critic V04-K-PREP-02-R1-03): the verified source record, the candidate's actual
+    inference files and its (ordinary-calibrated) config, the temporary bundle (bound to that config, outside the candidate),
+    the source rows and every picture they show, and the code. Refuses a candidate that is not the source's (weights /
+    non-whitelisted config) or a bundle not bound to the candidate's current config."""
+    import os
+    rb = _rb()
+    rec = json.load(open(os.path.join(rb.lineage_dir(candidate), "source.json")))
+    bad = rb.check_source(rec, pins) + rb.candidate_problems(candidate, rec)
+    rj = json.load(open(os.path.join(bundle, "reading.json")))
+    if rj["sha256"].get("config.json") != _sha(os.path.join(candidate, "config.json")) or rj["sha256"].get("model.safetensors") != _sha(os.path.join(candidate, "model.safetensors")):
+        bad.append("the temporary bundle is not bound to the candidate's current config / weights")
+    if "k_rule" not in rj:
+        bad.append("the temporary bundle has no K rule")
+    if bad:
+        raise SystemExit("calibration identity refused:\n  " + "\n  ".join(bad))
+    rows = [json.loads(x) for x in open(rows_path) if x.strip()]
+    return {"source_json": _sha(os.path.join(rb.lineage_dir(candidate), "source.json")),
+            "candidate": {f: rb.digest(os.path.join(candidate, f)) for f in rb.FILES},
+            "temporary_bundle": _sha(os.path.join(bundle, "reading.json")), "rows": _sha(rows_path),
+            "pictures": {r["image"]: _sha(os.path.join(data_root, r["image"])) for r in rows},
+            "code": {f: _sha(os.path.join(root, f)) for f in CODE if os.path.exists(os.path.join(root, f))}, "temperature": "raw (1)"}
+
+
+def register(out_dir: str, ident: Dict, recs: List[Dict], paths: Dict[str, str]) -> Dict:
+    import os
+    os.makedirs(out_dir, exist_ok=False)
+    rp = os.path.join(out_dir, "records.jsonl")
+    with open(rp, "w") as fh:
+        fh.write("".join(json.dumps(r) + "\n" for r in recs))
+    reg = {**ident, "records": _sha(rp), "paths": {k: os.path.abspath(v) for k, v in paths.items()}}
+    json.dump(reg, open(os.path.join(out_dir, "CALIB.json"), "w"), indent=1)
+    return reg
+
+
+def completeness(recs: List[Dict], rows: List[Dict]) -> List[str]:
+    """Every source question exactly once with its options, gold, family and domain; both domains; both views of every
+    family (critic V04-K-PREP-02-R1-03). An unreadable read that led to a wrong answer is a normal record, kept."""
+    want = {(r["id"], q): (list(x["criteria"]), max(r["gold"][q]["probabilities"], key=r["gold"][q]["probabilities"].get), r["family"],
+                           DOMAIN_OF_KIND.get(r["kind"])) for r in rows for q, x in r["questions"].items()}
+    out, seen = [], set()
+    for x in recs:
+        k = (x.get("sample_id"), x.get("qid"))
+        if k in seen:
+            out.append("%s/%s: duplicate record" % k)
+            continue
+        seen.add(k)
+        w = want.get(k)
+        if w is None:
+            out.append("%s/%s: not a source question" % k)
+            continue
+        if list(x.get("probabilities") or {}) != w[0] or x.get("gold_answer") != w[1] or x.get("family") != w[2] or x.get("reading_domain") != w[3]:
+            out.append("%s/%s: options / gold / family / domain differ from the source" % k)
+    missing = set(want) - seen
+    if missing:
+        out.append("%d source questions missing, e.g. %s" % (len(missing), sorted(missing)[0]))
+    views: Dict[str, set] = defaultdict(set)
+    for r in rows:
+        views[r["family"]].add(r["image_id"].rsplit(":", 1)[-1])
+    out += ["family %s: views %s, not v0 + v1" % (f, sorted(v)) for f, v in views.items() if v != {"v0", "v1"}]
+    doms = {w[3] for w in want.values()}
+    if doms != {"temperature", "magnets"}:
+        out.append("the source holds domains %s, not both" % sorted(d for d in doms if d))
+    return out
+
+
+def analyse_registered(out_dir: str, pins: Optional[Dict[str, str]] = None, root: str = ".") -> Dict:
+    """The formal analysis: CALIB.json re-verified against the files now (identity recomputed and equal, records hash),
+    the records complete against the source rows, then `analyse` with the candidate's own config."""
+    import os
+    reg = json.load(open(os.path.join(out_dir, "CALIB.json")))
+    P = reg["paths"]
+    now = identity(P["candidate"], P["bundle"], P["rows"], P["data_root"], pins, root)
+    changed = sorted(k for k in now if now[k] != reg.get(k))
+    if changed or _sha(os.path.join(out_dir, "records.jsonl")) != reg["records"]:
+        raise SystemExit("calibration registration does not verify: %s" % (changed or ["records"]))
+    recs = [json.loads(x) for x in open(os.path.join(out_dir, "records.jsonl")) if x.strip()]
+    rows = [json.loads(x) for x in open(P["rows"]) if x.strip()]
+    bad = completeness(recs, rows)
+    if bad:
+        raise SystemExit("calibration records incomplete / inconsistent:\n  " + "\n  ".join(bad[:10]))
+    res = analyse(recs, json.load(open(os.path.join(P["candidate"], "config.json"))))
+    res["registration"] = {"CALIB.json": _sha(os.path.join(out_dir, "CALIB.json")), "records": reg["records"]}
+    return res
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("collect")
-    for k in ("candidate", "bundle", "rows", "out"):
-        c.add_argument("--" + k, required=True)
+    for k in ("candidate", "bundle", "rows", "out_dir"):
+        c.add_argument("--" + k.replace("_", "-"), required=True)
     c.add_argument("--data-root", default="data")
     c.add_argument("--device", default="auto")
     n = sub.add_parser("analyse")
-    for k in ("records", "config", "out"):
-        n.add_argument("--" + k, required=True)
+    for k in ("calib_dir", "out"):
+        n.add_argument("--" + k.replace("_", "-"), required=True)
     a = ap.parse_args(argv)
     if a.cmd == "collect":
         from devision.reading import Reading
+        ident = identity(a.candidate, a.bundle, a.rows, a.data_root)          # before anything is loaded
         reading = Reading.load(a.candidate, a.bundle, device=a.device, full_rules=True)
         rows = [json.loads(x) for x in open(a.rows) if x.strip()]
         recs = collect(reading, rows, a.data_root)
-        with open(a.out, "w") as fh:
-            fh.write("".join(json.dumps(r) + "\n" for r in recs))
-        print("%d records" % len(recs))
+        register(a.out_dir, ident, recs, {"candidate": a.candidate, "bundle": a.bundle, "rows": a.rows, "data_root": a.data_root})
+        print("%d records registered in %s" % (len(recs), a.out_dir))
         return 0
-    recs = [json.loads(x) for x in open(a.records) if x.strip()]
-    res = analyse(recs, json.load(open(a.config)))
+    res = analyse_registered(a.calib_dir)
     json.dump(res, open(a.out, "w"), indent=1)
     print(res["branch"])
     return 0

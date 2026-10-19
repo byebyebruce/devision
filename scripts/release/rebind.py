@@ -179,6 +179,17 @@ def config_diff(a: Dict, b: Dict) -> List[str]:
     return sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
 
 
+def candidate_problems(candidate: str, rec: Dict) -> List[str]:
+    """The candidate is still the source decision checkpoint: weights / encoder / vision / tokenizer identical, config.json
+    differing only in ALLOWED keys (shared by bind, temp_bundle and the calibration identity)."""
+    decision = rec["decision"]
+    out = ["candidate %s differs from the source decision checkpoint" % f for f in SAME
+           if digest(os.path.join(candidate, f)) != digest(os.path.join(decision, f))]
+    diff = config_diff(json.load(open(os.path.join(decision, "config.json"))), json.load(open(os.path.join(candidate, "config.json"))))
+    out += ["candidate config.json changes %r, which is not allowed" % k for k in diff if k not in ALLOWED]
+    return out
+
+
 def bind(candidate: str, pins: Optional[Dict[str, str]] = None) -> Dict:
     meta = lineage_dir(candidate)
     src_path = os.path.join(meta, "source.json")
@@ -222,7 +233,7 @@ def temp_bundle(candidate: str, out: str, pins: Optional[Dict[str, str]] = None)
     candidate's CURRENT config (after ordinary calibration), written OUTSIDE the candidate -- for collecting the routed raw
     probabilities only; the final bundle is bound by `bind` after the config is final, and this one is never evidence."""
     rec = json.load(open(os.path.join(lineage_dir(candidate), "source.json")))
-    bad = check_source(rec, pins)
+    bad = check_source(rec, pins) + candidate_problems(candidate, rec)
     if bad:
         raise SystemExit("refusing the temporary bundle:\n  " + "\n  ".join(bad))
     if os.path.realpath(out).startswith(os.path.realpath(candidate) + os.sep):

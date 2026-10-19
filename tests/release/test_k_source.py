@@ -157,3 +157,93 @@ def test_temporary_calibration_bundle_is_outside_and_bound_to_the_current_config
     (cand / "config.json").write_text(json.dumps(c))
     with pytest.raises(ValueError, match="does not bind"):
         R.Reading.load(str(cand), str(tmp_path / "calib_bundle"), device="cpu")
+
+
+def tiny_calibration(tmp_path, monkeypatch):
+    """A tiny registered calibration: LIVE-K-like source -> candidate -> temporary K bundle -> a 6 + 6 family rl_calib drawn
+    by the real builder (short options / hint for the tiny model) -> collect through the verified entry -> register."""
+    import sys
+    rc = script("route_calib")
+    rl = script("rl_calib")
+    monkeypatch.setattr(rl, "used_cases", lambda root: set())
+    monkeypatch.delitem(sys.modules, "build", raising=False)
+    pins = livek_run(tmp_path)
+    source(tmp_path, pins)
+    cand = candidate(tmp_path, pins)
+    rb.temp_bundle(str(cand), str(tmp_path / "calib_bundle"), pins)
+    rl.build(str(tmp_path), want={"temp": 6, "force": 6})
+    rows = [json.loads(x) for x in open(tmp_path / "rl_calib" / "questions.jsonl")]
+    short = ["red", "blue", "green"]
+    for r in rows:
+        opts = list(r["questions"]["q0"]["criteria"])
+        r["state_text"] = ""
+        r["questions"]["q0"]["criteria"] = {short[i]: None for i in range(len(opts))}
+        r["gold"]["q0"]["probabilities"] = {short[i]: r["gold"]["q0"]["probabilities"][o] for i, o in enumerate(opts)}
+    rows_path = tmp_path / "rl_calib" / "rows_short.jsonl"
+    rows_path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    ident = rc.identity(str(cand), str(tmp_path / "calib_bundle"), str(rows_path), str(tmp_path), pins, ROOT)
+    rd = R.Reading.load(str(cand), str(tmp_path / "calib_bundle"), device="cpu", full_rules=True)
+    recs = rc.collect(rd, rows, str(tmp_path))
+    paths = {"candidate": str(cand), "bundle": str(tmp_path / "calib_bundle"), "rows": str(rows_path), "data_root": str(tmp_path)}
+    rc.register(str(tmp_path / "calib"), ident, recs, paths)
+    return rc, pins, cand, recs, rows, ident, paths
+
+
+def test_registered_calibration_analyses_only_complete_bound_records(tmp_path, monkeypatch):
+    rc, pins, cand, recs, rows, ident, paths = tiny_calibration(tmp_path, monkeypatch)
+    res = rc.analyse_registered(str(tmp_path / "calib"), pins, ROOT)
+    assert res["branch"][0] in "1234" and set(res["domains"]) == {"temperature", "magnets"} and res["pooled"]["families"] == 12
+    assert ident["temporary_bundle"] and len(ident["pictures"]) == 24 and "scripts/release/route_calib.py" in ident["code"]
+
+
+@pytest.mark.parametrize("damage,why", [("config", "identity refused|does not verify"), ("records", "does not verify"), ("rows", "does not verify"),
+                                        ("domain", "not both"), ("view", "not v0 \\+ v1"), ("duplicate", "duplicate"), ("gold", "differ from the source"),
+                                        ("missing", "missing")])
+def test_registered_calibration_refusals(tmp_path, monkeypatch, damage, why):
+    rc, pins, cand, recs, rows, ident, paths = tiny_calibration(tmp_path, monkeypatch)
+    out = str(tmp_path / "calib")
+    if damage == "config":                                       # an allowed key, but not the registered config any more
+        c = json.loads((cand / "config.json").read_text())
+        c["temperature"] = [1.9, 1.0, 1.1]
+        (cand / "config.json").write_text(json.dumps(c))
+    elif damage == "records":
+        with open(os.path.join(out, "records.jsonl"), "a") as fh:
+            fh.write("\n")
+    elif damage == "rows":
+        with open(paths["rows"], "a") as fh:
+            fh.write("\n")
+    else:                                                        # registered again, so only completeness can catch it
+        rws, rcs = list(rows), list(recs)
+        if damage == "domain":
+            keep = {r["id"] for r in rws if r["kind"] == "temp"}
+            rws = [r for r in rws if r["id"] in keep]
+            rcs = [x for x in rcs if x["sample_id"] in keep]
+        elif damage == "view":
+            drop = rws[0]["id"]
+            rws = [r for r in rws if r["id"] != drop]
+            rcs = [x for x in rcs if x["sample_id"] != drop]
+        elif damage == "duplicate":
+            rcs = rcs + [rcs[0]]
+        elif damage == "gold":
+            rcs = [dict(rcs[0], gold_answer=next(o for o in rcs[0]["probabilities"] if o != rcs[0]["gold_answer"]))] + rcs[1:]
+        else:
+            rcs = rcs[1:]
+        rows_path = tmp_path / "rows_edited.jsonl"
+        rows_path.write_text("".join(json.dumps(r) + "\n" for r in rws))
+        p2 = dict(paths, rows=str(rows_path))
+        ident2 = rc.identity(paths["candidate"], paths["bundle"], str(rows_path), paths["data_root"], pins, ROOT)
+        out = str(tmp_path / "calib2")
+        rc.register(out, ident2, rcs, p2)
+    with pytest.raises(SystemExit, match=why):
+        rc.analyse_registered(out, pins, ROOT)
+
+
+def test_temporary_bundle_refuses_a_changed_candidate(tmp_path):
+    pins = livek_run(tmp_path)
+    source(tmp_path, pins)
+    cand = candidate(tmp_path, pins)
+    c = json.loads((cand / "config.json").read_text())
+    c["max_len"] = 64                                            # not a whitelisted key
+    (cand / "config.json").write_text(json.dumps(c))
+    with pytest.raises(SystemExit, match="not allowed"):
+        rb.temp_bundle(str(cand), str(tmp_path / "calib_bundle"), pins)
