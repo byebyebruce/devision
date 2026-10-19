@@ -317,3 +317,10 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - 安装后拒绝：版本、Python、模块内容不同，或多出模块；
   - install_check：记录不对时不安装；安装的是记录的 wheel；参考 code 只替换了版本；非发布检查使用 --bridge 时拒绝。
 - **未做**：没有真实构建 0.3.0、没有上传、没有在真实候选上做安装 smoke。正式 0.3.0 是否可用按发布前流程核实。
+
+### 第 1 轮评审后的修正（PACKAGE-R1-01..03）
+
+- **R1-01**：install_check 只要给了 --bridge 就必须校验，不看解析出的值是什么。null、非对象、缺字段、类型不对、JSON 读不出来，都在 install 和 probe 之前拒绝，绝不退回无 bridge 的路径（自己 build 这棵树）；另有一道守卫，没有核过的 wheel 就不安装。
+- **R1-02**：正式衔接必须是 wheel + sdist 一对；wheel-only 只能作开发记录，release 检查拒绝。sdist 的完整 src/devision 文件集合逐个对照批准来源清单（多文件、少文件、内容不同都拒绝）；README.md、LICENSE 等于批准提交里的文件；pyproject.toml 只允许 version 那一行不同，并且必须写目标版本；sdist 里不能有别的文件。使用记录时，重新计算旁边实际 wheel 和 sdist 的 SHA，并重做内容核对。
+- **R1-03**：批准来源固定在脚本里：APPROVED[IDENTITY c14863e2…] = {commit 05c83b4…, src/devision 19 个文件的清单摘要 ccfa0d9f…}。make 从任意 clone（--repo）读取这个提交，清单必须等于固定摘要，并且包含 9 个冻结模块且内容一致。wheel 和 sdist 都对照这一份清单；记录里的 source（commit、清单、摘要）在使用时也要等于固定值。同样内容放在别的路径下照样通过。
+- **验证**：tests/release/test_package_bridge.py 39 passed；项目 pyright 0 errors。只读核对真实来源：用 devision-v04-freeze 读 05c83b4，得到 19 个文件，清单等于 APPROVED，9 个冻结模块全部一致。没有真实构建、上传或安装。

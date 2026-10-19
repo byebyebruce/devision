@@ -1,34 +1,42 @@
-"""The evaluated development package -> its final release package (critic V04-K-PACKAGE-PREP-01). CPU only, loads no
-model, uploads nothing.
+"""The evaluated development package -> its final release package (critic V04-K-PACKAGE-PREP-01, PACKAGE-R1-01..03).
+CPU only, loads no model, builds and uploads nothing.
 
 The frozen combination was evaluated with devision 0.3.0.dev1 (IDENTITY.json "code": every module's name and content,
-the package version, the Python version). The release ships the final 0.3.0. `devision.__version__` comes only from the
-package metadata, so a final wheel can hold exactly the modules that were evaluated -- but evaluate.code_problems, used
-everywhere an identity is compared, rightly refuses any version difference. Instead of loosening that check, this
-script writes an explicit hand-over record that only the release install check (install_check.py --bridge) consumes:
+the package version, the Python version). The release ships the final 0.3.0 as a wheel + sdist pair.
+`devision.__version__` comes only from the package metadata, so the final packages can hold exactly the evaluated code
+-- but evaluate.code_problems, used everywhere an identity is compared, rightly refuses any version difference. Instead
+of loosening that check, this script writes an explicit hand-over record that only the release install check
+(install_check.py --bridge) consumes.
 
-  make   --identity <eval>/IDENTITY.json --wheel dist/devision-0.3.0-py3-none-any.whl [--sdist dist/devision-0.3.0.tar.gz]
-         --out <eval>/PACKAGE_BRIDGE.json
-         The wheel (and sdist) must be devision at the final release of the frozen development version (0.3.0.dev1 ->
-         0.3.0, nothing else), holding every frozen module with exactly its frozen content (sdist: src/devision/...),
-         and every other devision/ file equal to the frozen source tree (--source: the worktree the identity's modules
-         come from). The record binds the IDENTITY.json sha256, both versions, the frozen Python,
-         every module's name and sha256, the wheel / sdist sha256 and uv.lock's sha256 (the dependency pins the install
-         uses).
-  check  --identity ... --bridge ... [--wheel ...]: record_problems below.
+The approved source (APPROVED, by the frozen IDENTITY.json's sha256): the freeze commit and the digest of its complete
+src/devision file list ("manifest": path under src/ -> sha256 of the content). The manifest is read from that commit
+in any clone (`--repo`; the same content at another path is the same source), must hash to the pinned digest, and its
+files must hold every frozen module with exactly its frozen content. Both packages are checked against this one list:
 
-record_problems / installed_problems are what install_check uses: the record must be this identity's (sha256, from
-version, Python, the full module map), the installed wheel the recorded file, uv.lock unchanged, and the installed
-process must report the recorded final version, the frozen Python and exactly the frozen modules' contents
-(evaluate.code_problems against the frozen code with only the version replaced by the recorded one). Any module
-change, any other version step, another identity, wheel, Python or dependency pin is refused. Ordinary evaluation keeps
-the strict code_problems; IDENTITY.json is never edited.
+  wheel  every devision/ file equal to the manifest, no file more or less; METADATA Name devision, Version the final
+         release of the frozen development version (0.3.0.dev1 -> 0.3.0; never an rc, post, local or other version);
+  sdist  every src/devision file equal to the manifest, no file more or less; README.md / LICENSE equal to the commit's,
+         pyproject.toml equal to the commit's except the one `version = ...` line (which must name the target);
+         PKG-INFO Name / Version as above; no other file.
+
+  make   --identity <eval>/IDENTITY.json --repo <a clone holding the freeze commit> --wheel W --sdist S --out R
+         (--wheel-only: a development record, never accepted by a release check)
+  check  --identity ... --bridge R: record_problems with the wheel and sdist next to the record.
+
+record_problems (before anything is installed): the record is an object with every field of the right type, for this
+IDENTITY.json (sha256, from version, Python, module map), its source the approved one (commit, manifest digest), a
+release record (sdist present), uv.lock unchanged, and the actual wheel and sdist files hash to the record and pass the
+content checks again. installed_problems: the installed process reports the recorded final version, then the strict
+evaluate.code_problems against the frozen code with only the version replaced. Ordinary evaluation keeps the strict
+check; IDENTITY.json is never edited.
 """
 import argparse
 import copy
 import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -36,6 +44,14 @@ from typing import Any, Dict, List, Optional
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 KIND = "devision package hand-over (evaluated development package -> final release)"
+# V04-K-FREEZE-ACCEPT-01: runs/v04-k/eval/IDENTITY.json was frozen from devision-v04-freeze at 05c83b4; the 19 files of
+# its src/devision (the nine frozen modules among them, content-checked) hash to the manifest digest below.
+APPROVED = {"c14863e21c0a4a1466d0ad7de0c8955486c6c6773e601f31a36ba5af23c8fee0":
+            {"commit": "05c83b46be9a44a40df3a2a4ed502e404d4c4682",
+             "manifest_sha256": "ccfa0d9f4561a786a1ab88237181f21233715f767d0e56856d0ba58abf7f798a"}}
+SDIST_EXTRA = ("README.md", "LICENSE", "pyproject.toml")
+FIELDS = {"kind": str, "release": bool, "identity": dict, "from_version": str, "to_version": str, "python": str,
+          "modules": dict, "source": dict, "wheel": dict, "sdist": (dict, type(None)), "uv_lock_sha256": str}
 
 
 def sha(path: str) -> str:
@@ -43,17 +59,57 @@ def sha(path: str) -> str:
         return hashlib.sha256(fh.read()).hexdigest()
 
 
-def module_name(path: str) -> Optional[str]:
-    """devision/train/evaluate.py -> devision.train.evaluate; devision/__init__.py -> devision; else None."""
-    if not (path.startswith("devision/") and path.endswith(".py")):
-        return None
-    parts = path[:-3].split("/")
-    if parts[-1] == "__init__":
-        parts = parts[:-1]
-    return ".".join(parts)
+def hb(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
-def _metadata_version(text: str) -> Dict[str, str]:
+def digest(files: Dict[str, str]) -> str:
+    return hb(json.dumps(files, sort_keys=True).encode())
+
+
+def module_path(name: str, files: Dict[str, str]) -> Optional[str]:
+    """devision.train.evaluate -> devision/train/evaluate.py (or .../__init__.py for a package) within `files`."""
+    base = "/".join(name.split("."))
+    return next((p for p in (base + "/__init__.py", base + ".py") if p in files), None)
+
+
+def final_of(dev: str) -> Optional[str]:
+    """The only allowed target: the final release of a development version (0.3.0.dev1 -> 0.3.0); None otherwise."""
+    from packaging.version import Version
+    v = Version(dev)
+    return v.base_version if v.is_devrelease and v.pre is None and v.post is None and v.local is None else None
+
+
+def frozen_modules(ident: Dict[str, Any]) -> Dict[str, str]:
+    return {n: m["sha256"] for n, m in ident["code"]["modules"].items()}
+
+
+def _git(repo: str, *args: str) -> bytes:
+    return subprocess.run(["git", "-C", repo] + list(args), capture_output=True, check=True).stdout
+
+
+def source_files(repo: str, commit: str) -> Dict[str, bytes]:
+    """The approved commit's src/devision files (keyed devision/...) and its README.md / LICENSE / pyproject.toml
+    (keyed ':<name>'), by content."""
+    names = _git(repo, "ls-tree", "-r", "--name-only", commit, "src/devision").decode().split()
+    out = {n[len("src/"):]: _git(repo, "show", "%s:%s" % (commit, n)) for n in names}
+    for f in SDIST_EXTRA:
+        out[":" + f] = _git(repo, "show", "%s:%s" % (commit, f))
+    return out
+
+
+def manifest_problems(manifest: Dict[str, str], ident: Dict[str, Any], approved: Dict[str, str]) -> List[str]:
+    out = []
+    if digest(manifest) != approved["manifest_sha256"]:
+        out.append("the source manifest is not the approved one (digest %s)" % digest(manifest)[:16])
+    for n, h in frozen_modules(ident).items():
+        p = module_path(n, manifest)
+        if p is None or manifest[p] != h:
+            out.append("frozen module %s: not in the source manifest with its frozen content" % n)
+    return out
+
+
+def _meta(text: str) -> Dict[str, str]:
     out = {}
     for line in text.splitlines():
         if not line.strip():
@@ -68,113 +124,145 @@ def wheel_info(wheel: str) -> Dict[str, Any]:
         meta = next((n for n in z.namelist() if n.endswith(".dist-info/METADATA")), None)
         if meta is None:
             raise SystemExit("%s: no METADATA" % wheel)
-        info = _metadata_version(z.read(meta).decode())
-        mods = {module_name(n): hashlib.sha256(z.read(n)).hexdigest() for n in z.namelist() if module_name(n)}
-        files = {n: hashlib.sha256(z.read(n)).hexdigest() for n in z.namelist() if n.startswith("devision/") and not n.endswith("/")}
-    return {"file": os.path.basename(wheel), "sha256": sha(wheel), **info, "modules": mods, "files": files}
+        files = {n: hb(z.read(n)) for n in z.namelist() if n.startswith("devision/") and not n.endswith("/")}
+        return {"file": os.path.basename(wheel), "sha256": sha(wheel), **_meta(z.read(meta).decode()), "files": files}
 
 
 def sdist_info(sdist: str) -> Dict[str, Any]:
+    data: Dict[str, bytes] = {}
     with tarfile.open(sdist) as t:
         members = [m for m in t.getmembers() if m.isfile()]
         top = members[0].name.split("/")[0] if members else ""
-        pkg = next((m for m in members if m.name == top + "/PKG-INFO"), None)
-        if pkg is None:
-            raise SystemExit("%s: no PKG-INFO" % sdist)
-        info = _metadata_version(t.extractfile(pkg).read().decode())          # type: ignore[union-attr]
-        mods = {}
         for m in members:
-            rel = m.name[len(top) + 1:]
-            if rel.startswith("src/") and module_name(rel[4:]):
-                mods[module_name(rel[4:])] = hashlib.sha256(t.extractfile(m).read()).hexdigest()   # type: ignore[union-attr]
-    return {"file": os.path.basename(sdist), "sha256": sha(sdist), **info, "modules": mods}
+            fh = t.extractfile(m)
+            if fh is not None:
+                data[m.name[len(top) + 1:]] = fh.read()
+    if "PKG-INFO" not in data:
+        raise SystemExit("%s: no PKG-INFO" % sdist)
+    return {"file": os.path.basename(sdist), "sha256": sha(sdist), **_meta(data["PKG-INFO"].decode()),
+            "files": {k[len("src/"):]: hb(v) for k, v in data.items() if k.startswith("src/")},
+            "extra": {k: v for k, v in data.items() if not k.startswith("src/") and k != "PKG-INFO"}}
 
 
-def final_of(dev: str) -> Optional[str]:
-    """The only allowed target: the final release of a development version (0.3.0.dev1 -> 0.3.0); None otherwise."""
-    from packaging.version import Version
-    v = Version(dev)
-    return v.base_version if v.is_devrelease and v.pre is None and v.post is None and v.local is None else None
+def _versionless(pyproject: bytes) -> bytes:
+    return re.sub(rb'(?m)^version\s*=\s*"[^"]*"\s*$', b'version = ""', pyproject, count=1)
 
 
-def dist_problems(kind: str, info: Dict[str, Any], frozen: Dict[str, str], target: str) -> List[str]:
+def package_problems(kind: str, info: Dict[str, Any], manifest: Dict[str, str], target: str) -> List[str]:
     out = []
     if info["name"] != "devision":
         out.append("%s %s is %r, not devision" % (kind, info["file"], info["name"]))
     if info["version"] != target:
         out.append("%s version %r is not the final release %r of the frozen development version" % (kind, info["version"], target))
-    out += ["%s module %s: content differs from the frozen one" % (kind, n) for n in sorted(frozen) if n in info["modules"] and info["modules"][n] != frozen[n]]
-    out += ["%s module %s: missing" % (kind, n) for n in sorted(set(frozen) - set(info["modules"]))]
+    out += ["%s file %s differs from the approved source" % (kind, n) for n in sorted(info["files"]) if n in manifest and info["files"][n] != manifest[n]]
+    out += ["%s file %s is not in the approved source" % (kind, n) for n in sorted(set(info["files"]) - set(manifest))]
+    out += ["%s lacks the approved source file %s" % (kind, n) for n in sorted(set(manifest) - set(info["files"]))]
     return out
 
 
-def tree_problems(info: Dict[str, Any], source: str) -> List[str]:
-    """Every devision/ file of the wheel (modules the evaluation never loaded, static files) equals the frozen source
-    tree's src/devision/ file, and the tree has no file the wheel lacks."""
-    src = os.path.join(source, "src")
-    have = {}
-    for d, _, fs in os.walk(os.path.join(src, "devision")):
-        for f in fs:
-            if "__pycache__" in d or f.endswith(".pyc"):
-                continue
-            have[os.path.relpath(os.path.join(d, f), src)] = sha(os.path.join(d, f))
-    out = ["wheel file %s differs from the frozen source tree" % n for n in sorted(info["files"]) if have.get(n) != info["files"][n]]
-    return out + ["source file %s is not in the wheel" % n for n in sorted(set(have) - set(info["files"]))]
+def sdist_extra_problems(info: Dict[str, Any], extra: Dict[str, str], target: str) -> List[str]:
+    """README.md / LICENSE as the commit's, pyproject.toml as the commit's but for the version line, nothing else."""
+    got = info["extra"]
+    out = ["sdist file %s is not part of the release source" % k for k in sorted(set(got) - set(SDIST_EXTRA))]
+    out += ["sdist lacks %s" % k for k in SDIST_EXTRA if k not in got]
+    for k in ("README.md", "LICENSE"):
+        if k in got and hb(got[k]) != extra[k]:
+            out.append("sdist %s differs from the approved source" % k)
+    if "pyproject.toml" in got:
+        if hb(_versionless(got["pyproject.toml"])) != extra["pyproject.toml"]:
+            out.append("sdist pyproject.toml differs from the approved source beyond its version line")
+        if not re.search(rb'(?m)^version\s*=\s*"%s"\s*$' % re.escape(target.encode()), got["pyproject.toml"]):
+            out.append("sdist pyproject.toml does not name version %s" % target)
+    return out
 
 
-def frozen_modules(ident: Dict[str, Any]) -> Dict[str, str]:
-    return {n: m["sha256"] for n, m in ident["code"]["modules"].items()}
-
-
-def make(identity: str, wheel: str, source: str, sdist: Optional[str] = None, lock: Optional[str] = None) -> Dict[str, Any]:
+def make(identity: str, repo: str, wheel: str, sdist: Optional[str], lock: Optional[str] = None,
+         approved: Optional[Dict[str, Dict[str, str]]] = None) -> Dict[str, Any]:
+    approved = APPROVED if approved is None else approved
     ident = json.load(open(identity))
     if not (ident.get("code") or {}).get("modules"):
         raise SystemExit("%s has no frozen code: nothing to hand over" % identity)
+    ap = approved.get(sha(identity))
+    if ap is None:
+        raise SystemExit("%s is not an approved frozen identity (no pinned source)" % identity)
     code = ident["code"]
     target = final_of(code["version"])
     if not target:
         raise SystemExit("the frozen version %r is not a development release; no hand-over" % code["version"])
-    frozen = frozen_modules(ident)
+    src = source_files(repo, ap["commit"])
+    manifest = {k: hb(v) for k, v in src.items() if not k.startswith(":")}
+    extra = {k[1:]: hb(_versionless(v) if k == ":pyproject.toml" else v) for k, v in src.items() if k.startswith(":")}
+    problems = manifest_problems(manifest, ident, ap)
     w = wheel_info(wheel)
-    problems = dist_problems("wheel", w, frozen, target) + tree_problems(w, source)
+    problems += package_problems("wheel", w, manifest, target)
     s = sdist_info(sdist) if sdist else None
     if s:
-        problems += dist_problems("sdist", s, frozen, target)
+        problems += package_problems("sdist", s, manifest, target) + sdist_extra_problems(s, extra, target)
     if problems:
         raise SystemExit("no hand-over:\n  " + "\n  ".join(problems))
-    lock = lock or os.path.join(ROOT, "uv.lock")
-    return {"kind": KIND, "identity": {"sha256": sha(identity), "checkpoint": ident.get("checkpoint")},
-            "from_version": code["version"], "to_version": target, "python": code["python"], "modules": frozen,
-            "wheel": {"file": w["file"], "sha256": w["sha256"], "files": w["files"]},
+    return {"kind": KIND, "release": s is not None, "identity": {"sha256": sha(identity), "checkpoint": ident.get("checkpoint")},
+            "from_version": code["version"], "to_version": target, "python": code["python"], "modules": frozen_modules(ident),
+            "source": {"commit": ap["commit"], "manifest_sha256": digest(manifest), "manifest": manifest, "extra": extra},
+            "wheel": {"file": w["file"], "sha256": w["sha256"]},
             "sdist": {"file": s["file"], "sha256": s["sha256"]} if s else None,
-            "uv_lock_sha256": sha(lock)}
+            "uv_lock_sha256": sha(lock or os.path.join(ROOT, "uv.lock"))}
 
 
-def record_problems(record: Dict[str, Any], identity: str, wheel: Optional[str] = None, lock: Optional[str] = None) -> List[str]:
-    """A hand-over record against the frozen IDENTITY.json (and the wheel that will be installed), before installing."""
+def structure_problems(record: Any) -> List[str]:
+    if not isinstance(record, dict):
+        return ["the hand-over record is %s, not an object" % type(record).__name__]
+    out = ["the hand-over record lacks %s" % k for k in FIELDS if k not in record]
+    out += ["the hand-over record's %s is %s" % (k, type(record[k]).__name__) for k, t in FIELDS.items() if k in record and not isinstance(record[k], t)]
+    if not out:
+        for part, keys in (("source", ("commit", "manifest_sha256", "manifest", "extra")), ("wheel", ("file", "sha256"))):
+            out += ["the hand-over record's %s lacks %s" % (part, k) for k in keys if k not in record[part]]
+    return out
+
+
+def record_problems(record: Any, identity: str, folder: Optional[str], lock: Optional[str] = None,
+                    approved: Optional[Dict[str, Dict[str, str]]] = None) -> List[str]:
+    """A hand-over record against the frozen IDENTITY.json, the approved source and the actual wheel / sdist in
+    `folder` (next to the record), before anything is installed."""
+    out = structure_problems(record)
+    if out:
+        return out
+    approved = APPROVED if approved is None else approved
     ident = json.load(open(identity))
     code = ident.get("code") or {}
-    out = []
-    if record.get("kind") != KIND:
+    ap = approved.get(sha(identity))
+    if record["kind"] != KIND:
         out.append("not a package hand-over record")
-    if (record.get("identity") or {}).get("sha256") != sha(identity):
-        out.append("the hand-over record is for another IDENTITY.json")
-    if record.get("from_version") != code.get("version") or record.get("python") != code.get("python"):
+    if record["identity"].get("sha256") != sha(identity) or ap is None:
+        out.append("the hand-over record is not for this approved IDENTITY.json")
+    if record["from_version"] != code.get("version") or record["python"] != code.get("python"):
         out.append("the hand-over's from-version / Python are not the frozen ones")
-    if not code.get("version") or record.get("to_version") != final_of(code["version"]):
-        out.append("the hand-over's target %r is not the final release of %r" % (record.get("to_version"), code.get("version")))
-    if record.get("modules") != (frozen_modules(ident) if code.get("modules") else None):
+    if not code.get("version") or record["to_version"] != final_of(code["version"]):
+        out.append("the hand-over's target %r is not the final release of %r" % (record["to_version"], code.get("version")))
+    if not code.get("modules") or record["modules"] != frozen_modules(ident):
         out.append("the hand-over's modules are not exactly the frozen modules")
-    if sha(lock or os.path.join(ROOT, "uv.lock")) != record.get("uv_lock_sha256"):
+    src = record["source"]
+    if ap is not None and (src["commit"] != ap["commit"] or src["manifest_sha256"] != ap["manifest_sha256"]
+                           or not isinstance(src["manifest"], dict) or digest(src["manifest"]) != ap["manifest_sha256"]):
+        out.append("the hand-over's source is not the approved source (commit / manifest)")
+    elif ap is not None:
+        out += manifest_problems(src["manifest"], ident, ap)
+    if not record["release"] or not record["sdist"]:
+        out.append("a development (wheel-only) record: not a release hand-over (wheel + sdist)")
+    if sha(lock or os.path.join(ROOT, "uv.lock")) != record["uv_lock_sha256"]:
         out.append("uv.lock differs from the hand-over's (other dependency pins)")
-    if wheel is not None:
-        if sha(wheel) != (record.get("wheel") or {}).get("sha256"):
-            out.append("the wheel to install is not the hand-over's wheel")
-        elif not out:
-            w = wheel_info(wheel)
-            out += dist_problems("wheel", w, record["modules"], record["to_version"])
-            if w["files"] != record["wheel"].get("files"):
-                out.append("the wheel's files are not the hand-over's")
+    if out or folder is None:
+        return out
+    for part in ("wheel", "sdist"):
+        f = os.path.join(folder, record[part]["file"])
+        if not os.path.exists(f):
+            out.append("the hand-over's %s %s is not next to the record" % (part, record[part]["file"]))
+        elif sha(f) != record[part]["sha256"]:
+            out.append("the %s next to the record is not the hand-over's (sha256)" % part)
+        else:
+            info = wheel_info(f) if part == "wheel" else sdist_info(f)
+            out += package_problems(part, info, src["manifest"], record["to_version"])
+            if part == "sdist":
+                out += sdist_extra_problems(info, src["extra"], record["to_version"])
     return out
 
 
@@ -199,23 +287,27 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=("make", "check"))
     ap.add_argument("--identity", required=True)
+    ap.add_argument("--repo", help="a clone holding the approved freeze commit")
     ap.add_argument("--wheel")
     ap.add_argument("--sdist")
-    ap.add_argument("--source", help="the frozen source tree (the worktree whose src/ the identity's modules are)")
+    ap.add_argument("--wheel-only", action="store_true", help="a development record without the sdist (never a release hand-over)")
     ap.add_argument("--bridge")
     ap.add_argument("--out")
     a = ap.parse_args(argv)
     if a.command == "make":
-        if not a.wheel or not a.out or not a.source:
-            raise SystemExit("make needs --wheel, --source and --out")
+        if not a.wheel or not a.out or not a.repo or (not a.sdist and not a.wheel_only):
+            raise SystemExit("make needs --repo, --wheel, --sdist (or --wheel-only) and --out")
         if os.path.exists(a.out):
             raise SystemExit("%s exists" % a.out)
-        rec = make(a.identity, a.wheel, a.source, a.sdist)
+        rec = make(a.identity, a.repo, a.wheel, a.sdist)
         with open(a.out, "w") as fh:
             json.dump(rec, fh, indent=1)
-        print("hand-over %s -> %s, %d modules, wheel %s" % (rec["from_version"], rec["to_version"], len(rec["modules"]), rec["wheel"]["sha256"]))
+        print("hand-over %s -> %s (%s), source %s, wheel %s" % (rec["from_version"], rec["to_version"],
+              "release" if rec["release"] else "development, wheel only", rec["source"]["commit"][:12], rec["wheel"]["sha256"]))
         return 0
-    problems = record_problems(json.load(open(a.bridge)), a.identity, a.wheel)
+    if not a.bridge:
+        raise SystemExit("check needs --bridge")
+    problems = record_problems(json.load(open(a.bridge)), a.identity, os.path.dirname(os.path.abspath(a.bridge)))
     print("hand-over OK" if not problems else "hand-over refused:\n  " + "\n  ".join(problems))
     return 1 if problems else 0
 

@@ -306,21 +306,32 @@ def install_check(checkpoint: str, cases: List[Dict], identity: Optional[str] = 
     if release and not record:
         raise SystemExit("a release check needs --record")
     ident = json.load(open(identity)) if identity else None
-    if bridge and not release:
+    use_bridge = bridge is not None                    # given at all: checked, whatever it holds (PACKAGE-R1-01)
+    if use_bridge and not release:
         raise SystemExit("a package hand-over is checked only in a release check (--identity)")
-    pb: Any = _package_bridge() if bridge else None
-    hand = json.load(open(bridge)) if bridge else None
-    bwheel = os.path.join(os.path.dirname(os.path.abspath(bridge)), hand["wheel"]["file"]) if bridge and hand else None
+    pb: Any = _package_bridge() if use_bridge else None
+    hand: Any = None
+    bwheel: Optional[str] = None
     problems = case_problems(cases) + (identity_problems(checkpoint, ident, pins) if ident is not None else [])
-    if hand is not None and identity:
-        problems += ["package hand-over: %s" % x for x in pb.record_problems(hand, identity, bwheel if bwheel and os.path.exists(bwheel) else None)]
-        if bwheel is None or not os.path.exists(bwheel):
-            problems.append("package hand-over: its wheel %s is not next to the record" % (hand["wheel"]["file"]))
+    if use_bridge and identity:
+        try:
+            hand = json.load(open(str(bridge)))
+        except (OSError, ValueError) as e:
+            hand = None
+            problems.append("package hand-over: %s cannot be read (%s)" % (bridge, e))
+        else:
+            folder = os.path.dirname(os.path.abspath(str(bridge)))
+            bad = pb.record_problems(hand, identity, folder)
+            problems += ["package hand-over: %s" % x for x in bad]
+            if not bad:
+                bwheel = os.path.join(folder, hand["wheel"]["file"])
     own = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="devision-install-")
     wheel = None
     got: Dict = {}
     try:
+        if use_bridge and bwheel is None and not problems:
+            problems.append("package hand-over: no verified wheel")   # never fall back to building this tree
         if not problems:                                  # nothing installed or loaded for a wrong smoke / identity
             py = install(workdir, bwheel)
             dist = os.path.join(workdir, "dist")
@@ -328,7 +339,7 @@ def install_check(checkpoint: str, cases: List[Dict], identity: Optional[str] = 
             got = probe(py, checkpoint, cases, workdir, isolated=True)
             ref = probe(sys.executable, checkpoint, cases, ROOT, isolated=False)
             reference = ident["code"] if ident is not None else ref["code"]
-            if hand is not None and ident is not None:          # only after record_problems passed (nothing installed otherwise)
+            if use_bridge and ident is not None:                # only after record_problems passed (nothing installed otherwise)
                 problems = ["package hand-over: %s" % x for x in pb.installed_problems(hand, ident["code"], got["code"])]
                 reference = pb.bridged_reference(ident["code"], hand)
             problems += compare(ref, got, cases, reference, os.path.join(workdir, "venv"), bundle_state(checkpoint) == "complete")
