@@ -53,12 +53,16 @@ def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo)] + list(args), capture_output=True, text=True, check=True).stdout.strip()
 
 
+GITIGNORE = "runs/\ndata/\n"
+
+
 def repo_with(path, files=FILES, extra=EXTRA):
     for k, v in files.items():
         (path / "src" / k).parent.mkdir(parents=True, exist_ok=True)
         (path / "src" / k).write_text(v)
     for k, v in extra.items():
         (path / k).write_text(v)
+    (path / ".gitignore").write_text(GITIGNORE)
     git(path.parent, "init", "-q", str(path))
     git(path, "add", "-A")
     git(path, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "freeze")
@@ -79,6 +83,7 @@ def sdist(path, version="0.3.0", change=None, extra_change=None):
     files = dict(FILES, **(change or {}))
     extra = dict(EXTRA, pyproject=None, **{"pyproject.toml": EXTRA["pyproject.toml"].replace("0.3.0.dev1", version)})
     extra.pop("pyproject")
+    extra[".gitignore"] = GITIGNORE                        # as the real sdist build adds it
     extra.update(extra_change or {})
     top = "devision-%s" % version
     with tarfile.open(path, "w:gz") as t:
@@ -103,7 +108,8 @@ def ws(tmp_path):
     ident.write_text(json.dumps({"checkpoint": "runs/v04-k/cand", "files": {}, "reading": {"x": 1}, "code": code}))
     manifest = {k: h(v) for k, v in FILES.items()}
     extra = {k: pb.hb(pb._versionless(v.encode()) if k == "pyproject.toml" else v.encode()) for k, v in EXTRA.items()}
-    approved = {pb.sha(str(ident)): {"commit": commit, "manifest_sha256": pb.digest(manifest), "extra_sha256": pb.digest(extra)}}
+    approved = {pb.sha(str(ident)): {"commit": commit, "manifest_sha256": pb.digest(manifest), "extra_sha256": pb.digest(extra),
+                                     "gitignore_sha256": h(GITIGNORE)}}
     lock = tmp_path / "uv.lock"
     lock.write_text("pins\n")
     dist = tmp_path / "dist"
@@ -137,7 +143,8 @@ def test_the_real_approved_source_is_pinned():
     assert pb.APPROVED == {"c14863e21c0a4a1466d0ad7de0c8955486c6c6773e601f31a36ba5af23c8fee0":
                            {"commit": "05c83b46be9a44a40df3a2a4ed502e404d4c4682",
                             "manifest_sha256": "ccfa0d9f4561a786a1ab88237181f21233715f767d0e56856d0ba58abf7f798a",
-                            "extra_sha256": "26102aec2cd7dc543bff0b9634ac9023a8e030b7e7ad1ba36e06dcd121930b02"}}
+                            "extra_sha256": "26102aec2cd7dc543bff0b9634ac9023a8e030b7e7ad1ba36e06dcd121930b02",
+                            "gitignore_sha256": "00d1f1486108a8a4163d41e6f4bec98960a4d3f446954d5cc0c122e99a6a37c4"}}
 
 
 def test_a_foreign_tree_changed_with_the_wheel_is_refused(ws, tmp_path):
@@ -314,3 +321,29 @@ def test_a_record_whose_extra_and_sdist_were_changed_together_is_refused_before_
     assert seen["install"] == [] and seen["probe"] == 0
     with pytest.raises(SystemExit, match="README.md / LICENSE / pyproject.toml are not the approved ones"):
         pb.make(ident, str(repo), *pair(dist), lock=lock, approved={pb.sha(ident): dict(approved[pb.sha(ident)], extra_sha256="0" * 64)})
+
+
+def test_the_pinned_gitignore_and_nothing_else(ic_ws, tmp_path):
+    """GITIGNORE-01: the sdist's root .gitignore passes only byte-equal to the pin in APPROVED; a changed one is refused
+    by make, and on use even with the record's sdist sha256 / gitignore hash rewritten; without a pin it is refused;
+    other extra files stay refused (test_make_refusals[s_extra_file])."""
+    ic, pb, ident, repo, lock, dist, code, approved, seen = ic_ws
+    rec = pb.make(ident, str(repo), *pair(dist), lock=lock, approved=approved)
+    assert rec["source"]["gitignore_sha256"] == h(GITIGNORE)
+    assert pb.record_problems(rec, ident, str(dist), lock=lock, approved=approved) == []
+    with pytest.raises(SystemExit, match="sdist .gitignore differs"):
+        pb.make(ident, str(repo), *pair(dist, s={"extra_change": {".gitignore": "*\n"}}), lock=lock, approved=approved)
+    w, s = pair(dist)
+    rec = pb.make(ident, str(repo), w, s, lock=lock, approved=approved)
+    s = sdist(dist / "devision-0.3.0.tar.gz", extra_change={".gitignore": "*\n"})        # swapped afterwards
+    rec["sdist"]["sha256"] = pb.sha(s)
+    rec["source"]["gitignore_sha256"] = h("*\n")
+    bridge = dist / "PACKAGE_BRIDGE.json"
+    bridge.write_text(json.dumps(rec))
+    problems = ic.install_check("ck", [], ident, workdir=str(tmp_path / "w5"), record=str(tmp_path / "r5.json"), bridge=str(bridge))
+    assert any("not the approved source" in x for x in problems) and seen["install"] == [] and seen["probe"] == 0
+    rec["source"]["gitignore_sha256"] = h(GITIGNORE)                                   # only the sdist swapped: its content is checked
+    assert any("sdist .gitignore differs" in x for x in pb.record_problems(rec, ident, str(dist), lock=lock, approved=approved))
+    no_pin = {k: {kk: vv for kk, vv in v.items() if kk != "gitignore_sha256"} for k, v in approved.items()}
+    with pytest.raises(SystemExit, match="sdist file .gitignore is not part of the release source"):
+        pb.make(ident, str(repo), *pair(dist), lock=lock, approved=no_pin)

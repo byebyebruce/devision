@@ -18,7 +18,8 @@ pyproject.toml must hash to the pinned extra digest (both pins are checked again
          release of the frozen development version (0.3.0.dev1 -> 0.3.0; never an rc, post, local or other version);
   sdist  every src/devision file equal to the manifest, no file more or less; README.md / LICENSE equal to the commit's,
          pyproject.toml equal to the commit's except the one `version = ...` line (which must name the target);
-         PKG-INFO Name / Version as above; no other file.
+         a root .gitignore only if byte-equal to the approved commit's (pinned separately); PKG-INFO Name / Version as
+         above; no other file.
 
   make   --identity <eval>/IDENTITY.json --repo <a clone holding the freeze commit> --wheel W --sdist S --out R
          (--wheel-only: a development record, never accepted by a release check)
@@ -52,7 +53,9 @@ APPROVED = {"c14863e21c0a4a1466d0ad7de0c8955486c6c6773e601f31a36ba5af23c8fee0":
             {"commit": "05c83b46be9a44a40df3a2a4ed502e404d4c4682",
              "manifest_sha256": "ccfa0d9f4561a786a1ab88237181f21233715f767d0e56856d0ba58abf7f798a",
              # README.md / LICENSE / pyproject.toml without its version value, at that commit (critic PACKAGE-R2-01)
-             "extra_sha256": "26102aec2cd7dc543bff0b9634ac9023a8e030b7e7ad1ba36e06dcd121930b02"}}
+             "extra_sha256": "26102aec2cd7dc543bff0b9634ac9023a8e030b7e7ad1ba36e06dcd121930b02",
+             # that commit's root .gitignore, which the sdist build adds (critic GITIGNORE-01 / V04-K-PACKAGE-BUILD-02)
+             "gitignore_sha256": "00d1f1486108a8a4163d41e6f4bec98960a4d3f446954d5cc0c122e99a6a37c4"}}
 SDIST_EXTRA = ("README.md", "LICENSE", "pyproject.toml")
 FIELDS = {"kind": str, "release": bool, "identity": dict, "from_version": str, "to_version": str, "python": str,
           "modules": dict, "source": dict, "wheel": dict, "sdist": (dict, type(None)), "uv_lock_sha256": str}
@@ -164,10 +167,15 @@ def package_problems(kind: str, info: Dict[str, Any], manifest: Dict[str, str], 
     return out
 
 
-def sdist_extra_problems(info: Dict[str, Any], extra: Dict[str, str], target: str) -> List[str]:
-    """README.md / LICENSE as the commit's, pyproject.toml as the commit's but for the version line, nothing else."""
+def sdist_extra_problems(info: Dict[str, Any], extra: Dict[str, str], target: str, gitignore: Optional[str] = None) -> List[str]:
+    """README.md / LICENSE as the commit's, pyproject.toml as the commit's but for the version line; a root .gitignore
+    only when the approved source pins one (`gitignore`, from APPROVED -- never from a record) and byte-equal to it;
+    nothing else."""
     got = info["extra"]
-    out = ["sdist file %s is not part of the release source" % k for k in sorted(set(got) - set(SDIST_EXTRA))]
+    allowed = set(SDIST_EXTRA) | ({".gitignore"} if gitignore else set())
+    out = ["sdist file %s is not part of the release source" % k for k in sorted(set(got) - allowed)]
+    if gitignore and ".gitignore" in got and hb(got[".gitignore"]) != gitignore:
+        out.append("sdist .gitignore differs from the approved source's")
     out += ["sdist lacks %s" % k for k in SDIST_EXTRA if k not in got]
     for k in ("README.md", "LICENSE"):
         if k in got and hb(got[k]) != extra[k]:
@@ -199,17 +207,19 @@ def make(identity: str, repo: str, wheel: str, sdist: Optional[str], lock: Optio
     problems = manifest_problems(manifest, ident, ap)
     if digest(extra) != ap["extra_sha256"]:
         problems.append("the source's README.md / LICENSE / pyproject.toml are not the approved ones")
+    if ap.get("gitignore_sha256") and hb(_git(repo, "show", "%s:.gitignore" % ap["commit"])) != ap["gitignore_sha256"]:
+        problems.append("the source commit's .gitignore is not the pinned one")
     w = wheel_info(wheel)
     problems += package_problems("wheel", w, manifest, target)
     s = sdist_info(sdist) if sdist else None
     if s:
-        problems += package_problems("sdist", s, manifest, target) + sdist_extra_problems(s, extra, target)
+        problems += package_problems("sdist", s, manifest, target) + sdist_extra_problems(s, extra, target, ap.get("gitignore_sha256"))
     if problems:
         raise SystemExit("no hand-over:\n  " + "\n  ".join(problems))
     return {"kind": KIND, "release": s is not None, "identity": {"sha256": sha(identity), "checkpoint": ident.get("checkpoint")},
             "from_version": code["version"], "to_version": target, "python": code["python"], "modules": frozen_modules(ident),
             "source": {"commit": ap["commit"], "manifest_sha256": digest(manifest), "manifest": manifest, "extra": extra,
-                       "extra_sha256": digest(extra)},
+                       "extra_sha256": digest(extra), "gitignore_sha256": ap.get("gitignore_sha256")},
             "wheel": {"file": w["file"], "sha256": w["sha256"]},
             "sdist": {"file": s["file"], "sha256": s["sha256"]} if s else None,
             "uv_lock_sha256": sha(lock or os.path.join(ROOT, "uv.lock"))}
@@ -251,7 +261,8 @@ def record_problems(record: Any, identity: str, folder: Optional[str], lock: Opt
     if ap is not None and (src["commit"] != ap["commit"] or src["manifest_sha256"] != ap["manifest_sha256"]
                            or not isinstance(src["manifest"], dict) or digest(src["manifest"]) != ap["manifest_sha256"]
                            or not isinstance(src["extra"], dict) or digest(src["extra"]) != ap["extra_sha256"]
-                           or src.get("extra_sha256") != ap["extra_sha256"]):
+                           or src.get("extra_sha256") != ap["extra_sha256"]
+                           or src.get("gitignore_sha256") != ap.get("gitignore_sha256")):
         out.append("the hand-over's source is not the approved source (commit / manifest / README, LICENSE, pyproject)")
     elif ap is not None:
         out += manifest_problems(src["manifest"], ident, ap)
@@ -271,7 +282,7 @@ def record_problems(record: Any, identity: str, folder: Optional[str], lock: Opt
             info = wheel_info(f) if part == "wheel" else sdist_info(f)
             out += package_problems(part, info, src["manifest"], record["to_version"])
             if part == "sdist":
-                out += sdist_extra_problems(info, src["extra"], record["to_version"])
+                out += sdist_extra_problems(info, src["extra"], record["to_version"], (ap or {}).get("gitignore_sha256"))
     return out
 
 
