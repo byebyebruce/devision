@@ -135,6 +135,13 @@ class TrainConfig:
     # loaded, the vision tower / projector / conditioning are never called and are frozen, only LoRA and the decision
     # head train. The JSONL's image fields stay as source identity only. False: the picture path, unchanged.
     text_only: bool = False
+    # PROTECT-PREP-01 (docs/experiments/2026-10-19-protect-replay-plan.md): mixed_input -- every training / validation row
+    # says how it is scored: "input": "text" exactly as text_only (image=None, no picture loaded even if the row names
+    # one) or "input": "picture" (its real picture, the ordinary path); a row without it is refused, a blank picture is
+    # never substituted. Units stay whole and a micro batch holds one input mode only (plan_mixed). As text_only, only
+    # LoRA and the decision head train; vision, projector, conditioning and reader are frozen (the picture batches go
+    # through them unchanged).
+    mixed_input: bool = False
     # exp65 (docs/experiments/2026-10-19-exp65-weight-plan.md): question_weight_file, a JSONL of {"id", "qid", "weight"}
     # covering every training question exactly once, scales each question's gold CE: loss = sum(w_i * CE_i) / questions
     # in the batch (objective ce only; the RLCD noise is still drawn, so the random stream is the arm without weights).
@@ -217,6 +224,17 @@ def plan_batches(items: Sequence[Dict[str, Any]], micro_batch: int, rng: Any = r
     return batches
 
 
+def plan_mixed(items: Sequence[Dict[str, Any]], micro_batch: int, rng: Any = random) -> List[List[int]]:
+    """plan_batches on each input mode ("text" / "picture") separately -- units whole, no batch mixing the two -- then
+    the batches of both shuffled together."""
+    out: List[List[int]] = []
+    for mode in ("text", "picture"):
+        idx = [i for i, it in enumerate(items) if it["input"] == mode]
+        out += [[idx[j] for j in bt] for bt in plan_batches([items[i] for i in idx], micro_batch, rng)]
+    rng.shuffle(out)
+    return out
+
+
 def _device(name: str) -> torch.device:
     if name == "auto":
         return torch.device(best_device())
@@ -238,6 +256,8 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             it["target"] = [t / total for t in target]
             it["image"] = s["image"]
             it["source"] = s.get("source", "")
+            if "input" in s:
+                it["input"] = s["input"]
             it["qid"] = qid
             # what a per-question monitor record needs (the same fields devision-eval writes)
             it["sample_id"], it["image_id"] = s.get("id", ""), s.get("image_id", s["image"])
@@ -608,8 +628,16 @@ def fit_temperatures(logits, items, previous: Optional[ModelConfig] = None,
     return temperature, dict(sorted(by_options.items()))
 
 
-def _val_logits(model, items, images, pad_id, device, per: int = 32, text_only: bool = False):
-    """Temperature-free option logits for each item, in eval mode; `per` questions per forward pass."""
+def _val_logits(model, items, images, pad_id, device, per: int = 32, text_only: bool = False, mixed: bool = False):
+    """Temperature-free option logits for each item, in eval mode; `per` questions per forward pass. `mixed`: each
+    item scored by its own "input" (text: image=None; picture: its picture), the order kept."""
+    if mixed:
+        out: List[Any] = [None] * len(items)
+        for mode in ("text", "picture"):
+            idx = [i for i, it in enumerate(items) if it["input"] == mode]
+            for i, row in zip(idx, _val_logits(model, [items[i] for i in idx], images, pad_id, device, per, mode == "text")):
+                out[i] = row
+        return out
     was_training = model.training
     model.eval()
     out = []
@@ -749,7 +777,7 @@ _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
                 "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
                 "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
-                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file")
+                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file", "mixed_input")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -801,9 +829,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         raise ValueError("objective must be rlcd or ce, got %r" % c.objective)
     if c.start_check and not (c.monitor_details and out_dir):
         raise ValueError("start_check compares step-0 records: it needs monitor_details and an out directory")
-    if c.text_only and (c.local_views or c.number_reader or c.region_file or c.grounding_weight > 0 or c.aux_weight > 0
+    if c.mixed_input and c.text_only:
+        raise ValueError("mixed_input and text_only are exclusive: mixed_input scores each row by its own input")
+    if (c.text_only or c.mixed_input) and (c.local_views or c.number_reader or c.region_file or c.grounding_weight > 0 or c.aux_weight > 0
                         or c.distill_weight > 0 or c.vision_unfreeze_top or c.unfreeze_top or c.interaction_file or c.question_conditioning):
-        raise ValueError("text_only trains LoRA and the decision head only: no local views / reader / region / grounding / "
+        raise ValueError("text_only / mixed_input train LoRA and the decision head only: no local views / reader / region / grounding / "
                          "number / distillation / interaction loss, no vision or encoder unfreezing, no new conditioning")
     teacher = None
     if c.distill_weight > 0:
@@ -901,18 +931,18 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             raise ValueError("distill_blocks %s not in the training data (blocks: %s)"
                              % (sorted(distill_blocks - found), sorted(b for b in found if b)))
 
-    if c.text_only:    # exp57: nothing the text never reaches is trained (projector, conditioning, reader, vision)
+    if c.text_only or c.mixed_input:    # exp57 / PROTECT: only LoRA and the head train (projector, conditioning, reader, vision frozen)
         for mod in (model.projector, getattr(model, "condition", None), getattr(model, "reader", None)):
             if mod is not None:
                 mod.requires_grad_(False)
     groups = [
-        {"params": [] if c.text_only else list(model.projector.parameters()), "lr": c.lr_new},
+        {"params": [] if c.text_only or c.mixed_input else list(model.projector.parameters()), "lr": c.lr_new},
         {"params": [p for n, p in model.decision.named_parameters()
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
         {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},
     ] + ([{"params": unfrozen, "lr": c.lr_encoder}] if unfrozen else []) \
       + ([{"params": vision_params, "lr": c.lr_vision}] if vision_params else [])
-    extra = [] if c.text_only else [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
+    extra = [] if c.text_only or c.mixed_input else [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
                                     for p in getattr(model, name).parameters()]
     if extra:
         groups.append({"params": extra, "lr": c.lr_cond})
@@ -922,8 +952,13 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     group_names = ["projector", "head", "lora"] + (["encoder"] if unfrozen else []) \
         + (["vision"] if vision_params else []) + (["cond"] if extra else []) + (["reader"] if reader_params else [])
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
-    grouped = any("group" in it for it in train_items)
-    first_plan = plan_batches(train_items, c.micro_batch) if grouped else []
+    if c.mixed_input:
+        bad = sorted({str(it.get("input")) for its in [train_items] + list(sets.values()) for it in its} - {"text", "picture"})
+        if bad:
+            raise ValueError("mixed_input: every training and validation row needs \"input\": \"text\" | \"picture\" (found %s)" % bad)
+    grouped = c.mixed_input or any("group" in it for it in train_items)
+    plan = plan_mixed if c.mixed_input else plan_batches
+    first_plan = plan(train_items, c.micro_batch) if grouped else []
     steps = c.epochs * (len(first_plan) if grouped else max(1, -(-len(train_items) // c.micro_batch)))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
@@ -971,7 +1006,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             return evals[-1]
         row: Dict[str, float] = {}
         for name, its in sets.items():
-            logits = _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch, c.text_only)
+            logits = _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch, c.text_only, c.mixed_input)
             row.update(_set_metrics(name, logits, its))
             if c.monitor_details and out_dir:
                 _write_records(os.path.join(str(out_dir), "monitor", "step%d" % len(losses),
@@ -999,7 +1034,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     for epoch in range(start_epoch, c.epochs):
         if not (resumed and epoch == start_epoch):
             if grouped:
-                order = first_plan if epoch == 0 and first_plan else plan_batches(train_items, c.micro_batch)
+                order = first_plan if epoch == 0 and first_plan else plan(train_items, c.micro_batch)
             else:   # no groups: the order (and the RNG use) of every run before round 13
                 flat = [i for bt in order for i in bt] or list(range(len(train_items)))
                 random.shuffle(flat)
@@ -1010,7 +1045,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
             index = None
-            if c.text_only:      # exp57: no picture at all
+            if c.text_only or (c.mixed_input and chunk[0]["input"] == "text"):      # exp57 / PROTECT text rows: no picture at all
                 pixels = None
             elif c.local_views:   # exp50: each distinct picture of the micro batch encoded once
                 names = sorted({it["image"] for it in chunk})
@@ -1131,7 +1166,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if hasattr(model, "grounding"):   # S1's head is a training device, not part of the model that answers
         del model.grounding
     model.eval()
-    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch, c.text_only) for name, its in sets.items()}
+    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch, c.text_only, c.mixed_input)
+                  for name, its in sets.items()}
     temperature, by_options = fit_temperatures(set_logits["val"], calib)
     decider.cfg.temperature, decider.cfg.temperature_by_options = temperature, by_options
     print("temperatures (choice, score, noul):", [round(t, 3) for t in temperature])
