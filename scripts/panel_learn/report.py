@@ -91,6 +91,41 @@ def content_problems(name: str, recs, want) -> list:
     return out
 
 
+def versus(d2: str, rec: dict, stats: dict, acc: dict, probes: dict, wants: dict) -> dict:
+    """Descriptive points next to the rules (PANEL-DECISION-PREP-01): the end against the run's own start (its step-0
+    monitor, i.e. the init end point before any decision update) and against the sealed candidate (the sealed read
+    states' accuracies and the sealed exist / science). Only valid, complete sets are used; no rule reads this."""
+    start_dir = os.path.join(d2, "d2", "monitor", "step0")
+    start: dict = {}
+    for name in MONITOR:
+        r, kind, _ = load_set(os.path.join(start_dir, name + ".details.jsonl"), "start " + name, wants[name])
+        if r is not None:
+            start[name] = r
+    out: dict = {"start": {}, "end_minus_start": {}, "sealed": {}, "end_minus_sealed": {}}
+    for key, name in (("fit", "val"), ("dev16", "dev16")):
+        if name in start and key in stats:
+            idx = syn_index(start[name])
+            for w in ("read", "cmp"):
+                v = syn_stat(idx, 16, w)["value"]
+                out["start"]["%s_%s" % (key, w)] = v
+                if v is not None:
+                    out["end_minus_start"]["%s_%s" % (key, w)] = stats[key][w]["value"] - v
+    for n in acc:
+        if n in start:
+            out["start"][n] = accuracy(start[n])
+            out["end_minus_start"][n] = acc[n] - out["start"][n]
+    man = "data/panel_learn/read_states.MANIFEST.json"
+    if os.path.exists(man):
+        sealed = {"rs_" + k[len("sqa_"):]: v["sealed_accuracy"] for k, v in json.load(open(man)).items()}
+        out["sealed"].update(sealed)
+        out["end_minus_sealed"].update({k: acc[k] - v for k, v in sealed.items() if k in acc})
+    for n, v in probes.items():
+        out["sealed"][n] = v["sealed"]
+        if v["d2"] is not None:
+            out["end_minus_sealed"][n] = v["d2"] - v["sealed"]
+    return out
+
+
 def planned_updates(config: str = CONFIG) -> int:
     """What rlcd plans for this config's data and epochs (scripts/panel_learn/plan.py, rlcd.plan_mixed)."""
     import random
@@ -218,6 +253,7 @@ def d2_report(d2: str = D2, sealed: str = SEALED, config: str = CONFIG, planned:
     out["parts"].update(stats)
     acc = {n: accuracy(rec[n]) for n in ("k_text", "rs_temp", "rs_force", "rs_temp_mism", "rs_force_mism") if n in rec}
     out["parts"]["accuracy"] = acc
+    out["versus"] = versus(d2, rec, stats, acc, probes, wants)
     out["monitor"] = end
     out["invalid"], out["incomplete"] = invalid, incomplete
     if invalid:
@@ -251,7 +287,7 @@ def main(argv=None) -> int:
         print(json.dumps(out, indent=1))
         return 0 if out["run_phase_b"] else 10
     d2 = argv[1] if len(argv) > 1 else D2
-    out = d2_report(d2, argv[2] if len(argv) > 2 else SEALED, CONFIG)
+    out = d2_report(d2, argv[2] if len(argv) > 2 else SEALED, argv[3] if len(argv) > 3 else CONFIG)
     os.makedirs(d2, exist_ok=True)                       # a run that never created its directory still gets its report
     json.dump(out, open(os.path.join(d2, "report.json"), "w"), indent=1)
     print(json.dumps(out, indent=1))

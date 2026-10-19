@@ -235,3 +235,20 @@ def test_runner(tmp_path):
 def test_limits():
     s = open(os.path.join(HERE, "run.sh")).read()
     assert "EXP74_LIMIT:-4500" in s and "EXP74_LIMIT:-5700" in s and "EXP74_RESERVE:-120" in s
+
+
+def test_versus_start_and_sealed(ws):
+    """PANEL-DECISION-PREP-01: the end against the run's own step 0 and against the sealed candidate (descriptive)."""
+    m, make = ws
+    d2 = make()
+    end = os.path.join(d2, "d2", "monitor", "step100")
+    start = os.path.join(d2, "d2", "monitor", "step0")
+    shutil.copytree(end, start)
+    rows = [json.loads(x) for x in open(os.path.join(start, "rs_temp.details.jsonl"))]
+    for r in rows[:10]:
+        r["correct"], r["prediction"] = False, "y"
+    open(os.path.join(start, "rs_temp.details.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    out = m.d2_report(d2, "sealed", "configs/d2.yaml", planned=100)
+    v = out["versus"]
+    assert v["end_minus_start"]["rs_temp"] == pytest.approx(10 / 41) and "fit_read" in v["end_minus_start"]
+    assert v["sealed"]["exist"] == 0.95 and "exist" in v["end_minus_sealed"] and out["outcome"].startswith("A:")
