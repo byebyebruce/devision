@@ -30,8 +30,10 @@ option-count bucket. Questions the reading step actually read have their own tem
 
 {{temperature_table}}
 
-TBD: the delivery result against v0.3, the protection panels, and the links to the delivery comparison and the full
-evaluation tables (filled only from the sealed full evaluation).
+On the ScienceQA temperature (41) and magnet (120) development questions -- used during development, so not a blind
+test -- accuracy rose by 29.4 points against v0.3 [21.1, 37.7] (temperature 41/41). TBD: the release decision and
+the links to the delivery comparison and full evaluation tables. **Status: not release-eligible under the current
+rules (the dev16 retention requirement is not met); this draft is not a release.**
 
 ## limitations
 
@@ -52,8 +54,13 @@ evaluation tables (filled only from the sealed full evaluation).
 - **Option order matters.** Reversing the options changed the chosen answer on 106 of 300 temperature questions
   (38 wrong→right, 41 right→wrong, 27 wrong→wrong) and 21 of 180 magnet questions; similar overall accuracy hides
   these per-question changes.
-- TBD: per-capability changes against v0.3 with intervals from the sealed full evaluation, including any protection
-  panel that declined.
+- Against v0.3 (paired by question, picture-clustered 95% intervals, sealed full evaluation): the seven protection
+  panels show no cost by the release rule, but several sets fell slightly -- the held-out GQA binding test -2.2
+  [-3.9, -0.5], position -2.0, size -1.6, VQA choice -1.5; What'sUp rose +4.9 [+2.3, +7.4]. The held-in synthetic
+  reading / comparison task of the earlier development (dev16) is **not** kept: 36.8% reading, 41.5% comparison,
+  below its 80% rule (the reading step does not cover it).
+- Chart questions (80 ChartQA-style items): 31.3% with the right picture and 36.3% with a wrong one; a max-value
+  baseline gets 61.3%. There is no evidence that the model reads charts.
 - Two held-out sets each share one picture with sets watched during development (test_count_fresh: coco:221272;
   test_bind_gqa: coco:418606); they are not fully independent. Several other sets, including ScienceQA, informed
   development and are reported as monitoring, not as blind tests. The project's training pictures were not re-scanned
