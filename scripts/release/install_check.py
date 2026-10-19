@@ -74,10 +74,15 @@ def probe(python: str, checkpoint: str, cases: List[Dict], cwd: str, isolated: b
     return json.loads(line[len(MARK):])
 
 
-def install(workdir: str) -> str:
-    """The new environment's python, with this tree's wheel (and the train extra) installed as uv.lock pins it."""
+def install(workdir: str, wheel_file: Optional[str] = None) -> str:
+    """The new environment's python, with this tree's wheel (or the given wheel file: a package hand-over's) and the
+    train extra installed as uv.lock pins it."""
     dist, req, venv = os.path.join(workdir, "dist"), os.path.join(workdir, "requirements.txt"), os.path.join(workdir, "venv")
-    sh(["uv", "build", "--wheel", "--out-dir", dist], cwd=ROOT)
+    if wheel_file:
+        os.makedirs(dist, exist_ok=True)
+        shutil.copy(wheel_file, dist)
+    else:
+        sh(["uv", "build", "--wheel", "--out-dir", dist], cwd=ROOT)
     wheel = [os.path.join(dist, f) for f in os.listdir(dist) if f.endswith(".whl")]
     if len(wheel) != 1:
         raise SystemExit("expected one wheel in %s, found %s" % (dist, wheel))
@@ -270,6 +275,15 @@ def identity_problems(checkpoint: str, identity: Dict, pins: Optional[Dict[str, 
     return out
 
 
+def _package_bridge():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("release_package_bridge", os.path.join(ROOT, "scripts", "release", "package_bridge.py"))
+    assert spec is not None and spec.loader is not None
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
 def _sha(path: str) -> str:
     import hashlib
     with open(path, "rb") as fh:
@@ -277,11 +291,13 @@ def _sha(path: str) -> str:
 
 
 def install_check(checkpoint: str, cases: List[Dict], identity: Optional[str] = None, workdir: Optional[str] = None,
-                  record: Optional[str] = None, pins: Optional[Dict[str, str]] = None) -> List[str]:
+                  record: Optional[str] = None, pins: Optional[Dict[str, str]] = None, bridge: Optional[str] = None) -> List[str]:
     """Problems of the checkpoint's clean install; [] when it agrees (module docstring). With `identity` (a complete
     frozen IDENTITY.json) this is the release check: the checkpoint is checked against it before anything is
     installed or loaded, and `record` (required) keeps what was checked. Without it, a development self-check only
-    (its record says so; never release evidence)."""
+    (its record says so; never release evidence). `bridge` (release only): a package hand-over record
+    (scripts/release/package_bridge.py) -- its wheel is installed instead of building one, and the installed code must
+    be the frozen modules under the recorded final version; the strict code_problems is otherwise unchanged."""
     from PIL import Image
 
     from devision.infer import picture_identity
@@ -290,20 +306,32 @@ def install_check(checkpoint: str, cases: List[Dict], identity: Optional[str] = 
     if release and not record:
         raise SystemExit("a release check needs --record")
     ident = json.load(open(identity)) if identity else None
+    if bridge and not release:
+        raise SystemExit("a package hand-over is checked only in a release check (--identity)")
+    pb: Any = _package_bridge() if bridge else None
+    hand = json.load(open(bridge)) if bridge else None
+    bwheel = os.path.join(os.path.dirname(os.path.abspath(bridge)), hand["wheel"]["file"]) if bridge and hand else None
     problems = case_problems(cases) + (identity_problems(checkpoint, ident, pins) if ident is not None else [])
+    if hand is not None and identity:
+        problems += ["package hand-over: %s" % x for x in pb.record_problems(hand, identity, bwheel if bwheel and os.path.exists(bwheel) else None)]
+        if bwheel is None or not os.path.exists(bwheel):
+            problems.append("package hand-over: its wheel %s is not next to the record" % (hand["wheel"]["file"]))
     own = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="devision-install-")
     wheel = None
     got: Dict = {}
     try:
         if not problems:                                  # nothing installed or loaded for a wrong smoke / identity
-            py = install(workdir)
+            py = install(workdir, bwheel)
             dist = os.path.join(workdir, "dist")
             wheel = [os.path.join(dist, f) for f in os.listdir(dist) if f.endswith(".whl")][0]
             got = probe(py, checkpoint, cases, workdir, isolated=True)
             ref = probe(sys.executable, checkpoint, cases, ROOT, isolated=False)
             reference = ident["code"] if ident is not None else ref["code"]
-            problems = compare(ref, got, cases, reference, os.path.join(workdir, "venv"), bundle_state(checkpoint) == "complete")
+            if hand is not None and ident is not None:          # only after record_problems passed (nothing installed otherwise)
+                problems = ["package hand-over: %s" % x for x in pb.installed_problems(hand, ident["code"], got["code"])]
+                reference = pb.bridged_reference(ident["code"], hand)
+            problems += compare(ref, got, cases, reference, os.path.join(workdir, "venv"), bundle_state(checkpoint) == "complete")
         if record:
             ce: Any = _check_eval()
             rec = {"kind": "release" if release else "development self-check (not release evidence)",
@@ -312,6 +340,7 @@ def install_check(checkpoint: str, cases: List[Dict], identity: Optional[str] = 
                    "checkpoint": os.path.abspath(checkpoint),
                    "inference_files": {k: v for k, v in ce.tree_hashes(checkpoint).items() if k.split(os.sep)[0] in INFERENCE},
                    "wheel": {"name": os.path.basename(wheel), "sha256": _sha(wheel)} if wheel else None,
+                   "package_hand_over": {"path": os.path.abspath(bridge), "sha256": _sha(bridge)} if bridge else None,
                    "installed_code": got.get("code"),
                    "cases": [dict(c, picture_sha256=_sha(c["picture"]), pixels=picture_identity(Image.open(c["picture"]).convert("RGB"))) for c in cases],
                    "problems": problems, "verdict": "agrees" if not problems else "refused",
@@ -329,9 +358,10 @@ def main(argv=None) -> int:
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--cases", required=True)
     ap.add_argument("--identity", help="the candidate's complete frozen IDENTITY.json: the release check (needs --record)")
+    ap.add_argument("--bridge", help="a package hand-over record (package_bridge.py make), its wheel next to it: install that wheel")
     ap.add_argument("--record", help="where to keep the result (identity, files, wheel, code, cases, verdict)")
     a = ap.parse_args(argv)
-    problems = install_check(a.checkpoint, json.load(open(a.cases)), a.identity, record=a.record)
+    problems = install_check(a.checkpoint, json.load(open(a.cases)), a.identity, record=a.record, bridge=a.bridge)
     kind = "release check" if a.identity else "development self-check (not release evidence)"
     print("%s: OK" % kind if not problems else "%s found:\n  %s" % (kind, "\n  ".join(problems)))
     return 1 if problems else 0

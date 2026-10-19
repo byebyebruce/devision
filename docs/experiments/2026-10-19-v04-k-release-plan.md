@@ -298,3 +298,22 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - 例子：temp000 图上两边质量都是 6，速度为 1410 / 380；读表把 1410 / 380 放进了质量字段，速度读成 1 / unreadable。
   - 这说明在新画法上，对象 / 字段的定位或读出泛化明显有问题；仅凭这些记录不能把原因唯一归到 selector、字符头或后续使用环节。
 - **范围**：合成确认支持的是本集合上相对 v0.3 的增益和看图收益（比较题总体只有 46.7%，equal 类 2/15、2/20），不能外推为两个域的各子类都改善或都可以可靠使用。之后如果针对这些失败做开发，本确认集要转为已暴露的开发证据，不能再当独立确认。
+
+## 包身份衔接（V04-K-PACKAGE-PREP-01；CPU 方案、工具和 tiny 夹具，待评审；worktree devision-v04-materials）
+
+- **问题**：冻结 IDENTITY 的 code.version 是 0.3.0.dev1，发布计划用正式包 0.3.0。evaluate.code_problems 严格比较 version / python，install_check 用它对照冻结身份，所以模块逐字相同的 0.3.0 也会被拒绝。devision.__version__ 只来自包元数据（src/devision/__init__.py:18），只改 pyproject 版本时，模块内容可以完全不变。
+- **做法**：scripts/release/package_bridge.py 写一份明确的打包衔接记录 PACKAGE_BRIDGE.json。只有发布安装检查 install_check --bridge 使用它；全局 code_problems、普通评测和活动 IDENTITY 都不改。
+  - **make**（--identity、--wheel、--source 冻结源码树、可选 --sdist）：
+    - 目标只能是冻结开发版本对应的正式版（0.3.0.dev1 → 0.3.0；rc、post、local 或其他版本都拒绝），包名必须是 devision；
+    - wheel（和 sdist）里每个冻结模块的内容逐字等于冻结值；wheel 里 devision/ 下其他所有文件（评测没有加载的 serve、train/*、static 等）逐个等于冻结源码树；
+    - 记录绑定：IDENTITY 的 SHA、两个版本、冻结的 Python、完整的模块映射、wheel 的 SHA 和逐文件 SHA、sdist 的 SHA、uv.lock 的 SHA（安装时用的依赖版本）。
+  - **record_problems**（安装之前）：记录必须对应这份 IDENTITY（SHA、from 版本、Python、模块映射完全相同），to 版本是正式版，uv.lock 没变，要安装的 wheel 的 SHA 和逐文件 SHA 等于记录。
+  - **installed_problems**（安装之后）：安装进程报告的版本必须是记录的正式版；然后对"只把版本替换成记录值的冻结 code"用原来严格的 code_problems 比较（模块内容、多出的模块、必需模块、Python 都照旧严格）。
+  - **install_check --bridge**：只能和 --identity 一起用；先做 record_problems，不通过就不安装；通过后安装记录里的那个 wheel（不重新 build），之后照旧比较读表、路由、状态和全部概率，记录里写入衔接记录的 SHA。
+- **夹具**：tests/release/test_package_bridge.py 19 项，都是假源码树、wheel、sdist 和 IDENTITY，不安装、不加载模型：
+  - 正式版通过衔接；同一个已安装 code 用原 code_problems 仍然只报版本差异；
+  - make 拒绝：冻结模块被改、未加载文件被改、0.3.1、rc、post、包名不同、缺模块、sdist 模块不同；
+  - 记录拒绝：另一份 IDENTITY、模块被改、目标被改、uv.lock 变化、另一个 wheel；
+  - 安装后拒绝：版本、Python、模块内容不同，或多出模块；
+  - install_check：记录不对时不安装；安装的是记录的 wheel；参考 code 只替换了版本；非发布检查使用 --bridge 时拒绝。
+- **未做**：没有真实构建 0.3.0、没有上传、没有在真实候选上做安装 smoke。正式 0.3.0 是否可用按发布前流程核实。
