@@ -2,9 +2,10 @@
 
     devision-serve
 
-- POST /v1/systemone -> Decider.decide (the response follows Jev; the request is Jev's plus the picture, either a
+- POST /v1/systemone -> decide of what `devision.load` returns (a Decider, or the reading combination when the
+  checkpoint has a reading/ bundle) (the response follows Jev; the request is Jev's plus the picture, either a
   top-level `image` -- an http(s) URL, data URI or base64, never a server-side file -- or an image part in `state`)
-- GET /health
+- GET /health (model name and reading status)
 - the demo page at / with its assets and example images (--no-demo turns it off); the page talks to the API over
   HTTP only, like any other client.
 """
@@ -16,14 +17,15 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from .infer import Decider, InvalidRequest, _image_arg
+from .infer import InvalidRequest, _image_arg
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 DEMO_ASSETS = {"demo.css": "text/css", "demo.js": "text/javascript", "scenes.js": "text/javascript"}
 
 
-def create_app(decider: Decider) -> FastAPI:
-    """The API: POST /v1/systemone -> Decider.decide, and GET /health. Nothing else lives here."""
+def create_app(decider: Any) -> FastAPI:
+    """The API: POST /v1/systemone -> decider.decide, and GET /health. Nothing else lives here. `decider`: a
+    `Decider` or a `devision.reading.Reading` (both resolve the picture the same way, `infer.resolve_request`)."""
     app = FastAPI(title="devision")
 
     @app.post("/v1/systemone")
@@ -42,7 +44,8 @@ def create_app(decider: Decider) -> FastAPI:
 
     @app.get("/health")
     def health() -> Any:
-        return {"status": "ok", "model": decider.cfg.model_name}
+        return {"status": "ok", "model": decider.cfg.model_name,
+                "reading": getattr(decider, "reading_status", {"mode": "none"})}
 
     return app
 
@@ -100,13 +103,17 @@ def serve_main(argv=None) -> None:
     p.add_argument("--threads", type=int, help="CPU threads for inference (default: torch's choice)")
     p.add_argument("--device", default="auto", help="auto (default: the fastest available, CPU if there is no GPU), cpu, cuda or mps")
     p.add_argument("--revision", help="hub commit, tag or branch when --checkpoint is a repo id")
+    p.add_argument("--reading", choices=("auto", "on", "off"), default="auto",
+                   help="auto (default): the reading combination if the checkpoint has reading/; on: require it; off: plain Decider")
     a = p.parse_args(argv)
     if a.threads:
         import torch
 
         torch.set_num_threads(a.threads)
 
-    app = create_app(Decider.load(a.checkpoint, device=a.device, revision=a.revision))
+    from . import load
+
+    app = create_app(load(a.checkpoint, device=a.device, revision=a.revision, reading=a.reading))
     if not a.no_demo:
         app.include_router(demo_router(a.examples))
     uvicorn.run(app, host=a.host, port=a.port)

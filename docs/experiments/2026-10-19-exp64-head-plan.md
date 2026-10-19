@@ -81,3 +81,13 @@
 - 8 个门槛 / 分支用例：有效性优先，缺项给 incomplete。
 - START 之后改了训练目标（即使同步更新 MANIFEST）被拒绝，报告给 invalid；EXP62 选择器的哈希不符时被拒绝。
 - run.sh stub：顺序 start → features → train → reads → report；train 失败时不跑 reads，直接 finalize。
+
+## EXP64 结果（01:43:03–01:56:22，完整运行；预写分支：生成版式通过、真实 24 张未过）
+
+- **运行**：HEAD 70f8ba2，START 5ac4da33，report ae617981，新头 0e275bdf；全部阶段退出码 0，13.3 分钟（features 6.3 分钟、训练 47 秒、reads 6 分钟）。
+- **保真**：validity valid，旧头五组全部逐字复现（不符 0）。
+- **新版式 tune_V**：旧头 0.797 → 新头 **0.927**；新 − 旧头 +0.130 [+0.078, +0.197]；距离 0.713 → 0.928。oracle 框 + 新头 0.954。
+- **旧版式 rl_tune**：生产基线 0.817 → 0.943（+0.126 [+0.071, +0.197]）。
+- **dev24**：自动速度 16 / 24（旧头 15），oracle 框 + 新头 24 / 24；比较：温度 9 / 12，磁力 7 / 12。
+- **门槛**：head_learned、new_layout、head_attribution、old_layout 都是 true；dev24_speed false。
+- **分支**：生成版式通过，EXP60 的 24 张真实图没有通过，区域 / 覆盖缺口仍在。candidate_eligible = false；c92b7b7e 和 0e275bdf 都不进产品。
