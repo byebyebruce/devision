@@ -4,9 +4,11 @@ the sealed full evaluation (release/v0.4/results.json, delivery_vs_v0.3.json) --
 yet, and this draft is not a release. -->
 ## training
 
-v0.4 is a **reading combination**, not a single network: (1) an automatic region-reading step reads a few printed
-numbers from the picture, (2) a fixed, hand-written rule computes one derived quantity from them, and (3) the decision
-model answers the question with the picture and that small text table. The three parts are bound and verified together
+v0.4 is a **reading combination**, not a single network: (1) for the two supported diagram forms, an automatic
+region-reading step looks at the picture and reads a few printed numbers into a small text table, (2) a fixed,
+hand-written rule computes one derived quantity from them, and (3) the decision model answers those questions from the
+request's own text plus that table (and K) **without the picture**; every other question goes to the vision decision
+model with the picture as before. The three parts are bound and verified together
 (`reading/` in the checkpoint, with its lineage); `devision.load(...)` runs them by default (`reading="auto"`).
 
 - **Decision model.** Continues v0.3 (r15) through the exp30–protect-k chain of LoRA / head training runs (alignment
