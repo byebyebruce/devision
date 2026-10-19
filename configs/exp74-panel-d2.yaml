@@ -24,7 +24,7 @@ stages:
       rs_temp_mism: data/panel_learn/read_states_sqa_temp_mism.jsonl
       rs_force_mism: data/panel_learn/read_states_sqa_force_mism.jsonl
     params:
-      epochs: 2
+      epochs: 1
       mixed_input: true
       objective: ce
       micro_batch: 8

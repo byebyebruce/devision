@@ -23,7 +23,7 @@
 | exp45-g → exp48-x → exp50-t → exp57 → exp63 → exp68-x → exp72-k → protect-k | 依次 | 未测 | 未测 | |
 | v04-k（protect-k 权重 + 读数组件） | protect-k | 294/800 = 0.3675 | 166/400 = 0.415 | 全评已封存 extra_dev16 |
 
-结论：当前链上测过的节点都在 0.33–0.37 / 0.415–0.43 之间，和 r15 基线一样。exp30 的对齐混合里有 20,000 条 exp24 读字 caption，但**从来没有** EXP26 的面板绑定对齐（`data/exp26/align_*`），也没有 exp25 的读数 / 比较训练。所以准确的说法是"项目曾在 EXP26 分支证明可学，当前分支至今没有学到"，不是"后来遗忘"。dev16 是没有参与训练的族，但在开发中反复监测过，不是 held-in，也不是独立确认。
+结论：当前链上测过的节点都在 0.33–0.37 / 0.415–0.43 之间，和 r15 基线一样。exp30 的对齐混合里有 20,000 条 exp24 读字 caption，但**从来没有** EXP26 的面板绑定对齐（`data/exp26/align_*`），也没有复现 EXP26 那种充分的读数 / 比较训练配方。当前链并非完全没有见过合成监督：EXP40-M 混入了 1,920 道 exp25 图题和 484 道文字题（旁支 EXP32-B 有 2,401 道合成题）（评审 NOTE-02 更正）。所以准确的说法是"项目曾在 EXP26 分支证明可学，当前分支至今没有学到"，不是"后来遗忘"。dev16 是没有参与训练的族，但在开发中反复监测过，不是 held-in，也不是独立确认。
 
 ## 2. 要回答的问题
 
@@ -37,14 +37,14 @@
 
 - 与 `configs/exp26-align.yaml` 只差：init 换成冻结候选，遍数 2 → 1（预算），eval_every 500 → 625。数据（`data/exp26/align_train.jsonl` 20,000 张、`align_val.jsonl` 1,000 张）、batch 16、投影层 lr 2e-5、LoRA r16 / alpha 32 / lr 1e-4、warmup 100、mask 0.5、caption 长度 40、seed 0 都不变。说明文字总是 A 先、不管 A 画在哪边，面板的位置、顺序和数值都随机。
 - **更新的参数**：投影层，以及新加在 ModernBERT 上的 LoRA（保存时合并进 decision.encoder）。SigLIP、question conditioning、局部视图几何、决策头都不训练（夹具已核：只有 projector 和 decision.encoder 变化）。读数组件（selector / 字符头 / corrector）是 reading/ 里的独立文件，不参与训练。
-- **兼容性修改（唯一的代码改动）**：原来的 align.py 把局部视图打包后的 16 通道张量直接送进 SigLIP，在带局部视图的 checkpoint 上会报错（夹具复现了这个错误）。改为 `_full_picture` 先取出整图，与 `model.visual_inputs` 投影成视觉 token 的是同一张图（夹具核对两者逐位相等；不带局部视图的模型不变）。这样 caption 对齐只看整图；局部视图只供 conditioning 使用，而 caption 对齐本来就不经过 conditioning。
+- **兼容性修改（唯一的代码改动）**：原来的 align.py 把局部视图打包后的多通道张量直接送进 SigLIP（tiny 夹具 local_views=4 时是 16 通道，真实候选 local_views=12 时是 40 通道），在带局部视图的 checkpoint 上会报错（夹具复现了这个错误）。改为 `_full_picture` 先取出整图，与 `model.visual_inputs` 投影成视觉 token 的是同一张图（夹具核对两者逐位相等；不带局部视图的模型不变）。这样 caption 对齐只看整图；局部视图只供 conditioning 使用，而 caption 对齐本来就不经过 conditioning。
 - **不使用 align 的 decision_data**：它和 micro_batch 互斥，而且总是加载图片，文字行不会按 image=None 打分（夹具已核）。D1 只做 caption 对齐，不混决策监督；保护交给 D2 的回放。不用空白图代替 image=None。
 - **门槛**（`scripts/exp24/gate.py`，原样复用）：1,000 张留出面板图上，真图减换图的混合补词准确率差 ≥ 0.30 才进入 D2，否则停下报告（exit 10）。EXP26 两遍之后是 0.347；这里只训一遍，可能达不到，达不到也如实报告。
 
 ### D2：读数 → 决策，带回放保护（`configs/exp74-panel-d2.yaml`）
 
 - 起点是 D1 的输出；`mixed_input`、CE，与 PROTECT-K 同一条已用过的路径：图片行走图片，文字 / K 行按 image=None 打分。
-- **更新的参数**：新 LoRA（r16，lr 5e-5）和决策头（lr 1e-5）。投影层、conditioning、SigLIP、读数组件都冻结（夹具已核：只有 decision.encoder 变化）。2 遍，micro_batch 8，warmup 100，seed 1，amp 关。
+- **更新的参数**：新 LoRA（r16，lr 5e-5）和决策头（lr 1e-5）。投影层、conditioning、SigLIP、读数组件都冻结（夹具已核：只有 decision.encoder 变化）。**1 遍**（评审 PANEL-D2-R1-01 裁定，原来写的 2 遍），micro_batch 8，warmup 100，seed 1，amp 关。
 - **数据** `data/panel_learn/train.jsonl`（`scripts/panel_learn/build.py`，seed 4，MANIFEST 已写，sha 7c9dbb97…）：共 4,200 行、8,430 题。
   - 面板读数 / 比较：exp25 的 1,000 个训练族，每族 2 个数值视图共 2,000 行，必定包含 fit 的 200 个族；
   - 文字比较：600 行。exp25 的文字比较行里有 424 行的擦除底图与 dev_syn_erased 的图逐字节相同（86 张），**已按图片身份全部排除**；EXP26 当年的训练里包含这些图，在这里如实记录；
@@ -69,7 +69,12 @@
 ## 4. 判定（运行前写下，`scripts/panel_learn/report.py`）
 
 - **D1**：差值 ≥ 0.30 进入 D2；否则停下，报告"在 1 遍预算下绑定对齐没有达到 EXP26 的门槛"，不自动加遍数。
-- **D2**（看最后一遍结束时的监测）：
+- **D2 证据核对在先**（PANEL-D2-R1-02，report.py 的 d2_report）。先核对以下各项，再判结局；已完成的部分照样报告：
+  - **invalid**：run.json 的 stages 不是 D2 配置；训练数据不是 MANIFEST 里的那份；更新次数不等于 plan_mixed 规划的次数（1,054）；终点监测的题键有重复，或与数据文件不完全相同；选项、gold 或 correct 与数据不符；探针不属于这次 D2 端点（checkpoint 路径、数据 sha 不符，或者早于保存的权重）。
+  - **incomplete**：没有 run.json；没有 train_report（训练没有完成）；最后一次更新时没有评估；没有 final 监测；终点缺某个监测文件；缺 exist / science 探针。
+  - 不再取"最大 step 目录"作为终点：终点是 train_report 里最后一次评估的步数，必须等于实际更新次数。缺探针时判 incomplete，不会因为缺证据而判成 B。
+  - 只有全部证据都完整有效时，才按下面的规则判 A / B / C / D。
+- **D2**（看这一遍结束时的监测）：
   - 有效性：擦除对照的读数 < 0.50 且比较 < 0.55（delivery.py 的规则），否则 invalid。
   - fit：readA / readB 和比较按 exp21 readout 的 classify 判定（pass = 点估计 ≥ 0.80 且下界 ≥ 0.75；fail = 点估计 < 0.60 且上界 < 0.65；其余为阈值附近），按族重采样。
   - dev16：同一规则，只报告（开发监测；控制无效时作废）。
@@ -80,7 +85,11 @@
 ## 5. 资源和截止（估计；运行时用实测更新）
 
 - D1：1,250 步 × batch 16。只看整图，接近 EXP26 的 1.85 s/步；但读图时仍会生成局部视图（CPU），估计 2.0–2.5 s/步，共 42–52 分钟；加上 3 次 align_val 评估（各约 2 分钟）和一致性检查（约 2 分钟），约 50–60 分钟。**硬上限 75 分钟**，最后 120 s 留给门槛报告。
-- D2：4,200 行 × 2 遍，plan_mixed 按每 8 行一个 micro batch，约 1,050 步。PROTECT-K 同一路径实测 2.6 s/步；面板行每行 3 题，估计 2.6–3.0 s/步，共 46–53 分钟。监测 4 轮（step 0、两遍结束、final），每轮约 4–5 分钟，共约 18 分钟；exist / science 约 5 分钟。合计约 70–76 分钟。**硬上限 95 分钟**，最后 120 s 留给报告。
+- D2（PANEL-D2-R1-01 更正）：原来按 4,200 行 × 2 遍 / 8 估算约 1,050 次更新是错的，rlcd 按题展开（`_items`），plan_mixed 按题安排。用实际题单和 rlcd 自己的 plan_mixed 重算（`scripts/panel_learn/plan.py`，seed 1，micro 8，不构建模型）：
+  - 8,430 题，其中图片 7,600、文字 830；5,277 个单元，最大单元 2 题；**每遍 1,054 次更新**，2 遍是 2,108。按 2.6–3.0 s/次，2 遍纯训练就要 91–105 分钟，装不进 95 分钟。
+  - 改为 **1 遍 1,054 次更新**：训练 45.7–52.7 分钟；监测 3 轮（step 0、这一遍结束、final），每轮 3,000 张图片题和 562 道文字题，按每题约 0.11 s / 0.02 s 估计约 5.7 分钟；exist / science 探针约 5 分钟；加载约 1.5 分钟。合计约 **69–76 分钟**，硬上限仍是 95 分钟，最后 120 s 留给报告。必要的监测和终点读出都保留。
+  - 第 1 遍各来源的曝光（包含该来源的更新次数）：exp21-syn 768、exp21-syn-text 219、objects365 118、real-layout-temp 104、scienceqa 100、tallyqa 78、real-layout-force 75，其余见 plan.py 的输出。
+  - 结论的范围：1 遍是预算内的诊断。1 遍没学会，不能外推成"充分监督下也学不会"。
 - 两关合计约 2–2.5 小时，超过评审建议的约 90 分钟，因此拆成两次许可，中间以 D1 门槛分开。删掉必要的对照不能换来更短的时间。
 - 设备 MPS，一次只跑一个模型；`scripts/panel_learn/run.sh` 用 EXP74_PHASE=d1 或 d2 启动，每个阶段只启动一次（`runs/exp74-<阶段>.started`），没有续跑或重试；启动前用 ps 完整命令行检查没有其他模型任务。
 
@@ -96,6 +105,7 @@
 
 ## 7. 已知限制
 
-- 单种子；D1 只训 1 遍（EXP26 是 2 遍）。投影层在 D1 中被修改，这可能影响所有带图题，D2 的回放和 exist / science 探针只能部分覆盖；七个面板和全评留到 A 之后的筛查。
+- 单种子；D1 和 D2 都只训 1 遍（EXP26 是 2 遍 + 2 遍）。
+- 保护只覆盖部分集合：K 文字切片、离线封存读数状态（只检验新决策模型如何使用这些状态，不是实时组合）、exist、science。A 之后仍需要实时组合、七个保护面板和新的冻结与校准，才能说真实交付保持。投影层在 D1 中被修改，这可能影响所有带图题，D2 的回放和 exist / science 探针只能部分覆盖；七个面板和全评留到 A 之后的筛查。
 - 面板图的画法与 dev16 相同（exp21），学会了也不代表真实 ScienceQA 或其他版式会提高。
 - fit 门槛用的是训练族：通过只代表"学得会"，不代表泛化。

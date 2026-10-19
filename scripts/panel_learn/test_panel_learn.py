@@ -21,51 +21,126 @@ def load():
     return m
 
 
-def syn(prefix, fams, p_read, p_cmp, height=16):
-    """readA / readB / cmp records, both value views; a family's questions right with the given shares (by family)."""
+def q3():
+    return {k: {"type": "choice", "instructions": k, "criteria": {"x": None, "y": None}} for k in ("readA", "readB", "cmp")}
+
+
+def syn_rows(prefix, fams, height=16):
+    return [{"id": "exp21:%s%04d:v%d:h%d" % (prefix, i, v, height), "questions": q3(),
+             "gold": {k: {"probabilities": {"x": 1.0, "y": 0.0}} for k in ("readA", "readB", "cmp")}} for i in range(fams) for v in (0, 1)]
+
+
+def plain_rows(prefix, n):
+    return [{"id": "%s%d" % (prefix, i), "questions": {"q": {"type": "choice", "instructions": "q", "criteria": {"x": None, "y": None}}},
+             "gold": {"q": {"probabilities": {"x": 1.0, "y": 0.0}}}} for i in range(n)]
+
+
+def recs(rows, p_right):
+    """Records of rows: every question of family / row i right when (i % 10) < p * 10."""
     out = []
-    for i in range(fams):
-        for v in (0, 1):
-            sid = "exp21:%s%04d:v%d:h%d" % (prefix, i, v, height)
-            for q, p in (("readA", p_read), ("readB", p_read), ("cmp", p_cmp)):
-                out.append({"sample_id": sid, "qid": q, "correct": (i % 100) < p * 100})
+    for n, r in enumerate(rows):
+        i = int(r["id"].split(":")[1][1:]) if r["id"].startswith("exp21:") else n
+        for qid, q in r["questions"].items():
+            right = (i % 10) < round(p_right * 10)
+            pred = "x" if right else "y"
+            out.append({"sample_id": r["id"], "qid": qid, "options": list(q["criteria"]), "gold": r["gold"][qid]["probabilities"],
+                        "gold_answer": "x", "prediction": pred, "correct": right})
     return out
 
 
-def plain(n, p):
-    return [{"sample_id": "s%d" % i, "qid": "q", "correct": i < p * n} for i in range(n)]
-
-
-def write(d2, fit, erased, rs_temp=1.0, exist=0.95):
-    step = os.path.join(d2, "d2", "monitor", "step1050")
-    os.makedirs(step)
-    sets = {"val": syn("t", 200, fit, fit), "dev16": syn("d", 200, 0.5, 0.5), "erased": syn("e", 100, erased, erased, height=0),
-            "k_text": plain(240, 1.0), "rs_temp": plain(41, rs_temp), "rs_force": plain(120, 0.5), "rs_temp_mism": plain(41, 0.4),
-            "rs_force_mism": plain(120, 0.4)}
-    for n, rs in sets.items():
-        open(os.path.join(step, n + ".details.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rs))
-    os.makedirs(os.path.join(d2, "eval"))
-    for n, a in (("exist", exist), ("science", 0.645)):
-        json.dump({"accuracy_all": a}, open(os.path.join(d2, "eval", n + ".json"), "w"))
+def wj(path, rows):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").write("".join(json.dumps(r) + "\n" for r in rows))
 
 
 @pytest.fixture
-def sealed(tmp_path):
-    s = tmp_path / "sealed"
-    s.mkdir()
-    for n, a in (("exist", 0.9457), ("science", 0.6447)):
-        json.dump({"accuracy_all": a}, open(s / (n + ".json"), "w"))
-    return str(s)
-
-
-@pytest.mark.parametrize("fit,erased,rs_temp,exist,want", [
-    (0.95, 0.2, 1.0, 0.95, "A:"), (0.95, 0.2, 0.8, 0.95, "B:"), (0.95, 0.2, 1.0, 0.90, "B:"), (0.3, 0.2, 1.0, 0.95, "C:"),
-    (0.95, 0.7, 1.0, 0.95, "invalid")])
-def test_d2_outcomes(tmp_path, sealed, fit, erased, rs_temp, exist, want):
+def ws(tmp_path, monkeypatch):
+    """A tiny world: data files, the sealed candidate's probe summaries, the D2 config, and a builder of D2 runs."""
     m = load()
-    write(str(tmp_path / "d2"), fit, erased, rs_temp, exist)
-    out = m.d2_report(str(tmp_path / "d2"), sealed)
-    assert out["outcome"].startswith(want), out
+    monkeypatch.chdir(tmp_path)
+    data = {"val": syn_rows("t", 40), "dev16": syn_rows("d", 40), "erased": syn_rows("e", 20, height=0), "k_text": plain_rows("k", 50),
+            "rs_temp": plain_rows("rt", 41), "rs_force": plain_rows("rf", 120), "rs_temp_mism": plain_rows("rtm", 41),
+            "rs_force_mism": plain_rows("rfm", 120)}
+    paths = {n: "data/%s.jsonl" % n for n in data}
+    for n, rows in data.items():
+        wj(paths[n], rows)
+    probes = {"exist": plain_rows("x", 30), "science": plain_rows("s", 30)}
+    for n, rows in probes.items():
+        wj("data/%s.jsonl" % n, rows)
+    wj("data/train.jsonl", [{"id": "a", "input": "picture", "group": "g", "questions": {"q": {}}}])
+    os.makedirs("data/panel_learn")
+    json.dump({"train_sha256": m.sha("data/train.jsonl")}, open("data/panel_learn/MANIFEST.json", "w"))
+    os.makedirs("sealed")
+    for n, a in (("exist", 0.95), ("science", 0.62)):
+        json.dump({"accuracy_all": a}, open("sealed/%s.json" % n, "w"))
+    os.makedirs("configs")
+    cfg = {"name": "x", "stages": [{"name": "d2", "kind": "train", "data": "data/train.jsonl", "params": {"epochs": 1, "micro_batch": 8, "seed": 1}}]}
+    json.dump(cfg, open("configs/d2.yaml", "w"))
+    monkeypatch.setattr(m, "MONITOR", paths)
+    monkeypatch.setattr(m, "PROBES", {n: "data/%s.jsonl" % n for n in probes})
+    monkeypatch.setattr(m, "TRAIN", "data/train.jsonl")
+
+    def make(fit=0.95, erased=0.2, rs_temp=1.0, exist=0.95, updates=100, stop_before_report=False, drop_probe=None,
+             drop_question=None, duplicate=None, probe_ckpt=None):
+        d2 = "runs/d2"
+        if os.path.exists(d2):
+            shutil.rmtree(d2)
+        os.makedirs(d2 + "/d2")
+        json.dump({"config": cfg}, open(d2 + "/run.json", "w"))
+        step = d2 + "/d2/monitor/step%d" % updates
+        shares = {"val": fit, "dev16": 0.5, "erased": erased, "k_text": 1.0, "rs_temp": rs_temp, "rs_force": 0.5, "rs_temp_mism": 0.4,
+                  "rs_force_mism": 0.4}
+        for n, rows in data.items():
+            rs = recs(rows, shares[n])
+            if n == drop_question:
+                rs = rs[1:]
+            if n == duplicate:
+                rs = rs + rs[:1]
+            wj("%s/%s.details.jsonl" % (step, n), rs)
+        if stop_before_report:
+            return d2
+        os.makedirs(d2 + "/d2/monitor/final")
+        json.dump({"losses": [0.1] * updates, "evals": [{"step": updates}]}, open(d2 + "/d2/train_report.json", "w"))
+        open(d2 + "/d2/model.safetensors", "w").write("w")
+        for n, rows in probes.items():
+            if n == drop_probe:
+                continue
+            acc = exist if n == "exist" else 0.64
+            rs = recs(rows, acc)
+            wj("%s/eval/%s.details.jsonl" % (d2, n), rs)
+            json.dump({"accuracy_all": sum(r["correct"] for r in rs) / len(rs),
+                       "run": {"checkpoint": probe_ckpt or d2 + "/d2", "data_sha256": m.sha("data/%s.jsonl" % n)}},
+                      open("%s/eval/%s.json" % (d2, n), "w"))
+        return d2
+    return m, make
+
+
+def outcome(m, d2):
+    return m.d2_report(d2, "sealed", "configs/d2.yaml", planned=100)["outcome"]
+
+
+@pytest.mark.parametrize("kw,want", [({}, "A:"), ({"rs_temp": 0.8}, "B:"), ({"exist": 0.80}, "B:"), ({"fit": 0.3}, "C:"),
+                                     ({"erased": 0.7}, "invalid")])
+def test_complete_runs_get_their_outcome(ws, kw, want):
+    m, make = ws
+    assert outcome(m, make(**kw)).startswith(want)
+
+
+@pytest.mark.parametrize("kw,want", [({"stop_before_report": True}, "incomplete"), ({"drop_probe": "science"}, "incomplete"),
+                                     ({"drop_question": "dev16"}, "invalid"), ({"duplicate": "rs_force"}, "invalid"),
+                                     ({"probe_ckpt": "runs/other/d2"}, "invalid"), ({"updates": 60}, "invalid")])
+def test_missing_or_wrong_evidence_never_gets_an_outcome(ws, kw, want):
+    """Stopped before the end (monitors exist, no train report), a missing probe, a missing / repeated question, a probe
+    of another endpoint, a run with another number of updates: incomplete or invalid, never A / B / C / D."""
+    m, make = ws
+    got = outcome(m, make(**kw))
+    assert got.startswith(want) and not got[:2] in ("A:", "B:", "C:", "D:"), got
+
+
+def test_the_real_plan_is_one_pass_of_1054_updates():
+    m = load()
+    os.chdir(ROOT)
+    assert m.planned_updates("configs/exp74-panel-d2.yaml") == 1054
 
 
 def test_d1_gate(tmp_path):
