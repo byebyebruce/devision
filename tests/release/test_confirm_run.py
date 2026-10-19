@@ -321,3 +321,23 @@ def test_run_sh_refuses_a_running_newer_entry_point(tmp_path):
     finally:
         fake.kill()
         fake.wait()
+
+
+@pytest.mark.parametrize("model_has_it", [True, False])
+def test_routed_temperatures_bind_the_identity(ws, model_has_it):
+    """Integration (V04-K-FREEZE-PREP-01): a candidate config with temperature_by_route is what check_eval's frozen table
+    and temperature_of both carry; a model run without it does not bind."""
+    m, ident, cand, models = ws
+    by_route = {"temperature": 3.238142943837961, "magnets": 4.664590270988126}
+    c = json.load(open(os.path.join(cand, "config.json")))
+    c["temperature_by_route"] = by_route
+    json.dump(c, open(os.path.join(cand, "config.json"), "w"))
+    cfg = Cfg()
+    cfg.temperature_by_route = dict(by_route) if model_has_it else {}
+    models["candidate"].cfg = cfg
+    res = run(m, ident, cand)
+    ident_line = json.loads(open(os.path.join(m.OUT, "details_cand_true.jsonl")).readline())["identity"]
+    if model_has_it:
+        assert ident_line["temperature"]["by_route"] == by_route and all(v == "completed" for v in res["states"].values())
+    else:
+        assert "by_route" not in ident_line["temperature"] and res["states"]["cand_true"].startswith("invalid")
