@@ -4,6 +4,7 @@ Sequence seen by the encoder: [CLS] <visual tokens> <rest of Laya's sequence>. M
 `laya.common.build_sequence` index the text-only sequence; the model shifts them past the
 visual tokens itself, so callers never deal with that offset.
 """
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Sequence, cast
 
@@ -11,6 +12,9 @@ import torch
 import torch.nn as nn
 from laya.common import DecisionModel, temp_bucket
 from transformers import AutoModel, PretrainedConfig, PreTrainedModel, SiglipVisionConfig, SiglipVisionModel
+
+
+ROUTE_DOMAINS = ("temperature", "magnets")     # devision.reading's reading domains
 
 
 @dataclass
@@ -46,13 +50,26 @@ class ModelConfig:
     # geometry) into NUMBER_SLOTS content tokens, appended after the visual tokens for ModernBERT's option scoring; its
     # character head is a training / diagnostic output only. False for every checkpoint before it.
     number_reader: bool = False
+    # V04-ROUTE-TEMP (route calibration branch 1): a temperature per reading domain ("temperature" / "magnets") for the
+    # questions the reading combination actually decides from its read table (route "read"); empty -- every checkpoint
+    # before it, and every question not read -- keeps the type / bucket temperature above. Applied once, in decide.
+    temperature_by_route: Dict[str, float] = field(default_factory=dict)
+
+    def __post_init__(self):
+        bad = {k: v for k, v in (self.temperature_by_route or {}).items()
+               if k not in ROUTE_DOMAINS or not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v <= 0}
+        if bad:
+            raise ValueError("temperature_by_route must map %s to finite temperatures > 0, got %r" % (ROUTE_DOMAINS, bad))
 
     def temperature_for(self, qtype: int, k: int) -> float:
         """The temperature `decide` divides a `qtype` question's `k` option logits by."""
         return pick_temperature(self.temperature, self.temperature_by_options, qtype, k)
 
     def to_dict(self):
-        return asdict(self)
+        d = asdict(self)
+        if not d["temperature_by_route"]:          # saved configs stay exactly as before unless routed temperatures are set
+            del d["temperature_by_route"]
+        return d
 
     @classmethod
     def from_dict(cls, d):

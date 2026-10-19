@@ -168,3 +168,30 @@ worktree devision-k-release，分支 k-release-prep，从 devision-livek-run 4a1
   - 条件：合并 Δ_R ≤ −0.02 且上界 < 0；各域 Δ_R 点估计 ≤ +0.01；Δ_B 上界 ≤ +0.02（实际为 −0.456）。
   - 下一步：temperature_by_route 的产品改动先送审，通过后再写入 config（温度域 3.238、磁力域 4.665），然后 bind → freeze。这些都还没做。
 - 边界：这只说明路由路径的概率校准有改善，不是候选资格；路由温度要等产品改动验收之后才进入组合；最终组合的概率证据属于最终身份。
+
+## temperature_by_route（V04-ROUTE-TEMP-PREP-01；CPU 产品实现，没有写真实候选）
+
+- **ModelConfig.temperature_by_route**：默认是空的；只接受 "temperature" / "magnets" 两个键，值必须是有限且大于 0 的数（bool、0、负数、NaN、Inf、未知域都会在构造或加载时被拒绝）。为空时 to_dict 不写这个字段，所以新保存的 config 与以前逐字节相同，旧 config 也照常加载。
+- **应用位置**：infer._decide 新增按题的 route_temperature，在 logits → softmax 这一步只应用一次，替换这道题的题型 / 分桶温度。Reading.decide 对每道实际走 read 路由的题，按题目文本确定的域查表（所以与有没有 K 块、读数成败、题号和选项位置都无关）；普通题、没有图的请求、reading off 都不受影响。confidence 由最终概率计算。
+- **原始温度**：use_raw_temperatures 同时清空题型温度、分桶温度和路由温度。
+- **记录与身份**：
+  - evaluate 的 temperature 记录在不为空时加入 by_route，check_eval.temperature_table 用同样的规则，所以冻结表和评测记录一致；
+  - config 一变，组合身份就跟着变，按既有流程需要重新 bind / freeze；
+  - rebind 的白名单本来就包含这个字段。
+- **正式写入**：scripts/release/route_temps.py。
+  - 来源只能是已登记的校准运行：registry 里 route_calibration.json、CALIB.json、records.jsonl 的哈希；CALIB 记录的题单和候选 config 的哈希；由登记的 records 重算 completeness 和 analyse，结果必须与已写报告一致；必须是分支 1，且两个温度都是有限且大于 0 的数。
+  - 只写入登记时的那个候选，只能在 bind 之前写，只改这一个字段，不能写第二次。
+  - 不重新核对那次运行的代码身份：本改动有意修改推理模块，那次运行的代码在运行时已经核过，并已由 V04-K-CALIB-RESULT-01 验收。
+  - 用真实文件做只读核对（没有写入任何东西）：source_temperatures(runs/v04-k-calib) 得到 {'temperature': 3.238142943837961, 'magnets': 4.664590270988126}，与登记的报告完全一致。
+- **夹具**：
+  - tests/model/test_route_temperature.py（11 项）：
+    - 读取题的概率等于 softmax(logits / T_domain)，普通题用题型温度，confidence 来自最终概率；
+    - 打乱题目顺序结果不变；
+    - 没有 K、读数失败时仍按域取温度；
+    - 普通题、没有图、reading off、旧 config 都不变，空字段不会被写入 config；
+    - 原始温度时全部为 1；6 种非法值都被拒绝；
+    - save / load 后概率相同；正式 evaluate 记录的 by_route 等于 check_eval 的冻结表，空的时候两边都没有这一项。
+  - tests/release/test_route_temps.py（2 项）：
+    - 能正确写入，并且只改这一个字段；
+    - 以下情况都被拒绝：写第二次、写到别的候选、候选已有 reading/、报告被改、报告重新登记但与重算结果不一致、不是分支 1。
+- 全部 tests 445 项通过，pyright 0 错误。真实候选的 config 没有写，没有 bind / freeze，没有运行模型。

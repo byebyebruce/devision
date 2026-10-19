@@ -518,9 +518,11 @@ class Reading:
         kb = k_block(r["table"]) if self.k_rule else None
         hot = {k: q for k, q in supported.items() if kb and domain_of(q.get("instructions", "")) == "temperature"}
         cold = {k: q for k, q in supported.items() if k not in hot}
-        res = self.decider._decide(plain + "\n" + str(kb), hot, None) if hot else {"answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
+        by_route = self.decider.cfg.temperature_by_route or {}             # V04-ROUTE-TEMP: per read question, by its domain
+        rt = {k: by_route[domain_of(q.get("instructions", ""))] for k, q in supported.items() if domain_of(q.get("instructions", "")) in by_route}
+        res = self.decider._decide(plain + "\n" + str(kb), hot, None, rt) if hot else {"answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
         if cold:                                     # magnets (and every question without a defined K): the old contract
-            part = self.decider._decide(plain, cold, None)
+            part = self.decider._decide(plain, cold, None, rt)
             res["answers"].update(part["answers"])
             res["usage"] = {k: res["usage"].get(k, 0) + part["usage"].get(k, 0) for k in part["usage"]}
             res.setdefault("model", part.get("model"))

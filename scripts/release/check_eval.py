@@ -102,7 +102,10 @@ def temperature_table(checkpoint: str) -> Dict:
     from devision.infer import config_path
     c = json.load(open(config_path(checkpoint)))
     t = c["temperature"]
-    return {"choice": t[0], "noul": t[2], "by_options": c.get("temperature_by_options") or {}}
+    out = {"choice": t[0], "noul": t[2], "by_options": c.get("temperature_by_options") or {}}
+    if c.get("temperature_by_route"):                                  # V04-ROUTE-TEMP: as devision-eval records it
+        out["by_route"] = dict(c["temperature_by_route"])
+    return out
 
 
 class Output(NamedTuple):

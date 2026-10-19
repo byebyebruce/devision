@@ -336,6 +336,8 @@ def evaluate(decider: Any, samples: Sequence[Sample], data_root, control: str = 
     out["reading"] = reading_summary(decider, records)
     out["temperature"] = {"choice": decider.cfg.temperature[0], "noul": decider.cfg.temperature[2],
                           "by_options": dict(decider.cfg.temperature_by_options)}
+    if getattr(decider.cfg, "temperature_by_route", None):           # V04-ROUTE-TEMP; absent when empty (older records)
+        out["temperature"]["by_route"] = dict(decider.cfg.temperature_by_route)
     out["grouping"] = {"max_questions_per_request": max_questions or 1,
                        "by": "picture file + text state" if max_questions else "none (one question per request)"}
     out["environment"] = {"threads": _threads(), "machine": platform.machine(), "system": platform.system()}

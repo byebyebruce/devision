@@ -173,9 +173,9 @@ def two_picture_readers(tmp_path, monkeypatch):
     calls = []
     real = type(k.decider)._decide
 
-    def logged(self, text_state, questions, image):
+    def logged(self, text_state, questions, image, *rest):
         calls.append((text_state, sorted(questions), image is not None))
-        return real(self, text_state, questions, image)
+        return real(self, text_state, questions, image, *rest)
     monkeypatch.setattr(type(k.decider), "_decide", logged)
     (tmp_path / "img").mkdir()
     for name, rgb in COLOURS.items():

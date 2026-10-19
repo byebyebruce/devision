@@ -292,7 +292,7 @@ class Decider:
 
     def use_raw_temperatures(self) -> None:
         """Every temperature this object applies set to 1 (the raw-probability control)."""
-        self.cfg.temperature, self.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}
+        self.cfg.temperature, self.cfg.temperature_by_options, self.cfg.temperature_by_route = [1.0, 1.0, 1.0], {}, {}
 
     def decide(self, state: Any, questions: Any, image: Any = None, diagnostics: Optional[Dict] = None) -> Dict[str, Any]:
         """Jev answers. Each question's probabilities are softmax(option logits / T), T being its
@@ -308,8 +308,11 @@ class Decider:
         return self._decide(text_state, questions, picture)
 
     @torch.inference_mode()
-    def _decide(self, text_state: Any, questions: Dict[str, Any], image: Optional[Image.Image]) -> Dict[str, Any]:
-        """`decide` on an already resolved request (checked questions, text state, PIL picture or None)."""
+    def _decide(self, text_state: Any, questions: Dict[str, Any], image: Optional[Image.Image],
+                route_temperature: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """`decide` on an already resolved request (checked questions, text state, PIL picture or None).
+        `route_temperature` (question id -> temperature, from the reading combination for its read questions) replaces
+        that question's type / bucket temperature; applied once, here, on the logits."""
         qids = list(questions)
         items = [question_item(self.tok, self.cfg, text_state, questions[qid]) for qid in qids]
         for qid, it in zip(qids, items):
@@ -336,7 +339,7 @@ class Decider:
         for i, qid in enumerate(qids):
             q, it = questions[qid], items[i]
             k = len(it["markers"])
-            t = self.cfg.temperature_for(it["qtype"], k)
+            t = (route_temperature or {}).get(qid) or self.cfg.temperature_for(it["qtype"], k)
             p = torch.softmax(logits[i, :k] / t, -1).tolist()
             answers[qid] = self._answer(q, p)
         input_tokens = sum(len(it["ids"]) + n_visual for it in items)
