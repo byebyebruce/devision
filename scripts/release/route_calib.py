@@ -61,7 +61,11 @@ def scaled(p: Dict[str, float], t: float) -> Dict[str, float]:
 
 
 def nll(p: Dict[str, float], gold: str, t: float) -> float:
-    return -math.log(scaled(p, t)[gold])
+    """-log softmax(log p / t)[gold], by a stable logsumexp: a legal tiny raw probability (1e-30) at a low temperature
+    never underflows to log(0) (critic V04-K-PREP-02-R1-04)."""
+    z = {o: math.log(v) / t for o, v in p.items()}
+    m = max(z.values())
+    return -(z[gold] - m - math.log(sum(math.exp(v - m) for v in z.values())))
 
 
 def fit_t(recs: Sequence[Dict]) -> float:
@@ -74,15 +78,15 @@ def fold_of(family: str) -> int:
 
 
 def ordinary_t(r: Dict, config: Dict) -> float:
-    """The candidate config's temperature for the record (decide's rule: the (type, option count) bucket, else the type)."""
-    k = len(r["probabilities"])
-    by = config.get("temperature_by_options") or {}
-    for b, t in by.items():
-        typ, rng = b.split(":")
-        lo, _, hi = rng.partition("-")
-        if typ == "choice" and int(lo) <= k <= int(hi or lo):
-            return float(t)
-    return float(config["temperature"][0])
+    """The candidate config's temperature for the record by the product's own rule (devision.model.pick_temperature: the
+    exact (type, option count) bucket name, e.g. choice:3-5 / choice:11+, else the type's) -- finite and > 0 or refused."""
+    from laya.common import QTYPES
+
+    from devision.model import pick_temperature
+    t = float(pick_temperature(config["temperature"], config.get("temperature_by_options") or {}, QTYPES["choice"], len(r["probabilities"])))
+    if not math.isfinite(t) or t <= 0:
+        raise SystemExit("the config's temperature for %d options is %r" % (len(r["probabilities"]), t))
+    return t
 
 
 def interval(values: List[float]) -> List[float]:

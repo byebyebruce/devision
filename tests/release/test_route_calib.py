@@ -138,3 +138,26 @@ def test_collect_reads_every_rl_calib_question_through_the_k_combination(tmp_pat
     assert rd.cfg.temperature == [1.0, 1.0, 1.0]                                        # raw
     with pytest.raises(SystemExit, match="no K rule"):
         rc.collect(R.Reading.load(str(tmp_path / "cand"), str(tmp_path / "tmp_plain"), device="cpu", full_rules=True), rows, str(tmp_path))
+
+
+def test_real_calibration_bucket_names_including_11_plus():
+    """critic R1-02: the config 3,892-question ordinary calibration writes (sorted keys, choice:11+ first)."""
+    cfg = {"temperature": [1.4, 1.0, 1.1], "temperature_by_options": {"choice:11+": 2.0, "choice:2": 0.9, "choice:3-5": 0.8, "noul:2": 1.2}}
+    three = {"probabilities": {"a": 0.5, "b": 0.3, "c": 0.2}}
+    assert rc.ordinary_t(three, cfg) == 0.8
+    assert rc.ordinary_t({"probabilities": {str(i): 1 / 12 for i in range(12)}}, cfg) == 2.0
+    assert rc.ordinary_t({"probabilities": {str(i): 1 / 7 for i in range(7)}}, cfg) == 1.4               # no 6-10 bucket: the type's
+    with pytest.raises(SystemExit, match="temperature"):
+        rc.ordinary_t(three, {"temperature": [1.0, 1.0, 1.0], "temperature_by_options": {"choice:3-5": 0.0}})
+
+
+def test_tiny_legal_probabilities_do_not_underflow():
+    """critic R1-04: p = 1e-30 on the gold at the lowest grid temperature stays finite and equals the stable reference."""
+    p = {"a": 1e-30, "b": 0.5, "c": 0.5}
+    t = math.exp(-3)
+    z = {o: math.log(v) / t for o, v in p.items()}
+    m = max(z.values())
+    ref = -(z["a"] - m - math.log(sum(math.exp(v - m) for v in z.values())))
+    assert rc.nll(p, "a", t) == pytest.approx(ref) and ref == pytest.approx(1374.230651, rel=1e-9)
+    assert rc.nll(p, "a", 1.0) == pytest.approx(69.07755, rel=1e-6)
+    assert math.isfinite(rc.fit_t([{"probabilities": p, "gold_answer": "a"}, {"probabilities": p, "gold_answer": "b"}]))
