@@ -129,3 +129,25 @@
 - **NOTE-01**：
   - ext 的措辞改成实际的 10 个来源（见上表）；
   - MANIFEST 的每个曝光文件都附上 sha256，runner 的 START 要绑定这份清单，并在加载前逐个核对。
+
+## runner 与配置（CPU 实现；不是运行许可）
+
+- 合并了 v04-reading-entry（带校正器的读取代码和入口 / 身份工具），合并后 mixed_input 仍在，全部测试通过。
+- **data/protect_p/**（scripts/protect/build_p.py，新目录）：
+  - P_K.jsonl ca6254d6…：tune_P 加上 K 块。297 行温度题加了 K；3 行没有加（2 行有不可读的值，1 行有小数），保持原样，计入题数；300 行磁力题不变。
+  - slice_K_text.jsonl 0e855bbd…：EXP72 的训练切片，每行标上 input=text，用作训练中的 val。
+- **configs/protect-k.yaml**：EXP72-K 的参数原样，只把 text_only 换成 mixed_input；init 指向 EXP72-K 末点；data 用 data/protect2/train_mix.jsonl；val 用 slice_K_text。check_yaml 逐项核对，`devision-pipeline --dry-run` 通过，没有建任何目录。
+- **scripts/protect/protect.py 和 run.sh**：阶段依次为 start → fid → train → freeze → decide_b → decide_c → guard → decide_fit → report。
+  - start 绑定：EXP72 的运行（三个文件固定哈希）和 EXP72-K 冻结末点；data/protect2 和 data/protect_p 的文件；MANIFEST 记下的全部输入和 163 个曝光文件的 sha256（NOTE-01，加载前重新核对）；B / C 的读出文件；EXP71 的 bundle_on；七个面板、v0.3 明细和 EXP58 的图片清单；EXP73 的运行（用于描述性对比）；YAML；代码。另外核对 7,380 道回放题用到的图片都在。
+  - fid：EXP72-K 末点在 slice 的前 48 行（按 id 排序）上，要复现 EXP72 已登记的 k_slice 记录（预测相同、概率差 ≤ 1e-4），否则不训练。
+  - train：首窗报告到当前为止的更新里文字和图片各有几次（按计划算；计划在训练前就与 MANIFEST 的哈希核对过）、已用时间和 ETA；内存由 watch 监控。
+  - freeze：要求正好 1,398 次更新；对 EXP72-K 末点做导出检查；写 FROZEN；把新端点和 EXP71 的三个组件重新绑定到 runs/protect/bundle，并核对组件与 EXP71 的相同。
+  - B / C / A 依次读出，最后是 decide_fit（只报告）。report 按第 3 节的门槛和分支 0–3 给结论。
+  - 总上限 7,200 秒，最后 180 秒留给报告；只启动一次，不重试。
+- 夹具 scripts/protect/test_protect.py（9 项，全过）：
+  - START 绑定隔离依据，改一个曝光文件的哈希就会被拒绝；YAML 改一个参数就会被拒绝；
+  - 计划里文字 475 次、图片 923 次；
+  - 起点保真：用 EXP72 已登记的概率能复现，给错的答案会拒绝；
+  - 用假决策器（B / C）和假读取器（A，两个面板）走完整条链：全过 → 工程恢复；count_wide 变差 → 保护代价；P 比较全错 → 新能力未保持；缺 B → incomplete；
+  - run.sh 的阶段顺序、guard 失败时 finalize 且不再跑 decide_fit、上限 7,200 / 180。
+- 已知：scripts/exp72 自己的夹具现在在 setup 阶段报错，因为真实的 runs/exp72-raw 已经存在，而它的 start 只允许新目录。这与本次改动无关，EXP72 的运行和代码都没有动。

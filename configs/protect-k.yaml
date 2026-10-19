@@ -1,0 +1,30 @@
+# PROTECT one-arm mixed replay recovery (docs/experiments/2026-10-19-protect-replay-plan.md; critic EXP73-RESULT-01 /
+# PROTECT-PREP-01, PROTECT-R1-01): from EXP72-K's frozen end (cbd1e7ac / 4f9ccf48) -- its decision head and merged LoRA as
+# they are, a fresh LoRA r16 (zero-initialised B) trained with that head -- EXP72-K's recipe, on data/protect2/train_mix.jsonl:
+# EXP72-K's 3,800 new-task questions scored on text (image=None) and 7,380 replay questions of v0.3's training set on
+# their pictures (mixed_input: one input per batch, units whole), 1,398 updates of 8, last step. Validation: EXP72-K's
+# 240-question slice marked text. Run only by scripts/protect/run.sh.
+name: protect-k
+device: mps
+common:
+  log_every: 25
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp72-k/stage2
+  data: data/protect2/train_mix.jsonl
+  val: data/protect_p/slice_K_text.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    mixed_input: true
+    micro_batch: 8
+    eval_batch: 8
+    lora_r: 16
+    lr_lora: 5.0e-05
+    lr_head: 1.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 0
+    amp: 'off'
+    seed: 1
