@@ -140,3 +140,20 @@ def test_the_release_flow_requires_the_livek_source(tmp_path):
     old = dict(rec, kind="exp71")
     assert any("requires 'livek'" in x for x in rb.check_source(old))
     assert rb.RELEASE_KIND == "livek" and rb.SOURCES["livek"] == rb.PINS_LIVEK and rb.PINS_LIVEK["START.json"].startswith("f9a10d6a")
+
+
+def test_temporary_calibration_bundle_is_outside_and_bound_to_the_current_config(tmp_path):
+    pins = livek_run(tmp_path)
+    source(tmp_path, pins)
+    cand = candidate(tmp_path, pins)
+    tb = rb.temp_bundle(str(cand), str(tmp_path / "calib_bundle"), pins)
+    assert tb["k_rule"] and tb["config.json"] == R.sha(str(cand / "config.json")) and not (cand / "reading").exists()
+    rd = R.Reading.load(str(cand), str(tmp_path / "calib_bundle"), device="cpu", full_rules=True)
+    assert rd.k_rule
+    with pytest.raises(SystemExit, match="outside the candidate"):
+        rb.temp_bundle(str(cand), str(cand / "tmp"), pins)
+    c = json.loads((cand / "config.json").read_text())
+    c["model_name"] = "devision-v0.4-final"                                    # the final config: the temporary bundle no longer binds it
+    (cand / "config.json").write_text(json.dumps(c))
+    with pytest.raises(ValueError, match="does not bind"):
+        R.Reading.load(str(cand), str(tmp_path / "calib_bundle"), device="cpu")

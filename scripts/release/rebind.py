@@ -217,6 +217,27 @@ def bind(candidate: str, pins: Optional[Dict[str, str]] = None) -> Dict:
     return lineage
 
 
+def temp_bundle(candidate: str, out: str, pins: Optional[Dict[str, str]] = None) -> Dict:
+    """The temporary calibration bundle (prep03 5.2 step 4): the verified source's components and K rule bound to the
+    candidate's CURRENT config (after ordinary calibration), written OUTSIDE the candidate -- for collecting the routed raw
+    probabilities only; the final bundle is bound by `bind` after the config is final, and this one is never evidence."""
+    rec = json.load(open(os.path.join(lineage_dir(candidate), "source.json")))
+    bad = check_source(rec, pins)
+    if bad:
+        raise SystemExit("refusing the temporary bundle:\n  " + "\n  ".join(bad))
+    if os.path.realpath(out).startswith(os.path.realpath(candidate) + os.sep):
+        raise SystemExit("the temporary bundle must be outside the candidate")
+    ident = json.load(open(os.path.join(rec["bundle"], "reading.json")))
+    comps = [c for c in COMPONENTS if c in ident["sha256"]]
+    new = write_bundle(out, candidate, os.path.join(rec["bundle"], "selector.pt"), os.path.join(rec["bundle"], "head.pt"),
+                       {"temporary_calibration_bundle_of": os.path.abspath(candidate), "source_json_sha256": sha(os.path.join(lineage_dir(candidate), "source.json"))},
+                       dims=ident["dims"], corrector_pt=os.path.join(rec["bundle"], "corrector.pt") if "corrector.pt" in comps else None,
+                       k_rule="k_rule" in ident)
+    if any(new["sha256"][c] != rec["bundle_on"][c] for c in comps) or ("k_rule" in ident and new["rules_sha256"] != ident["rules_sha256"]):
+        raise SystemExit("the temporary bundle's components / rules are not the source's")
+    return {"reading.json": sha(os.path.join(out, "reading.json")), "config.json": new["sha256"]["config.json"], "k_rule": "k_rule" in new}
+
+
 def lineage_problems(candidate: str, pins: Optional[Dict[str, str]] = None) -> List[str]:
     """The records a bound candidate must carry, checked against the candidate and the sources as they are now
     (used by check_eval freeze / preflight / seal / check and by the release build). `pins`: the source identity the
