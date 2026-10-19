@@ -21,10 +21,10 @@
 | r14-count | 2026-10-13 | `configs/r14-count.yaml` | 从 v12 接着训一遍：配平 0–10 计数 12,000 + PixMo 存在性 / 窄候选计数 12,000 + 回放 57,876（71%，扩展每源 2,400），81,876 题、10,235 步，结构不变 | 未取代 v12（CountBench +14.5，但镜像关系 −1.4 已证明退化、4 个集合未证明守住、What'sUp 概率警戒；待负责人决定） |
 | r14b-mirror | 2026-10-13 | `configs/r14b-mirror.yaml` | r14 配方中扩展回放每源 2,400 → 2,100，换成 v6 左右镜像对 2,000 + VSR 1,000（其余逐题相同） | 第 2,000 步止损（原格式计数面板 −3.3 [−6.3, −0.7]），未训完 |
 | r15-vision | 2026-10-14 | `configs/r15-vision.yaml` | r14b 数据 + 解冻 SigLIP 最上面 4 层（5e-6），种子 1，从 exp19 第 2,000 步接着训满 10,235 步 | **当前采用，发布为 v0.3**（负责人接受取舍；原始 candidate=false 保留） |
-| v04-k（草稿） | 2026-10-19 | `configs/v04-full-eval.yaml`（冻结 `runs/v04-k/eval/IDENTITY.json` c14863e2…） | 读数组合：PROTECT-K 决策权重（exp30–protect-k 链）+ EXP71 读数组件 + 确定性 K 规则 + 分题型 / 选项数 / 读数域温度 | 全评有效，**未取得发布资格**（dev16 保留门槛未达，RELEASE-GAP-01）；待定 |
+| v04-k（草稿） | 2026-10-19 | `configs/v04-full-eval.yaml`（冻结 `runs/v04-k/eval/IDENTITY.json` c14863e2…） | 读数组合：PROTECT-K 决策权重（exp30–protect-k 链）+ EXP71 读数组件 + 确定性 K 规则 + 分题型 / 选项数 / 读数域温度 | 全评文件完整（两份执行证据待补），**未取得发布资格**（dev16 保留门槛未达，RELEASE-GAP-01）；待定 |
 | r13-binding | 2026-10-11 | `configs/r13-binding.yaml`（分支 `r13-binding`；全量评测 `configs/r13-binding-eval.yaml`） | 从 v12 接着训一遍：第 13 轮绑定数据 207,109 道（反事实合成 40,040 照片背景 75%、GQA 绑定、VisMin、CoGenT A、PixMo 两类计数、CounterCurate、TallyQA 复杂、VAW + 回放 40,000），加问题条件视觉 token（S2，零初始化） | 未取代 v12（主要条件通过，POPE 已证明退化、概率质量警戒触发；负责人 2026-10-11 决定不采用、不作下一轮起点） |
 
-## v04-k（读数组合；全评有效，未取得发布资格；草稿）
+## v04-k（读数组合；全评文件完整，两份执行证据待补，未取得发布资格；草稿）
 
 不是一次新训练，而是一个组合：PROTECT-K 的决策权重（从 r15 经 exp30–protect-k 链得到）+ EXP71 的读数组件（selector / 字符头 / corrector）+ 确定性 K 规则（温度题 K = 质量 × 速度²）+ 普通校准温度和两个读数域温度。冻结身份 c14863e2…；全评 2026-10-19 13:33–22:51，94 份候选输出和 v0.3 新增 6 项都已封存、check 0 问题（V04-K-FULL-ACCEPT-01）。**勘误（2026-10-20）**：check 0 只说明文件完整、哈希一致，不说明执行没有出错；test_gqa.mismatched 和 test_bind_gqa（真图）运行时日志里有 MPS GPU 错误，执行证据待补，见 `docs/experiments/2026-10-20-v04-gpu-evidence-errata.md`。统计来自 `runs/v04-k/posteval/`（只读已封存明细，V04-K-REPORT-RUN-01）。
 
