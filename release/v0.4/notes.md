@@ -56,7 +56,8 @@ rules (the dev16 retention requirement is not met); this draft is not a release.
   these per-question changes.
 - Against v0.3 (paired by question, picture-clustered 95% intervals, sealed full evaluation): the seven protection
   panels did not trigger the release rule's cost line, while several individual sets fell slightly -- the held-out GQA binding test -2.2
-  [-3.9, -0.5], position -2.0, size -1.6, VQA choice -1.5; What'sUp rose +4.9 [+2.3, +7.4]. The synthetic two-panel
+  [-3.9, -0.5] (execution evidence pending: an MPS GPU error was logged while this set and the GQA mismatched control ran;
+  not used as evidence until re-measured -- docs/experiments/2026-10-20-v04-gpu-evidence-errata.md), position -2.0, size -1.6, VQA choice -1.5; What'sUp rose +4.9 [+2.3, +7.4]. The synthetic two-panel
   reading / comparison task used as a development monitor (dev16, families never trained on) is **not reached** on
   this model's branch: 36.8% reading, 41.5% comparison, below its 80% rule. It was shown learnable on a separate
   experimental branch (EXP26) that this model does not descend from; the reading step does not cover it.
