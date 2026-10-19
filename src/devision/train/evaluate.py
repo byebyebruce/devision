@@ -123,7 +123,7 @@ def evaluate_records(decider: Any, samples: Sequence[Sample], data_root, control
         for n, (key, (i, qid, q)) in enumerate(zip(questions, items)):
             route = diag["route"][key]
             domain = domain_of(q.get("instructions", ""))
-            extra = {"read_table": diag["table"], "read_state": diag["state"]} if route == "read" else {}
+            extra = {"read_table": diag["table"], "read_state": diag["states"][key]} if route == "read" else {}
             asked[(i, qid)] = (q, image, ms if n == 0 else None, len(items), _probabilities(res["answers"][key]),
                                dict(extra, route=route, reading_domain=domain, picture_pixels_sha256=sent["pixels_sha256"] if sent else None))
     records: List[Dict[str, Any]] = []

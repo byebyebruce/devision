@@ -114,10 +114,11 @@ def test_off_by_default_and_on_only_for_temperature(readers):
     qs = {"t": q(TEMP), "m": q(MAG), "o": q(DOG)}
     dp, dk = {}, {}
     ap, ak = plain.decide("Two samples.", qs, image=img, diagnostics=dp), k.decide("Two samples.", qs, image=img, diagnostics=dk)
-    assert dp["k_block"] is None and dk["k_block"] == R.k_block(TABLE) and dk["state"] == dp["state"] + "\n" + R.k_block(TABLE)
+    assert dp["k_block"] is None and dk["k_block"] == R.k_block(TABLE)
+    assert dk["states"] == {"t": dp["state"] + "\n" + R.k_block(TABLE), "m": dp["state"]} and dk["state"] is None   # two inputs
     assert ak["answers"]["m"] == ap["answers"]["m"] and ak["answers"]["o"] == ap["answers"]["o"]     # magnets / ordinary unchanged
     assert dk["route"] == dp["route"] == {"t": "read", "m": "read", "o": "ordinary"}
-    want = plain.decider._decide(dp["state"] + "\n" + R.k_block(TABLE), {"t": q(TEMP)}, None)["answers"]["t"]
+    want = plain.decider._decide(dk["states"]["t"], {"t": q(TEMP)}, None)["answers"]["t"]
     assert ak["answers"]["t"] == want                                      # the temperature question sees the K state
 
 
@@ -153,3 +154,76 @@ def test_through_the_public_entry(tmp_path, monkeypatch):
     d: dict = {}
     rd.decide("", {"t": q(TEMP)}, image=picture(), diagnostics=d)
     assert rd.reading_status["k_rule"] is True and d["k_block"] == R.k_block(TABLE)
+
+
+TABLE2 = [["Sample A", "mass of each particle", "9"], ["Sample B", "mass of each particle", "20"],
+          ["Sample A", "average particle speed", "700"], ["Sample B", "average particle speed", "1,100"],
+          ["Pair 1", "distance between the magnets", "5"], ["Pair 2", "distance between the magnets", "1"]]
+COLOURS = {"white": (255, 255, 255), "yellow": (255, 255, 224)}
+
+
+def two_picture_readers(tmp_path, monkeypatch):
+    """Readers whose fake read returns the table of the picture actually shown (white -> TABLE, light yellow -> TABLE2),
+    and a log of every _decide call: (state, question keys, picture given?)."""
+    def read(self, image, templates):
+        t = TABLE if image.convert("RGB").getpixel((0, 0)) == COLOURS["white"] else TABLE2
+        return {"table": [row for row in t if row[:2] in [list(R.TEMPLATES[x]) for x in templates]], "reads": [], "seconds": 0.0}
+    monkeypatch.setattr(R.Reading, "read", read)
+    plain, k = bundles(tmp_path)
+    calls = []
+    real = type(k.decider)._decide
+
+    def logged(self, text_state, questions, image):
+        calls.append((text_state, sorted(questions), image is not None))
+        return real(self, text_state, questions, image)
+    monkeypatch.setattr(type(k.decider), "_decide", logged)
+    (tmp_path / "img").mkdir()
+    for name, rgb in COLOURS.items():
+        Image.new("RGB", (560, 405), rgb).save(tmp_path / "img" / ("%s.png" % name))
+    rows = [{"id": "s%d" % i, "image": "img/%s.png" % c, "image_id": c, "state_text": "Two samples.",
+             "questions": {"t": q(TEMP), "m": q(MAG, ("blue", "red")), "o": q(DOG)},
+             "gold": {k_: {"probabilities": {"red": 1.0, "blue": 0.0}} for k_ in ("t", "m", "o")}} for i, c in enumerate(COLOURS)]
+    return plain, k, calls, rows
+
+
+@pytest.mark.parametrize("control", ["none", "mismatched"])
+def test_evaluate_records_logs_each_questions_actual_input(tmp_path, monkeypatch, control):
+    """LIVE-K-R1-01 / -02: a temperature + magnets + ordinary request through the formal evaluate_records -- each
+    record's read_state is the state its question was actually decided on (temperature: table + K, magnets: table
+    alone), the ordinary question goes the picture path, and K follows the picture actually shown (two pictures, two
+    tables; under the mismatched control the swapped picture's)."""
+    from devision.train.evaluate import evaluate_records
+    _, k, calls, rows = two_picture_readers(tmp_path, monkeypatch)
+    recs = evaluate_records(k, rows, tmp_path, control=control)
+    table_of_shown = {"img/white.png": TABLE, "img/yellow.png": TABLE2}
+    for r in recs:
+        shown = table_of_shown[r["image_used"]]
+        if control == "mismatched":
+            assert r["image_used"] != next(x["image"] for x in rows if x["id"] == r["sample_id"])
+        plain = R.serialise("Two samples.", [row for row in shown])
+        if r["qid"] == "t":
+            assert r["route"] == "read" and r["read_state"] == plain + "\n" + str(R.k_block(shown))
+        elif r["qid"] == "m":
+            assert r["route"] == "read" and r["read_state"] == plain and R.K_RULE["header"] not in r["read_state"]
+        else:
+            assert r["route"] == "ordinary" and "read_state" not in r
+        if r["qid"] in ("t", "m"):                    # the logged _decide input for this question is the recorded one
+            assert any(st == r["read_state"] and any(x.endswith(":" + r["qid"]) for x in keys) for st, keys, pic in calls if not pic)
+    assert any(pic and keys == sorted(k_ for k_ in keys if k_.endswith(":o")) for _, keys, pic in calls)   # ordinary: picture path
+    ks = {r["image_used"]: r["read_state"].split("\n")[-2:] for r in recs if r["qid"] == "t"}
+    assert ks["img/white.png"] != ks["img/yellow.png"]                        # K follows the picture shown
+
+
+def test_states_fall_back_without_k(tmp_path, monkeypatch):
+    """No K defined (an unreadable value) or the rule off: every read question has the plain state, `state` is that
+    shared state (the earlier single-field form)."""
+    plain, k, _, _ = two_picture_readers(tmp_path, monkeypatch)
+    img = Image.new("RGB", (560, 405), COLOURS["white"])
+    qs = {"t": q(TEMP), "m": q(MAG)}
+    d0: dict = {}
+    plain.decide("Two samples.", qs, image=img, diagnostics=d0)
+    assert d0["states"] == {"t": d0["state"], "m": d0["state"]} and d0["k_block"] is None
+    monkeypatch.setattr(R, "k_block", lambda table: None)
+    d1: dict = {}
+    k.decide("Two samples.", qs, image=img, diagnostics=d1)
+    assert d1["states"] == d0["states"] and d1["state"] == d0["state"]

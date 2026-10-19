@@ -498,7 +498,9 @@ class Reading:
         `state`, both refused); then supported questions are decided on the text state plus the table read from that
         picture, and the others -- and every request without a picture or without a supported question -- go through
         ordinary decide unchanged. `diagnostics` (optional dict) receives each question's route ("read" /
-        "ordinary"), the picture's pixel identity, and for a read request the reads, table, state and timing.
+        "ordinary"), the picture's pixel identity, and for a read request the reads, table, timing, `states` (each read
+        question's actual text input: with the K rule a temperature question's has the K block, a magnet question's not)
+        and `state` (that input when all read questions share it, else None).
         Encoding: a request whose questions are all supported encodes the picture once; a mixed request encodes it
         twice (once for the reading, once in ordinary decide for the other questions)."""
         from .infer import picture_identity, resolve_request
@@ -528,7 +530,10 @@ class Reading:
             res["usage"] = {k: res["usage"].get(k, 0) + rest["usage"].get(k, 0) for k in res["usage"]}
         res["answers"] = {k: res["answers"][k] for k in questions}       # the request's question order
         if diagnostics is not None:
-            diagnostics.update(table=r["table"], reads=r["reads"], read_seconds=r["seconds"], state=plain + ("\n" + str(kb) if hot else ""),
+            states = {k: (plain + "\n" + str(kb) if k in hot else plain) for k in supported}    # each read question's actual input
+            shared = set(states.values())
+            diagnostics.update(table=r["table"], reads=r["reads"], read_seconds=r["seconds"], states=states,
+                               state=shared.pop() if len(shared) == 1 else None,      # one common input, or None (see states)
                                k_block=kb if hot else None)
         return res
 
