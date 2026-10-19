@@ -46,44 +46,65 @@ def log(msg):
 
 def supervise(cmd, out_path, watch_dirs, deadline, on_poll, rec):
     """Run `cmd` in its own group until it ends, `on_poll()` names a stop reason, a GPU line appears, or the stop
-    time; every wait bounded by `deadline` (the guard's rule). Fills `rec`; returns it."""
+    time; every wait bounded by `deadline` (the guard's rule). A stop counts as initiated by this supervisor only when
+    the command was still running when it was sent (R1-04): one that already ended keeps its own exit code. Any
+    exception after the group started ends that group the same bounded way and is recorded (R1-03). Fills `rec`."""
     stop_at = deadline - guarded.GRACE - guarded.KILL_CHECK - guarded.POLL - guarded.STOP_MARGIN
     with open(out_path, "ab") as out:
         child = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
     pgid = child.pid
     rec.update(pgid=pgid, cmd=cmd, started=time.strftime("%F %T"), deadline=deadline)
-    log("started pid / pgid %d: %s (stop by %s)" % (pgid, " ".join(cmd), vcheck.time_str(stop_at)))
-    watch = guarded.Watch([out_path], watch_dirs)
-    code = None
-    while code is None:
-        hit = watch.scan()
-        if hit:
-            rec["gpu_error"] = dict(hit, seen=time.strftime("%F %T"))
-            log("GPU error in %s: %s" % (hit["file"], hit["line"]))
-            rec["end"] = guarded.end_group(child, pgid, "gpu_error", log, deadline - guarded.STOP_MARGIN)
-            break
-        why = on_poll()
-        if why:
-            log("stop: %s" % why)
-            rec["end"] = guarded.end_group(child, pgid, why, log, deadline - guarded.STOP_MARGIN)
-            break
-        if time.time() >= stop_at:
-            log("limit reached")
-            rec["end"] = guarded.end_group(child, pgid, "limit", log, deadline - guarded.STOP_MARGIN)
-            break
+
+    def stop(why):
+        if child.poll() is not None:                       # ended by itself before the stop: not a stop of ours
+            rec["ended_before_stop"] = {"wanted": why, "returncode": child.returncode}
+            log("the command had already ended (%s) before the %s stop" % (child.returncode, why))
+            return
+        t = guarded.end_group(child, pgid, why, log, deadline - guarded.STOP_MARGIN)
+        t["initiated"] = not t.get("gone_before_term")
+        rec["end"] = t
+
+    try:
+        log("started pid / pgid %d: %s (stop by %s)" % (pgid, " ".join(cmd), vcheck.time_str(stop_at)))
+        watch = guarded.Watch([out_path], watch_dirs)
+        while True:
+            hit = watch.scan()
+            if hit:
+                rec["gpu_error"] = dict(hit, seen=time.strftime("%F %T"))
+                log("GPU error in %s: %s" % (hit["file"], hit["line"]))
+                stop("gpu_error")
+                break
+            why = on_poll()
+            if why:
+                log("stop: %s" % why)
+                stop(why)
+                break
+            if time.time() >= stop_at:
+                log("limit reached")
+                stop("limit")
+                break
+            try:
+                child.wait(timeout=max(0.0, min(guarded.POLL, stop_at - time.time())))
+                break
+            except subprocess.TimeoutExpired:
+                pass
+        if "gpu_error" not in rec:
+            hit = watch.scan()
+            if hit:
+                rec["gpu_error"] = dict(hit, seen=time.strftime("%F %T"), after_stop=True)
+                log("GPU error found after the stop in %s: %s" % (hit["file"], hit["line"]))
+    except Exception as e:                                 # the supervisor's own failure: end the group it owns
+        rec["exception"] = "%s: %s" % (type(e).__name__, e)
+        log("supervisor exception (%s): ending the model group" % rec["exception"])
+        rec.pop("end", None)
         try:
-            code = child.wait(timeout=max(0.0, min(guarded.POLL, stop_at - time.time())))
-        except subprocess.TimeoutExpired:
-            code = None
-    if "gpu_error" not in rec:
-        hit = watch.scan()
-        if hit:
-            rec["gpu_error"] = dict(hit, seen=time.strftime("%F %T"), after_stop=True)
-            log("GPU error found after the stop in %s: %s" % (hit["file"], hit["line"]))
+            rec["end"] = dict(guarded.end_group(child, pgid, "exception", log, deadline - guarded.STOP_MARGIN), initiated=True)
+        except Exception as e2:
+            rec["end"] = {"why": "exception", "confirmed": False, "error": "%s: %s" % (type(e2).__name__, e2)}
     if "end" not in rec and guarded.members(pgid):
         rec["leftovers"] = guarded.end_group(child, pgid, "leftovers", log, deadline - guarded.STOP_MARGIN)
-    stop = rec.get("end") or rec.get("leftovers")
-    rec["cleanup_confirmed"] = stop["confirmed"] if stop else (child.returncode is not None and not guarded.members(pgid))
+    stop_rec = rec.get("end") or rec.get("leftovers")
+    rec["cleanup_confirmed"] = bool(stop_rec["confirmed"]) if stop_rec else (child.poll() is not None and not guarded.members(pgid))
     rec.update(child_returncode=child.returncode, ended=time.strftime("%F %T"))
     return rec
 
@@ -156,38 +177,42 @@ def main(argv=None) -> int:
 
     tr: dict = {}
     rec["training"] = tr
-    rec["events_at_start"] = vcheck.events_in_window(a.diag, a.start, time.time())
-    if rec["events_at_start"]:
-        tr["system_events"] = rec["events_at_start"]
-        log("a system GPU event inside the window before training: not started")
-    else:
-        supervise(train_cmd, a.run_dir + "-pipeline.out", [os.path.join(a.run_dir, "logs")], train_end,
-                  training_poll(tr, a.run_dir, os.path.join(a.run_dir, "d2", "monitor", "step0"), a.ref_dir, a.first_dir, a.diag, a.start), tr)
-        ev = vcheck.events_in_window(a.diag, a.start, time.time())
-        if ev:
-            tr["system_events"] = ev
-    save()
-    why = vcheck.v3_allowed(tr, time.time(), deadline, a.v3_reserve, a.report_reserve)
-    if why:
-        rec["v3_not_started"] = why
-        log("V3 not started: %s" % "; ".join(why))
-    else:
-        v3: dict = {}
-        rec["v3"] = v3
-        res_path = a.run_dir + "-v3.json"
+    try:
+        rec["events_at_start"] = vcheck.events_in_window(a.diag, a.start, time.time())
+        if rec["events_at_start"]:
+            tr["system_events"] = rec["events_at_start"]
+            log("a system GPU event inside the window before training: not started")
+        else:
+            supervise(train_cmd, a.run_dir + "-pipeline.out", [os.path.join(a.run_dir, "logs")], train_end,
+                      training_poll(tr, a.run_dir, os.path.join(a.run_dir, "d2", "monitor", "step0"), a.ref_dir, a.first_dir, a.diag, a.start), tr)
+            ev = vcheck.events_in_window(a.diag, a.start, time.time())
+            if ev:
+                tr["system_events"] = ev
+        save()
+        why = vcheck.v3_allowed(tr, time.time(), deadline, a.v3_reserve, a.report_reserve)
+        if why:
+            rec["v3_not_started"] = why
+            log("V3 not started: %s" % "; ".join(why))
+        else:
+            v3: dict = {}
+            rec["v3"] = v3
+            res_path = a.run_dir + "-v3.json"
 
-        def v3_poll():
-            ev = vcheck.events_in_window(a.diag, a.start, time.time() + 1)
+            def v3_poll():
+                ev = vcheck.events_in_window(a.diag, a.start, time.time() + 1)
+                if ev:
+                    v3["system_events"] = ev
+                    return "system_event"
+                return None
+            supervise(v3_cmd + ["--out", res_path], a.run_dir + "-v3.out", [], deadline - a.report_reserve - 5, v3_poll, v3)
+            v3["exit"] = v3["child_returncode"]
+            v3["result"] = json.load(open(res_path)) if os.path.exists(res_path) else None
+            ev = vcheck.events_in_window(a.diag, a.start, time.time())
             if ev:
                 v3["system_events"] = ev
-                return "system_event"
-            return None
-        supervise(v3_cmd + ["--out", res_path], a.run_dir + "-v3.out", [], deadline - a.report_reserve - 5, v3_poll, v3)
-        v3["exit"] = v3["child_returncode"]
-        v3["result"] = json.load(open(res_path)) if os.path.exists(res_path) else None
-        ev = vcheck.events_in_window(a.diag, a.start, time.time())
-        if ev:
-            v3["system_events"] = ev
+    except Exception as e:                                 # no model group is left running here: supervise ended it
+        rec["exception"] = "%s: %s" % (type(e).__name__, e)
+        log("V orchestration exception: %s" % rec["exception"])
     rec["ended"] = time.strftime("%F %T")
     rec["outcome_at_end"] = vcheck.outcome(rec, [])
     save()

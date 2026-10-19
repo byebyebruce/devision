@@ -72,7 +72,7 @@ def test_first_attempt_fails_on_the_eight(tmp_path):
     (("erased", lambda rs: rs + rs[:1]), "twice"),
     (("rs_temp", lambda rs: [dict(r, gold_answer="x") if i == 0 else r for i, r in enumerate(rs)]), "inputs or gold differ"),
     (("rs_force", lambda rs: [dict(r, prediction="zz") if i == 0 else r for i, r in enumerate(rs)]), "prediction"),
-    (("val", lambda rs: [dict(r, probabilities={k: float("nan") for k in r["probabilities"]}) if i == 0 else r for i, r in enumerate(rs)]), "probability differs")])
+    (("val", lambda rs: [dict(r, probabilities={k: float("nan") for k in r["probabilities"]}) if i == 0 else r for i, r in enumerate(rs)]), "not finite")])
 def test_consistency_rules(tmp_path, change, want):
     copy_ref(tmp_path / "new", change)
     r = vcheck.step0_consistency(REF, str(tmp_path / "new"))
@@ -125,12 +125,12 @@ def test_boot_cycle():
 
 
 def test_v3_allowed_and_outcome():
-    ok = {"end": {"why": "planned_stop"}, "v1": {"ok": True}, "cleanup_confirmed": True, "updates": 250}
+    ok = {"end": {"why": "planned_stop", "initiated": True}, "v1": {"ok": True}, "cleanup_confirmed": True, "updates": 250}
     assert vcheck.v3_allowed(ok, 100, 600, 300, 120) == []
     assert any("needed" in w for w in vcheck.v3_allowed(ok, 200, 600, 300, 120))     # 400 s left < 420
     for k, v in (("end", {"why": "limit"}), ("v1", {"ok": False}), ("cleanup_confirmed", False), ("gpu_error", {"x": 1})):
         assert vcheck.v3_allowed(dict(ok, **{k: v}), 100, 600, 300, 120)
-    good = {"training": ok, "v3": {"exit": 0, "result": {"ok": True}, "cleanup_confirmed": True}}
+    good = {"start": "s", "deadline": "d", "training": ok, "v3": {"exit": 0, "result": {"ok": True}, "cleanup_confirmed": True}}
     assert vcheck.outcome(good, []) == "pass"
     assert vcheck.outcome(good, [{"file": "x"}]).startswith("execution-unverified")      # the report's last look counts
     assert vcheck.outcome(dict(good, training=dict(ok, updates=225)), []).startswith("failed: planned stop recorded with fewer")
@@ -157,7 +157,7 @@ FAKE = r'''
 import json, os, signal, sys, time
 mode, run = sys.argv[1], sys.argv[2]
 ref, diag = os.environ["FAKE_REF"], os.environ.get("FAKE_DIAG", "")
-if mode == "ignore_term":
+if mode in ("ignore_term", "badjson"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 os.makedirs(run + "/logs", exist_ok=True)
 log = open(run + "/logs/d2.log", "a", buffering=1)
@@ -169,6 +169,8 @@ for f in sorted(os.listdir(ref)):
         o = next(iter(rows[992]["probabilities"])); rows[992]["probabilities"][o] += 0.1
     open(os.path.join(s0, f), "w").writelines(json.dumps(r) + "\n" for r in rows)
     time.sleep(0.02)
+if mode == "badjson":
+    open(os.path.join(s0, "dev16.details.jsonl"), "a").write('{"truncated\n')
 log.write("step 0 {'val/accuracy': 0.5067}\n")
 dt = float(os.environ.get("FAKE_DT", "0.05"))
 for n in range(25, 1055, 25):
@@ -182,6 +184,9 @@ for n in range(25, 1055, 25):
         sys.exit(3)
     loss = "nan" if (mode == "nan" and n == 125) else "0.8065"
     log.write("epoch 1 step %d/1054 loss %s nll %s acc 0.625 step_s 3.249\n" % (n, loss, loss))
+    if mode == "exit250" and n == 250:
+        time.sleep(0.5)                                     # seen by a poll while alive, gone before the held stop
+        sys.exit(3)
 open(run + "/finished", "w").write("all 1054")
 '''
 
@@ -334,3 +339,110 @@ def test_run_v_refused_preflight_runs_nothing(tmp_path):
     assert p.returncode == 12 and "preflight refused" in p.stdout
     calls = open(tmp_path / "calls").read()
     assert "devision-pipeline" not in calls and not (root / "runs/exp76-device-v.started").exists()
+
+
+@pytest.mark.parametrize("ref_p,new_p", [({"a": 0.5, "b": 0.3, "c": 0.2}, {"a": 0.5, "b": float("nan"), "c": 0.2}),   # second option
+                                         ({"a": 0.5, "b": 0.3, "c": 0.2}, {"a": 0.5, "b": 0.3, "c": float("nan")}),   # last option
+                                         ({"a": 0.5, "b": 0.3, "c": float("inf")}, {"a": 0.5, "b": 0.3, "c": 0.2}),   # Inf, reference side
+                                         ({"a": 0.5, "b": 0.3, "c": 0.2}, {"a": float("-inf"), "b": 0.3, "c": 0.2})])
+def test_non_finite_option_is_rejected(ref_p, new_p):
+    """R1-01: checked per option before any max."""
+    row = {"sample_id": "s", "qid": "q", "prediction": "a"}
+    c = vcheck.compare_rows([dict(row, probabilities=ref_p)], [dict(row, probabilities=new_p)])
+    assert c["problems"] and "not finite" in c["problems"][0] and c["largest"] == float("inf")
+    fin = vcheck.compare_rows([dict(row, probabilities={"a": 0.5, "b": 0.5})], [dict(row, probabilities={"a": 0.5 + 5e-7, "b": 0.5})])
+    assert fin["problems"] == []
+    out = vcheck.compare_rows([dict(row, probabilities={"a": 0.5, "b": 0.5})], [dict(row, probabilities={"a": 0.5 + 2e-6, "b": 0.5})])
+    assert out["problems"]
+
+
+def good_record():
+    return {"start": "s", "deadline": "d",
+            "training": {"end": {"why": "planned_stop", "initiated": True, "confirmed": True}, "v1": {"ok": True},
+                         "cleanup_confirmed": True, "updates": 250, "child_returncode": -15},
+            "v3": {"exit": 0, "result": {"ok": True}, "cleanup_confirmed": True}}
+
+
+@pytest.mark.parametrize("drop", ["training.v1", "training.cleanup_confirmed", "v3.cleanup_confirmed", "start", "deadline",
+                                  "training.end.initiated"])
+def test_missing_evidence_never_passes(drop):
+    """R1-02: each piece removed from a passing record."""
+    assert vcheck.outcome(good_record(), []) == "pass"
+    rec = good_record()
+    *path, last = drop.split(".")
+    d = rec
+    for k in path:
+        d = d[k]
+    del d[last]
+    assert vcheck.outcome(rec, []) != "pass"
+
+
+@pytest.fixture
+def report_dir(tmp_path, monkeypatch):
+    import report_v
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "runs").mkdir()
+    monkeypatch.setattr(report_v, "DIAG", str(tmp_path / "diag"))
+    return report_v, tmp_path
+
+
+def test_report_requires_start_and_a_readable_record(report_dir):
+    m, tmp = report_dir
+    json.dump(good_record(), open(tmp / m.RECORD, "w"))
+    assert m.main() == 1                                                             # no started marker: not pass
+    rep = json.load(open(tmp / m.OUT))
+    assert rep["outcome"].startswith("incomplete") and "window cannot be checked" in rep["outcome"]
+    open(tmp / m.STARTED, "w").write("start %d\ndeadline 0\n" % (time.time() - 5))
+    assert m.main() == 0 and json.load(open(tmp / m.OUT))["outcome"] == "pass"
+    open(tmp / m.RECORD, "w").write('{"training": {"end"')                           # truncated record
+    assert m.main() == 1
+    rep = json.load(open(tmp / m.OUT))
+    assert rep["outcome"].startswith("incomplete") and "unreadable" in rep["outcome"]
+    open(tmp / m.STARTED, "w").write("start x\n")                                   # truncated / bad marker
+    json.dump(dict(good_record(), training=dict(good_record()["training"], gpu_error={"line": "x"})), open(tmp / m.RECORD, "w"))
+    assert m.main() == 1
+    assert json.load(open(tmp / m.OUT))["outcome"].startswith("failed: GPU execution error; also incomplete")
+
+
+def test_supervisor_exception_ends_its_group(fast):
+    """R1-03: a corrupt step 0 file makes the comparison raise after the group started; the TERM-ignoring group is
+    KILLed within the deadline, a bystander survives, no V3, the record is written."""
+    by = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        rc, rec, took = run_v(fast, "badjson", total=30)
+        tr = rec["training"]
+        assert rc == 1 and tr["exception"].startswith("JSONDecodeError") and tr["end"]["why"] == "exception"
+        assert "kill" in tr["end"] and tr["cleanup_confirmed"] is True and not vrun.guarded.members(tr["pgid"])
+        assert "v3" not in rec and rec["outcome_at_end"].startswith("failed: the V supervisor raised")
+        assert took < 30 - 4 - 6 and by.poll() is None
+    finally:
+        by.kill()
+
+
+def test_supervisor_exception_with_unconfirmed_cleanup_returns_71(fast, monkeypatch):
+    real = vrun.guarded.end_group
+    monkeypatch.setattr(vrun.guarded, "end_group", lambda *a: dict(real(*a), left=[99999], confirmed=False))
+    rc, rec, took = run_v(fast, "badjson", total=30)
+    assert rc == 71 and rec["training"]["cleanup_confirmed"] is False and "v3" not in rec and took < 30 - 4
+
+
+def test_own_failure_after_250_is_not_a_planned_stop(fast, monkeypatch):
+    """R1-04: the 250th-update line is written, then the process exits 3 before the supervisor's stop (a fixed
+    synchronisation: the poll's planned_stop answer is held 1 s, the fake exits at once)."""
+    real = vrun.training_poll
+
+    def held(*a):
+        poll = real(*a)
+
+        def p():
+            why = poll()
+            if why == "planned_stop":
+                time.sleep(1.0)
+            return why
+        return p
+    monkeypatch.setattr(vrun, "training_poll", held)
+    rc, rec, _ = run_v(fast, "exit250", total=30)
+    tr = rec["training"]
+    assert rc == 1 and "end" not in tr and tr["ended_before_stop"] == {"wanted": "planned_stop", "returncode": 3}
+    assert tr["child_returncode"] == 3 and tr["updates"] == 250 and "v3" not in rec
+    assert rec["outcome_at_end"] == "failed: the training process ended by itself (exit 3) before the planned stop"

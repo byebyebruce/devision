@@ -19,11 +19,33 @@ OUT = "runs/%s/report.json" % NAME
 DIAG = "/Library/Logs/DiagnosticReports"
 
 
+def load_parts():
+    """(t0 or None, record or None, problems): an unreadable / truncated started marker or record is a problem, not an
+    empty window or a missing record that could pass (R1-02)."""
+    probs, t0, rec = [], None, None
+    try:
+        t0 = float(next(x for x in open(STARTED).read().splitlines() if x.startswith("start ")).split()[1])
+    except (OSError, StopIteration, ValueError, IndexError) as e:
+        probs.append("no valid start in %s (%s): the window cannot be checked" % (STARTED, type(e).__name__))
+    try:
+        rec = json.load(open(RECORD))
+    except (OSError, ValueError) as e:
+        probs.append("the V record %s is missing or unreadable (%s)" % (RECORD, type(e).__name__))
+    return t0, rec, probs
+
+
 def main() -> int:
-    t0 = float(open(STARTED).readline().split()[1]) if os.path.exists(STARTED) else None
-    rec = json.load(open(RECORD)) if os.path.exists(RECORD) else None
-    events = vcheck.events_in_window(DIAG, t0, time.time()) if t0 is not None else []
-    rep = {"outcome": vcheck.outcome(rec, events), "record": rec, "system_events_in_window": events,
+    t0, rec, probs = load_parts()
+    events: list = []
+    if t0 is not None:
+        try:
+            events = vcheck.events_in_window(DIAG, t0, time.time())
+        except Exception as e:
+            probs.append("the system event check failed (%s: %s)" % (type(e).__name__, e))
+    out = vcheck.outcome(rec, events) if rec else None
+    if probs:                                              # missing evidence never passes; a recorded failure stays named
+        out = ("incomplete: " if out in (None, "pass") else out + "; also incomplete: ") + "; ".join(probs)
+    rep = {"outcome": out, "record": rec, "problems": probs, "system_events_in_window": events,
            "duration_s": round(time.time() - t0) if t0 is not None else None,
            "note": "diagnostic only: no scientific outcome; a pass is not a proof that long runs are safe"}
     os.makedirs(os.path.dirname(OUT), exist_ok=True)

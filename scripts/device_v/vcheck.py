@@ -6,6 +6,7 @@ cycle; whether V3 may start; and the one outcome of a V record.
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -71,10 +72,16 @@ def compare_rows(ref: List[Dict[str, Any]], got: List[Dict[str, Any]], tol: floa
         if set(px) != set(py):
             problems.append("%s/%s options differ" % k)
             continue
-        d = max(abs(px[o] - py[o]) for o in px)
-        diffs[k] = d
-        if not d <= tol:                                   # NaN fails too
-            problems.append("%s/%s probability differs by %.3g" % (k + (d,)))
+        bad = [o for o in px if not (isinstance(px[o], (int, float)) and isinstance(py[o], (int, float))
+                                     and math.isfinite(px[o]) and math.isfinite(py[o]))]
+        if bad:                                            # checked per option, before any max (R1-01)
+            problems += ["%s/%s option %r probability not finite (%r -> %r)" % (k + (o, px[o], py[o])) for o in bad]
+            diffs[k] = float("inf")
+        else:
+            d = max(abs(px[o] - py[o]) for o in px)
+            diffs[k] = d
+            if not d <= tol:
+                problems.append("%s/%s probability differs by %.3g" % (k + (d,)))
         if x["prediction"] != y["prediction"]:
             problems.append("%s/%s prediction %r -> %r" % (k + (x["prediction"], y["prediction"])))
     hist = {"<=%g" % BINS[i + 1] if i + 2 < len(BINS) else ">%g" % BINS[-2]: 0 for i in range(len(BINS) - 1)}
@@ -191,13 +198,14 @@ def v3_allowed(stage: Dict[str, Any], now: float, deadline: float, v3_reserve: f
     """V3 starts only after the planned stop, a passed V1, a confirmed cleanup, no GPU / system event, and with its
     own reserve plus the report's still left."""
     why = []
-    if (stage.get("end") or {}).get("why") != "planned_stop":
+    end = stage.get("end") or {}
+    if end.get("why") != "planned_stop" or not end.get("initiated") or end.get("gone_before_term"):
         why.append("the training process did not end by the planned stop")
     if not (stage.get("v1") or {}).get("ok"):
         why.append("V1 did not pass")
     if not stage.get("cleanup_confirmed"):
         why.append("cleanup not confirmed")
-    if stage.get("gpu_error") or stage.get("system_events"):
+    if stage.get("gpu_error") or stage.get("system_events") or stage.get("exception"):
         why.append("a GPU error or system GPU event")
     if deadline - now < v3_reserve + report_reserve:
         why.append("%.0f s left, %.0f needed" % (deadline - now, v3_reserve + report_reserve))
@@ -206,31 +214,42 @@ def v3_allowed(stage: Dict[str, Any], now: float, deadline: float, v3_reserve: f
 
 def outcome(rec: Optional[Dict[str, Any]], events: List[Dict[str, Any]]) -> str:
     """The one outcome of a V record (`events`: system GPU events found in the whole window, the report's own look
-    included). pass needs V1, the planned stop after >= 250 updates, V3 and no event / GPU error / leftover."""
+    included). Explicit failures first; then pass needs every piece of evidence present (R1-02): the window, V1 ok,
+    the training stop initiated by the supervisor after >= 250 updates with its cleanup confirmed, V3 consistent with
+    its cleanup confirmed. A missing piece is incomplete, never pass."""
     if not rec:
         return "incomplete: no V record (the V orchestration did not finish)"
     tr = rec.get("training") or {}
-    if events or tr.get("system_events") or (rec.get("v3") or {}).get("system_events"):
+    v3 = rec.get("v3") or {}
+    if events or tr.get("system_events") or v3.get("system_events"):
         return "execution-unverified: a system GPU event (BIF0 / MMU) inside the V window"
-    for part in (tr, rec.get("v3") or {}):
+    for part in (tr, v3):
         if part and part.get("cleanup_confirmed") is False:
             return "failed: cleanup not confirmed -- no further model may start"
-    if tr.get("gpu_error") or (rec.get("v3") or {}).get("gpu_error"):
+    if tr.get("gpu_error") or v3.get("gpu_error"):
         return "failed: GPU execution error"
+    if tr.get("exception") or v3.get("exception") or rec.get("exception"):
+        return "failed: the V supervisor raised (%s)" % (tr.get("exception") or v3.get("exception") or rec.get("exception"))
     if (tr.get("v1") or {}).get("refused"):
         return "refused: the V1 reference is missing or changed"
     if tr.get("v1") and not tr["v1"].get("ok"):
         return "consistency not established (V1)"
-    why = (tr.get("end") or {}).get("why")
+    end = tr.get("end") or {}
+    why = end.get("why")
     if why == "nonfinite":
         return "failed: a non-finite training value"
     if why == "limit":
         return "incomplete: the limit came before the planned stop"
-    if why != "planned_stop":
+    if why != "planned_stop" or not end.get("initiated") or end.get("gone_before_term"):
         return "failed: the training process ended by itself (exit %s) before the planned stop" % tr.get("child_returncode")
     if (tr.get("updates") or 0) < 250:
         return "failed: planned stop recorded with fewer than 250 updates"
-    v3 = rec.get("v3")
+    if not rec.get("start") or not rec.get("deadline"):
+        return "incomplete: no V window recorded"
+    if (tr.get("v1") or {}).get("ok") is not True:
+        return "incomplete: no V1 result recorded"
+    if tr.get("cleanup_confirmed") is not True:
+        return "incomplete: the training cleanup is not recorded as confirmed"
     if not v3:
         return "incomplete: V3 not started (%s)" % "; ".join(rec.get("v3_not_started") or ["no reason recorded"])
     if (v3.get("end") or {}).get("why") == "limit":
@@ -240,6 +259,8 @@ def outcome(rec: Optional[Dict[str, Any]], events: List[Dict[str, Any]]) -> str:
         return "failed: V3 ended with exit %s" % v3.get("exit")
     if not res.get("ok"):
         return "consistency not established (V3 save / load)"
+    if v3.get("cleanup_confirmed") is not True:
+        return "incomplete: the V3 cleanup is not recorded as confirmed"
     return "pass"
 
 
