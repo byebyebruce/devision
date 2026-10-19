@@ -93,6 +93,24 @@ def progress(out: str, stage: str, done: int, total: int) -> None:
         fh.write("%.3f %d %d\n" % (time.time(), done, total))
 
 
+def begin(out: str, stage: str, outputs: List[str]) -> None:
+    """The stage's one start, taken atomically BEFORE anything is loaded, computed or written (critic CONF-RUN-R1-02): a
+    stage already started, registered or with an output present is refused; a start without a registration is reported
+    as incomplete."""
+    if registered(out, stage) or any(os.path.exists(p) for p in outputs):
+        raise SystemExit("stage %s already ran (one run only)" % stage)
+    try:
+        fd = os.open(os.path.join(out, "stage-%s.started" % stage), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise SystemExit("stage %s already started (one run only)" % stage) from None
+    os.write(fd, time.strftime("%F %T").encode())
+    os.close(fd)
+
+
+def started(out: str, stage: str) -> bool:
+    return os.path.exists(os.path.join(out, "stage-%s.started" % stage))
+
+
 def weights(run_dir: str) -> Dict[str, str]:
     return {f: sha(os.path.join(run_dir, f)) for f in ("model.safetensors", "config.json")}
 
@@ -137,19 +155,32 @@ def check_start(out: str = OUT, code: bool = True) -> Dict:
     return st
 
 
-def generate_set(st: Dict) -> Dict:
-    return cf.generate(DATA, st["identity"]["path"], st["checkpoint"], pins=PINS)
+def generate_set(st: Dict, used) -> Dict:
+    return cf.generate(DATA, st["identity"]["path"], st["checkpoint"], pins=PINS, used=used)
+
+
+def excluded_snapshot():
+    return cf.excluded("data")
 
 
 def stage_generate(out: str = OUT) -> Dict:
+    """The set once, against an exclusion snapshot taken and written first (critic CONF-RUN-R1-04): the exact canonical
+    cases selection excluded, registered by hash, so a later check never re-scans a data directory that may have changed."""
     st = check_start(out)
-    man = generate_set(st)
+    snap = os.path.join(out, "excluded_cases.json")
+    begin(out, "generate", [snap, DATA])
+    used = excluded_snapshot()
+    with open(snap, "w") as fh:
+        json.dump(sorted(repr(k) for k in used), fh)
+    man = generate_set(st, used)
     rows = jsonl(os.path.join(DATA, "confirm.jsonl"))
     if len(rows) != cf.PICTURES or sum(len(r["questions"]) for r in rows) != PER_CONDITION["questions"]:
         raise SystemExit("the generated set is not 120 pictures / 480 questions")
+    if {r["case"] for r in rows} & set(json.load(open(snap))):
+        raise SystemExit("a generated case is in the exclusion snapshot")
     pics = sorted({r["image"] for r in rows})
     register(out, "generate", {"MANIFEST.json": sha(os.path.join(DATA, "MANIFEST.json")), "confirm.jsonl": sha(os.path.join(DATA, "confirm.jsonl")),
-                               "confirm_mism.jsonl": sha(os.path.join(DATA, "confirm_mism.jsonl")),
+                               "confirm_mism.jsonl": sha(os.path.join(DATA, "confirm_mism.jsonl")), "excluded_cases.json": sha(snap),
                                "pictures": hashlib.sha256(json.dumps({p: sha(os.path.join("data", p)) for p in pics}, sort_keys=True).encode()).hexdigest()})
     return {k: man[k] for k in ("pictures", "classes", "questions")}
 
@@ -167,6 +198,11 @@ def check_set(out: str) -> None:
             raise SystemExit("%s changed since it was generated" % f)
     if pictures_digest(jsonl(os.path.join(DATA, "confirm.jsonl"))) != reg["pictures"]:
         raise SystemExit("a confirmation picture changed")
+    snap = os.path.join(out, "excluded_cases.json")
+    if not os.path.exists(snap) or sha(snap) != reg.get("excluded_cases.json"):
+        raise SystemExit("the exclusion snapshot is not the registered one")
+    if {r["case"] for r in jsonl(os.path.join(DATA, "confirm.jsonl"))} & set(json.load(open(snap))):
+        raise SystemExit("a confirmation case is in the exclusion snapshot")
 
 
 # ------------------------------------------------------------------ model stages
@@ -185,12 +221,22 @@ def load_model(who: str, st: Dict, device: str):
     return devision.load(V03, device=device, reading="off")
 
 
+def temperature_of(cfg) -> Dict:
+    """The temperatures a model applies, in devision-eval's / check_eval's table form."""
+    out = {"choice": cfg.temperature[0], "noul": cfg.temperature[2], "by_options": dict(cfg.temperature_by_options)}
+    if getattr(cfg, "temperature_by_route", None):
+        out["by_route"] = dict(cfg.temperature_by_route)
+    return out
+
+
 def stage_model(name: str, out: str = OUT, device: str = "auto", model=None) -> Dict:
     """One condition through the formal evaluation path with the model's own (frozen) temperatures."""
     from devision.train.evaluate import evaluate_records, runtime_code
     st = check_start(out)
     check_set(out)
     who, file, control = CONDITIONS[name]
+    f = os.path.join(out, "details_%s.jsonl" % name)
+    begin(out, name, [f])                                        # before any load or forward
     rows = jsonl(os.path.join(DATA, file))
     model = model or load_model(who, st, device)
     n, real = [0], model.decide
@@ -205,8 +251,8 @@ def stage_model(name: str, out: str = OUT, device: str = "auto", model=None) -> 
     model.decide = real
     ident = {"set": name, "start_sha256": sha(os.path.join(out, "START.json")), "rows": registered(out, "generate")[file],
              "model": who, "weights": st["candidate_weights"] if who == "candidate" else V03_SHA, "control": control,
-             "reading": getattr(model, "reading_status", {"mode": "none"}), "runtime_code": runtime_code()}
-    f = os.path.join(out, "details_%s.jsonl" % name)
+             "reading": getattr(model, "reading_status", {"mode": "none"}), "runtime_code": runtime_code(),
+             "temperature": temperature_of(model.cfg)}
     with open(f, "w") as fh:
         fh.write(json.dumps({"identity": ident}) + "\n" + "".join(json.dumps(r) + "\n" for r in recs))
     register(out, name, {"details_%s.jsonl" % name: sha(f)})
@@ -215,36 +261,124 @@ def stage_model(name: str, out: str = OUT, device: str = "auto", model=None) -> 
 
 # ------------------------------------------------------------------ report
 
+def expected_temperature(who: str, st: Dict) -> Dict:
+    ce = _load("confirm_run_ce", "scripts/release/check_eval.py")
+    return ce.temperature_table(st["checkpoint"] if who == "candidate" else V03)
+
+
+_PIXELS: Dict[str, str] = {}
+
+
+def pixels(image: str) -> str:
+    """The decoded pixels' sha256 of a picture under data/ (what evaluate_records records as picture_pixels_sha256)."""
+    if image not in _PIXELS:
+        from PIL import Image
+
+        from devision.infer import picture_identity
+        ident = picture_identity(Image.open(os.path.join("data", image)).convert("RGB"))
+        assert ident is not None
+        _PIXELS[image] = ident["pixels_sha256"]
+    return _PIXELS[image]
+
+
 def records(out: str, name: str, st: Dict) -> List[Dict]:
-    """A condition's records after every check: registered, bound to START / the set / the model, each question of its
-    rows exactly once, on its row's picture (the fixed wrong picture for *_mism)."""
+    """A condition's records after every check (critic CONF-RUN-R1-01): registered and bound to START / the set / the
+    model weights / control / the model's own frozen temperatures / this implementation's runtime code; the candidate
+    loaded as the frozen K reading combination (mode on, K, the frozen reading.json), v0.3 as the plain model; each
+    question of its rows exactly once, on its row's picture with those pixels; the source's options (reversed for the
+    reversed control) and gold; legal probabilities, prediction = arg-max, correct recomputed; the route each question
+    had to take, from its own text (candidate: read for the reading domains, ordinary otherwise; v0.3: ordinary). A read
+    that failed (unreadable) is the model's failure and stays in the denominator."""
+    import math
+
+    from devision.reading import domain_of
     f = os.path.join(out, "details_%s.jsonl" % name)
     if not registered(out, name):
-        raise SystemExit("missing")
+        raise SystemExit("started, not completed" if started(out, name) else "missing")
     if registered(out, name).get("details_%s.jsonl" % name) != sha(f):
         raise SystemExit("details_%s.jsonl changed" % name)
     lines = jsonl(f)
     who, file, control = CONDITIONS[name]
     ident = lines[0]["identity"]
     want = {"set": name, "start_sha256": sha(os.path.join(out, "START.json")), "rows": registered(out, "generate")[file], "control": control,
-            "weights": st["candidate_weights"] if who == "candidate" else V03_SHA}
+            "weights": st["candidate_weights"] if who == "candidate" else V03_SHA, "temperature": expected_temperature(who, st)}
     if any(ident.get(k) != v for k, v in want.items()):
-        raise SystemExit("%s: identity does not bind" % name)
+        raise SystemExit("%s: identity does not bind (%s)" % (name, [k for k, v in want.items() if ident.get(k) != v]))
+    rd = ident.get("reading") or {}
+    if who == "candidate":
+        frozen = json.load(open(st["identity"]["path"]))["reading"]["reading_json_sha256"]
+        if rd.get("mode") != "on" or not rd.get("k_rule") or rd.get("reading_json_sha256") != frozen:
+            raise SystemExit("%s: not the frozen K reading combination (%s)" % (name, rd))
+    elif rd.get("mode") not in ("none", "off"):
+        raise SystemExit("%s: v0.3 did not run as the plain model" % name)
     rc = _load("confirm_run_rc", "scripts/release/route_calib.py")
     bad = rc.runtime_problems(ident.get("runtime_code") or {}, ROOT)
     if bad:
         raise SystemExit("%s: not run by this implementation: %s" % (name, bad[:2]))
-    rows = jsonl(os.path.join(DATA, file))
-    expect = {(r["id"], q): r["image"] for r in rows for q in r["questions"]}
+    rows = {r["id"]: r for r in jsonl(os.path.join(DATA, file))}
+    expect = {(rid, q) for rid, r in rows.items() for q in r["questions"]}
     got = lines[1:]
     keys = [(x["sample_id"], x["qid"]) for x in got]
-    if len(keys) != len(set(keys)) or set(keys) != set(expect):
+    if len(keys) != len(set(keys)) or set(keys) != expect:
         raise SystemExit("%s: not every question once (%d records, %d expected)" % (name, len(keys), len(expect)))
-    if any(x["image_used"] != expect[(x["sample_id"], x["qid"])] for x in got):
-        raise SystemExit("%s: a question was answered on another picture than its row's" % name)
-    if any(type(x.get("correct")) is not bool for x in got):
-        raise SystemExit("%s: a record without an explicit correctness" % name)
+    for x in got:
+        r = rows[x["sample_id"]]
+        q = r["questions"][x["qid"]]
+        opts = list(q["criteria"])
+        gold = r["gold"][x["qid"]]["probabilities"]
+        p = x.get("probabilities") or {}
+        dom = domain_of(q.get("instructions", ""))
+        problems = []
+        if x["image_used"] != r["image"] or x.get("picture_pixels_sha256") != pixels(r["image"]):
+            problems.append("picture")
+        if x.get("options") != (opts[::-1] if control == "reversed" else opts) or x.get("gold") != gold \
+                or x.get("gold_answer") != max(gold, key=lambda o: gold[o]):
+            problems.append("options / gold")
+        if set(p) != set(opts) or not all(isinstance(v, (int, float)) and math.isfinite(v) and 0 <= v <= 1 for v in p.values()) \
+                or abs(sum(p.values()) - 1) > 1e-4:
+            problems.append("probabilities")
+        elif x.get("prediction") != max(p, key=lambda o: p[o]) or type(x.get("correct")) is not bool or x["correct"] != (x["prediction"] == x["gold_answer"]):
+            problems.append("prediction / correct")
+        want_route = "read" if (who == "candidate" and dom is not None) else "ordinary"
+        if x.get("reading_domain") != dom or x.get("route") != want_route:
+            problems.append("route %r / domain %r, expected %r / %r" % (x.get("route"), x.get("reading_domain"), want_route, dom))
+        if problems:
+            raise SystemExit("%s: %s/%s: %s" % (name, x["sample_id"], x["qid"], problems))
     return got
+
+
+def picture_interval(per_picture: Dict[str, float]) -> Dict:
+    """Mean over pictures with the 95 % percentile interval of 2,000 picture resamples (seed 0)."""
+    import random
+    ids = sorted(per_picture)
+    if not ids:
+        return {"pictures": 0, "value": None, "ci95": None}
+    rng = random.Random(0)
+    means = sorted(sum(per_picture[ids[rng.randrange(len(ids))]] for _ in ids) / len(ids) for _ in range(2000))
+    return {"pictures": len(ids), "value": sum(per_picture.values()) / len(ids), "ci95": [means[50], means[1949]]}
+
+
+def clustered(recs: List[Dict], rows: Dict[str, Dict], reading: bool) -> Dict:
+    """Reading questions (or the comparison) per domain: each picture's share right, then intervals over pictures --
+    questions of one picture are resampled together, never as independent questions (critic CONF-RUN-R1-03). Report only."""
+    per: Dict[str, Dict[str, List[bool]]] = defaultdict(lambda: defaultdict(list))
+    for x in recs:
+        if (x["qid"] != "q0") == reading:
+            r = rows[base_id(x["sample_id"])]
+            per[r["kind"]][base_id(x["sample_id"])].append(bool(x["correct"]))
+    return {dom: picture_interval({pid: sum(v) / len(v) for pid, v in pics.items()}) for dom, pics in sorted(per.items())}
+
+
+def flips(true: List[Dict], rev: List[Dict], rows: Dict[str, Dict]) -> Dict:
+    """The reversed-options control: per question, whether the chosen answer's content changed (the same option text,
+    whatever its position), paired by question; per domain, the share of flips over pictures with a picture interval.
+    Report only."""
+    a = {(x["sample_id"], x["qid"]): x["prediction"] for x in true}
+    per: Dict[str, Dict[str, List[bool]]] = defaultdict(lambda: defaultdict(list))
+    for x in rev:
+        k = (x["sample_id"], x["qid"])
+        per[rows[x["sample_id"]]["kind"]][x["sample_id"]].append(a[k] != x["prediction"])
+    return {dom: picture_interval({pid: sum(v) / len(v) for pid, v in pics.items()}) for dom, pics in sorted(per.items())}
 
 
 def base_id(sample_id: str) -> str:
@@ -278,7 +412,7 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
             recs[name] = records(out, name, st)
             S[name] = "completed"
         except (SystemExit, OSError, ValueError, KeyError) as e:
-            S[name] = "missing" if str(e) == "missing" else "invalid: %s" % e
+            S[name] = str(e) if str(e) in ("missing", "started, not completed") else "invalid: %s" % e
     bad = [k for k, v in S.items() if v != "completed"]
     if bad:
         kind = "invalid" if any(v.startswith("invalid") for v in S.values()) else "incomplete"
@@ -288,6 +422,8 @@ def report(out: str = OUT, finalize: str = "") -> Dict:
     cmp_ = {name: {base_id(x["sample_id"]): x["correct"] for x in recs[name] if x["qid"] == "q0"} for name in recs}
     res["primary"] = cf.outcome(cmp_["cand_true"], cmp_["cand_mism"], cmp_["v03_true"], ids)
     rows = {r["id"]: r for r in jsonl(os.path.join(DATA, "confirm.jsonl"))}
+    res["readings_by_picture"] = {name: clustered(recs[name], rows, reading=True) for name in recs}
+    res["reversed_flips"] = flips(recs["cand_true"], recs["cand_rev"], rows)
     report_only: Dict[str, Any] = {}
     for name, rs in recs.items():
         per = defaultdict(list)

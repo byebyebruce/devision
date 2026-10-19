@@ -6,7 +6,8 @@
 # under watch: own process group, no progress 5 / 3 min, memory 1.5 GiB for 30 s, ETA, its deadline 35 s before the outer
 # bound, TERM then KILL 10 s later) -> report (model-free; --finalize when a stage failed or was stopped). Hard limit start +
 # 20 minutes (CONFIRM_LIMIT for CPU fixtures only), the last 120 s for the report. One start ever (runs/v04-k-confirm.started,
-# never removed), no resume, no retry, nothing chained after it.
+# never removed), no resume, no retry, nothing chained after it. 600 scored requests; evaluate_records also makes 3 warm-up
+# calls per condition (615 decide calls in all); the progress lines count every decide call (123 per condition).
 #   CONFIRM_IDENTITY=... CONFIRM_CHECKPOINT=... nohup bash scripts/confirm/run.sh > runs/v04-k-confirm.out 2>&1 &
 set -u
 cd "$(dirname "$0")/../.."
@@ -18,6 +19,10 @@ MARK=runs/v04-k-confirm.started
 . scripts/exp35/guard.sh
 others=$(model_processes | grep -v "scripts/confirm/run.sh")
 [ -z "$others" ] || { log "other model processes are running:"; echo "$others"; exit 1; }
+# the old guard's pattern misses this project's newer entry points (critic CONF-RUN-NOTE-01): check full command lines too
+ENTRY='devision-calibrate|devision-eval|devision-pipeline|devision-train|train_main|scripts/(calib|livek|protect)/|scripts/confirm/confirm_run|scripts/exp[0-9]+/'
+own=$(ps -axo pid=,command= | grep -E "$ENTRY" | grep -v -e "grep -E" -e "scripts/confirm/run.sh")
+[ -z "$own" ] || { log "other model processes are running:"; echo "$own"; exit 1; }
 for d in runs/v04-k-confirm data/v04_k_confirm; do [ ! -e "$d" ] || { log "$d exists"; exit 1; }; done
 mkdir -p runs
 DEADLINE=$(( $(date +%s) + ${CONFIRM_LIMIT:-1200} ))

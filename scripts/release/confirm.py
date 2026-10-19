@@ -330,15 +330,18 @@ def code_problems(code: Any) -> List[str]:
     return out + ["frozen code: %s" % x for x in rc.runtime_problems(code, ROOT)]
 
 
-def generate(out: str, identity: str, checkpoint: str, root: str = "data", pins: Optional[Dict[str, str]] = None) -> Dict:
-    """The formal set: only after the freeze checks, into a new directory, seed from the frozen identity's bytes."""
+def generate(out: str, identity: str, checkpoint: str, root: str = "data", pins: Optional[Dict[str, str]] = None,
+             used: Optional[Set[tuple]] = None) -> Dict:
+    """The formal set: only after the freeze checks, into a new directory, seed from the frozen identity's bytes.
+    `used`: the exact exclusion set to select against (the runner snapshots and registers it first, critic
+    CONF-RUN-R1-04); None computes it here (excluded(root))."""
     bad = freeze_problems(identity, checkpoint, pins)
     if bad:
         raise SystemExit("not frozen -- no confirmation is generated:\n  " + "\n  ".join(bad))
     if os.path.exists(out):
         raise SystemExit("%s exists (fresh only)" % out)
     seed = int(sha(identity)[:16], 16)
-    used = excluded(root)
+    used = excluded(root) if used is None else used
     os.makedirs(os.path.join(out, "images"))
     rel = os.path.relpath(out, root)
     rows = rows_of(select(seed, used), "v04-confirm", out, rel)
