@@ -9,11 +9,12 @@ data-v2 used 3 of the 21 shards and only GQA's two-option "choose" questions. He
           answer is "no" are dropped (missing objects in the scene graph make some of those "no"s wrong, data-v2's
           spot check);
   query   choice with 3-5 options: the answer, then distractors drawn from the answers of other questions that end
-          in the same query ("query: color", "query: name", ...), weighted by how often each is right. A name
+          in the same query ("query: color", "query: name", ...) and start with the same four words (only the same
+          query when that gives < 8 answers), weighted by how often each is right. A name
           distractor is never the name of an object in the picture's scene graph; an attribute distractor is never
           an attribute of the queried object; never a word containing the answer or contained in it.
 Every object a question refers to must cover >= 1.5% of the picture (data-v2's `visible`). At most 8 questions per
-picture; pictures of every evaluation set under <root> are dropped (COCO and VG ids of a picture both); 2% of the
+picture, then yes questions dropped at random down to the number of no questions; pictures of every evaluation set under <root> are dropped (COCO and VG ids of a picture both); 2% of the
 pictures (v2_common.in_dev on "n1:<image id>", independent of data-v2's 3% dev pictures, which are held out) go to gqa_dev.jsonl. Writes <root>/n1/gqa_train.jsonl, gqa_dev.jsonl, GQA_MANIFEST.json.
 """
 import argparse
@@ -26,7 +27,7 @@ import zipfile
 from collections import Counter, defaultdict
 from typing import Dict, List, Optional
 
-from n1_vqav2 import clash
+from n1_vqav2 import MIN_POOL, clash
 from v2_common import in_dev
 from v2_gqa import OBJECT_REF, visible
 
@@ -74,23 +75,43 @@ def yes_no(rec: Dict) -> Optional[Dict]:
 
 
 def query(rec: Dict, graph: Dict, pools: Dict[str, Counter], rng: random.Random) -> Optional[Dict]:
-    key, answer = query_key(rec), rec["answer"]
-    if key is None or answer in ("yes", "no"):
+    answer = rec["answer"]
+    keys = [k for k in pool_keys(rec) if len(pools.get(k) or ()) >= MIN_POOL]
+    if not keys or answer in ("yes", "no"):
         return None
+    key = keys[0]
     bad = excluded(rec, graph) | {answer}
-    pool = [w for w in pools[key] if not any(clash(w, b) for b in bad)]
+    words, weights = _weighted(pools, key)
     n = rng.choice([3, 4, 4, 5])
     wrong: List[str] = []
-    while pool and len(wrong) < n - 1:
-        w = rng.choices(pool, weights=[pools[key][x] for x in pool])[0]
-        wrong.append(w)
-        pool = [x for x in pool if not clash(x, w)]
+    for w in rng.choices(words, cum_weights=weights, k=50):   # draw by frequency, drop clashes
+        if len(wrong) == n - 1:
+            break
+        if w not in wrong and not any(clash(w, b) for b in bad | set(wrong)):
+            wrong.append(w)
     if len(wrong) < 2:
         return None
     options = [answer] + wrong
     rng.shuffle(options)
     return {"question": {"type": "choice", "instructions": rec["question"], "criteria": {o: None for o in options}},
             "probs": {o: float(o == answer) for o in options}}
+
+
+_WEIGHTED: Dict[str, tuple] = {}
+
+
+def _weighted(pools: Dict[str, Counter], key: str) -> tuple:
+    """(answers, cumulative weights) of pools[key], cached while it is the same Counter object."""
+    pool = pools[key]
+    hit = _WEIGHTED.get(key)
+    if hit is None or hit[0] is not pool:
+        words = list(pool)
+        total, cum = 0, []
+        for w in words:
+            total += pool[w]
+            cum.append(total)
+        hit = _WEIGHTED[key] = (pool, words, cum)
+    return hit[1], hit[2]
 
 
 def convert(qid: str, rec: Dict, graph: Optional[Dict], pools: Dict[str, Counter], rng: random.Random) -> Optional[Dict]:
@@ -116,12 +137,28 @@ def convert(qid: str, rec: Dict, graph: Optional[Dict], pools: Dict[str, Counter
             "questions": {"q": made["question"]}, "gold": {"q": {"probabilities": made["probs"]}}}
 
 
+def balance_yes_no(samples: List[Dict], rng: random.Random) -> List[Dict]:
+    """Drop yes questions at random until there are as many as no questions (dropping existence "no"s tilts GQA
+    towards yes; a tilted existence share cost r13 6.5 points on POPE)."""
+    yes = [s for s in samples if s["kind"] == "yesno" and s["gold"]["q"]["probabilities"]["true"] == 1.0]
+    no = [s for s in samples if s["kind"] == "yesno" and s["gold"]["q"]["probabilities"]["true"] == 0.0]
+    rng.shuffle(yes)
+    drop = {id(s) for s in yes[len(no):]}
+    return [s for s in samples if id(s) not in drop]
+
+
+def pool_keys(rec: Dict) -> List[str]:
+    """Distractor pools of a query question, finest first: its query and its first four words, then its query."""
+    key = query_key(rec)
+    return [key + "|" + " ".join(rec["question"].lower().split()[:4]), key] if key else []
+
+
 def answer_pools(records: List[Dict]) -> Dict[str, Counter]:
     pools: Dict[str, Counter] = defaultdict(Counter)
     for rec in records:
-        key = query_key(rec)
-        if key and rec["answer"] not in ("yes", "no"):
-            pools[key][rec["answer"]] += 1
+        if rec["answer"] not in ("yes", "no"):
+            for k in pool_keys(rec):
+                pools[k][rec["answer"]] += 1
     return pools
 
 
@@ -161,6 +198,7 @@ def main(argv=None) -> None:
     for ss in by_picture.values():
         rng.shuffle(ss)
         samples += ss[:PER_PICTURE]
+    samples = balance_yes_no(samples, rng)
     rng.shuffle(samples)
     dev = [s for s in samples if in_dev("n1:" + s["image_id"], DEV_SHARE)]
     train = [s for s in samples if not in_dev("n1:" + s["image_id"], DEV_SHARE)]

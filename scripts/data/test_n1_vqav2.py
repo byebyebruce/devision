@@ -1,6 +1,6 @@
 import random
 
-from n1_vqav2 import convert, finish, flatten, text_baseline
+from n1_vqav2 import clash, convert, finish, flatten, text_baseline
 
 
 def qa(qid, text, answers, answer_type="other", iid=7):
@@ -60,3 +60,8 @@ def test_text_baseline_answers_from_the_wording_seen_in_train():
     train = build([qa(70 + i, "Is it sunny?", ["yes"] * 10, "yes/no", iid=i) for i in range(3)])
     dev = build([qa(80, "Is it sunny?", ["yes"] * 10, "yes/no"), qa(81, "Is it sunny?", ["no"] * 10, "yes/no")])
     assert text_baseline(train, dev) == {"yesno": 0.5}
+
+
+def test_singular_and_plural_of_a_word_clash():
+    assert clash("kite", "kites") and clash("shoes", "shoe") and clash("boxes", "box") and clash("red bus", "bus")
+    assert not clash("glass", "grass") and not clash("bus", "car")

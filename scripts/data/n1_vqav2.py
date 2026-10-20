@@ -10,7 +10,7 @@ consensus is kept and its gold is the share of the ten answers each option got:
           window around the answer, which a no-picture rule could exploit); gold = the answers' shares;
   other   choice with 3-5 options: the answers >= 3 annotators gave (at most 2), then distractors -- from the
           question's category list (data-v2's categories) when it has one, else from the agreed answers of
-          other questions that start with the same three words, weighted by how often each is right. A
+          other questions that start with the same four words (three when those give < 8 answers), weighted by how often each is right. A
           distractor is never an answer any annotator gave, a synonym of one, or a word containing one.
           The top answer needs >= 4 votes; gold = shares among the options.
 Dropped: reading questions (data-v2's list), questions whose answer is outside the type's rules, pictures of every
@@ -41,13 +41,24 @@ def norm(t: str) -> str:
     return re.sub(r"\s+", " ", t.lower().strip().rstrip("?").strip())
 
 
-def prefix(t: str) -> str:
-    return " ".join(norm(t).split()[:3])
+def prefix(t: str, words: int = 3) -> str:
+    return " ".join(norm(t).split()[:words])
+
+
+MIN_POOL = 8   # a finer distractor pool is used when it has at least this many distinct answers
+
+
+def singular(t: str) -> str:
+    return " ".join(w[:-2] if w.endswith(("ches", "shes", "sses", "xes")) else w[:-1] if w.endswith("s") and
+                    not w.endswith("ss") and len(w) > 3 else w for w in t.split())
 
 
 def clash(a: str, b: str) -> bool:
-    """Too close to be a wrong option next to `b`: the same, a synonym, or one contains the other as a word."""
-    return related(a, b) or bool(re.search(r"\b%s\b" % re.escape(a), b)) or bool(re.search(r"\b%s\b" % re.escape(b), a))
+    """Too close to be a wrong option next to `b`: the same, a synonym, the same word in the singular, or one contains
+    the other as a word."""
+    a1, b1 = singular(a), singular(b)
+    return related(a, b) or a1 == b1 or bool(re.search(r"\b%s\b" % re.escape(a1), b1)) or \
+        bool(re.search(r"\b%s\b" % re.escape(b1), a1))
 
 
 def _sample(qid: int, kind: str, iid: int, split: str, question: Dict, probs: Dict[str, float]) -> Dict:
@@ -112,11 +123,12 @@ def flatten(samples: List[Dict], rng: random.Random) -> List[Dict]:
 def finish(samples: List[Dict], rng: random.Random) -> List[Dict]:
     """Options and soft gold of the `other` samples; samples without enough distractors are dropped."""
     vocabs = vocabularies()
-    freq: Dict[str, Counter] = defaultdict(Counter)       # prefix -> agreed answers
+    freq: Dict[str, Counter] = defaultdict(Counter)       # 3- and 4-word prefix -> agreed answers
     for s in samples:
         if s["kind"] == "other":
             top = max(s["_votes"], key=s["_votes"].get)
-            freq[prefix(s["questions"]["q"]["instructions"])][top] += 1
+            for k in (3, 4):
+                freq[prefix(s["questions"]["q"]["instructions"], k)][top] += 1
     out = []
     for s in samples:
         if s["kind"] != "other":
@@ -136,7 +148,8 @@ def finish(samples: List[Dict], rng: random.Random) -> List[Dict]:
             if cat and agreed[0] in vocabs[cat]:
                 weights = Counter({w: 1 + freq[prefix(text)][w] for w in vocabs[cat]})
             else:
-                weights = Counter(dict(freq[prefix(text)]))
+                fine = freq[prefix(text, 4)]
+                weights = Counter(dict(fine if len(fine) >= MIN_POOL else freq[prefix(text)]))
             pool = [w for w in weights if not any(clash(w, g) for g in votes)]
             wrong: List[str] = []
             while pool and len(agreed) + len(wrong) < n:

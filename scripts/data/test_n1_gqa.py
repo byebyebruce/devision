@@ -1,7 +1,7 @@
 import random
 from collections import Counter
 
-from n1_gqa import answer_pools, convert
+from n1_gqa import answer_pools, balance_yes_no, convert
 
 GRAPH = {"width": 100, "height": 100, "objects": {
     "1": {"name": "wall", "w": 50, "h": 50, "attributes": ["white"]},
@@ -29,7 +29,7 @@ def pools_with(names, colors):
 
 
 def test_a_name_distractor_is_never_an_object_of_the_picture():
-    pools = pools_with(["pipe", "cup", "wall", "clock", "sign", "lamp", "shelf"], [])
+    pools = pools_with(["pipe", "cup", "wall", "clock", "sign", "lamp", "shelf", "door", "tree"], [])
     for seed in range(30):
         s = convert("q1", rec("q1", "What is on the wall?", "pipe", ON_WALL), GRAPH, pools, random.Random(seed))
         opts = list(s["questions"]["q"]["criteria"])
@@ -38,7 +38,7 @@ def test_a_name_distractor_is_never_an_object_of_the_picture():
 
 
 def test_an_attribute_distractor_is_never_an_attribute_of_the_queried_object():
-    pools = pools_with([], ["white", "metal", "red", "blue", "green", "black"])
+    pools = pools_with([], ["white", "metal", "red", "blue", "green", "black", "pink", "gray", "tan"])
     for seed in range(30):
         s = convert("q2", rec("q2", "What color is the pipe?", "white", PIPE_COLOR), GRAPH, pools, random.Random(seed))
         assert "metal" not in s["questions"]["q"]["criteria"]
@@ -56,5 +56,15 @@ def test_no_for_an_existence_question_is_dropped_but_yes_is_kept():
 def test_a_question_about_a_tiny_object_is_dropped():
     tiny = [{"operation": "select", "argument": "speck (4)", "dependencies": []},
             {"operation": "query", "argument": "color", "dependencies": [0]}]
-    pools = pools_with([], ["white", "red", "blue", "green"])
+    pools = pools_with([], ["white", "red", "blue", "green", "pink", "gray", "tan", "black"])
     assert convert("q5", rec("q5", "What color is the speck?", "red", tiny), GRAPH, pools, random.Random(0)) is None
+
+
+def test_yes_no_questions_are_balanced_by_dropping_yes():
+    def yn(i, truth):
+        return {"id": str(i), "kind": "yesno", "gold": {"q": {"probabilities": {"false": 1.0 - truth, "true": truth}}}}
+    other = {"id": "c", "kind": "query", "gold": {"q": {"probabilities": {"a": 1.0}}}}
+    out = balance_yes_no([yn(i, 1.0) for i in range(7)] + [yn(10 + i, 0.0) for i in range(3)] + [other],
+                         random.Random(0))
+    kinds = Counter(s["gold"]["q"]["probabilities"].get("true") for s in out)
+    assert kinds[1.0] == kinds[0.0] == 3 and other in out
