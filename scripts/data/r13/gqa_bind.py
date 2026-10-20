@@ -806,7 +806,7 @@ def spot_sheets(root: str, sets: Dict[str, List[dict]], graphs, n: int, rng: ran
     os.makedirs(out_dir, exist_ok=True)
     allrows = [r for rows in sets.values() for r in rows]
     try:
-        font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 15)
+        font = ImageFont.truetype(__import__("fonts").font_path("Arial"), 15)
     except OSError:
         font = ImageFont.load_default()
     sheets: Dict[str, List[str]] = {}

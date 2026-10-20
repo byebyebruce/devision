@@ -30,14 +30,18 @@ import hashlib
 import json
 import os
 import random
+import sys
 from collections import Counter
 from typing import Dict, List, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-FONT = "/System/Library/Fonts/Supplemental/Arial.ttf"
-BOLD = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fonts import font_path  # noqa: E402
+
+FONT = font_path("Arial")
+BOLD = font_path("Arial Bold")
 HEIGHTS = (6, 8, 11, 16)
 QUANTITIES = [("length", "cm"), ("mass", "g"), ("speed", "m/s"), ("volume", "mL"), ("time", "s"), ("distance", "km")]
 COLOURS = ["#dbeafe", "#dcfce7", "#fef3c7", "#fce7f3", "#ede9fe", "#e0f2f1", "#f3f4f6"]

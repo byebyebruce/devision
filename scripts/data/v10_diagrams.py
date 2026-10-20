@@ -19,12 +19,16 @@ import argparse
 import json
 import os
 import random
+import sys
 from collections import Counter
 from typing import List, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
-FONT = "/System/Library/Fonts/Supplemental/Arial.ttf"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fonts import font_path  # noqa: E402
+
+FONT = font_path("Arial")
 QUESTION = "Will these magnets attract or repel each other?"
 HINTS = ["Two magnets are placed as shown.",
          "Two magnets are placed as shown.\n\nHint: Magnets that attract pull together. Magnets that repel push apart."]

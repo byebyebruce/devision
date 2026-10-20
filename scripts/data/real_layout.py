@@ -40,8 +40,10 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(__file__))
 from rules_text import FORCE_HINT, FORCE_Q, TEMP_HINT, TEMP_Q, TEMP_SAME, fmt  # noqa: E402
 
-FONT = "/System/Library/Fonts/Supplemental/Arial.ttf"
-BOLD = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+from fonts import font_path  # noqa: E402
+
+FONT = font_path("Arial")
+BOLD = font_path("Arial Bold")
 COLOURS = ["#6abe30", "#6c63d9", "#e0533d", "#2a9fd6", "#e8a33a", "#9b59b6", "#16a085"]
 MAG_COLOURS = [("#d65bd6", "#00913f"), ("#2a78d6", "#6abe30"), ("#00b5e8", "#ff8a2a"), ("#8a7fe0", "#6abe30"),
                ("#009a44", "#8a7fe0"), ("#ff8a2a", "#00b5e8")]
