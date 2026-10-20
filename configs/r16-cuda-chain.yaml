@@ -3,24 +3,20 @@
 # v0.3's lineage (round 2's align, then the data of rounds 3, 5, 6, 7, 8 and 9b, each with that round's settings), on
 # data rebuilt on this machine by scripts/data/build_all.sh. The rest of v0.3's chain (v11 counting recovery, the
 # v12 extension pack, r14b with the top SigLIP layers unfrozen) follows in round 17 once that data is built.
+# The align stage runs from configs/r16-align.yaml (split so it could start before this data existed).
 # Precision: the align stage is fp32; the decision stages' `amp` is set in `common` after the bf16 / off comparison
 # (TODO.md section 3) -- until then this file is not to be run past the align stage.
 #   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 nohup uv run devision-pipeline configs/r16-cuda-chain.yaml > runs/r16-cuda-chain.out 2>&1 &
 name: r16-cuda-chain
 device: cuda
+swanlab_project: ""          # not logged in on this machine yet (uv run swanlab login); logs stay in runs/<name>/logs
 common:
   log_every: 50
 
 stages:
-  - name: align              # round 2: COCO captions, projector + LoRA on ModernBERT
-    kind: align
-    data: data/align_full_train.jsonl
-    val: data/align_val.jsonl
-    params: {epochs: 2, eval_every: 500, lora_r: 16, lr_lora: 1.0e-4}
-
   - name: s3                 # round 3: one pass over the data-v2 mix (134,556)
     kind: train
-    init: align
+    init: runs/r16-align/align       # configs/r16-align.yaml
     data: data/v2/train_mix.jsonl
     val: data/v2/dev_mix_half.jsonl
     params: {epochs: 1, lr_new: 5.0e-5, lr_head: 5.0e-5, lr_lora: 1.0e-4, warmup: 500, eval_every: 2000}
