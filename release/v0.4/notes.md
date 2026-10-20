@@ -55,10 +55,12 @@ rules (the dev16 retention requirement is not met); this draft is not a release.
   (38 wrong→right, 41 right→wrong, 27 wrong→wrong) and 21 of 180 magnet questions; similar overall accuracy hides
   these per-question changes.
 - Against v0.3 (paired by question, picture-clustered 95% intervals, sealed full evaluation): the seven protection
-  panels show no cost by the release rule, but several sets fell slightly -- the held-out GQA binding test -2.2
-  [-3.9, -0.5], position -2.0, size -1.6, VQA choice -1.5; What'sUp rose +4.9 [+2.3, +7.4]. The held-in synthetic
-  reading / comparison task of the earlier development (dev16) is **not** kept: 36.8% reading, 41.5% comparison,
-  below its 80% rule (the reading step does not cover it).
+  panels did not trigger the release rule's cost line, while several individual sets fell slightly -- the held-out GQA binding test -2.2
+  [-3.9, -0.5] (execution evidence pending: an MPS GPU error was logged while this set and the GQA mismatched control ran;
+  not used as evidence until re-measured -- docs/experiments/2026-10-20-v04-gpu-evidence-errata.md), position -2.0, size -1.6, VQA choice -1.5; What'sUp rose +4.9 [+2.3, +7.4]. The synthetic two-panel
+  reading / comparison task used as a development monitor (dev16, families never trained on) is **not reached** on
+  this model's branch: 36.8% reading, 41.5% comparison, below its 80% rule. It was shown learnable on a separate
+  experimental branch (EXP26) that this model does not descend from; the reading step does not cover it.
 - Chart questions (80 ChartQA-style items): 31.3% with the right picture and 36.3% with a wrong one; a max-value
   baseline gets 61.3%. There is no evidence that the model reads charts.
 - Two held-out sets each share one picture with sets watched during development (test_count_fresh: coco:221272;
