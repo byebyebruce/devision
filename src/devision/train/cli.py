@@ -128,12 +128,13 @@ def eval_main(argv=None) -> None:
     """Evaluate a checkpoint on a JSONL of samples through decide(): a summary JSON (--out) and one record
     per question (--details, default <out without .json>.details.jsonl), from which every number of the
     summary can be recomputed. Questions about the same picture and text state go into one decide()
-    request (at most --max-questions), so each picture is encoded once; --no-group asks one question per
-    request (single-question latency). The checkpoint loads through `devision.load`: with a reading/ bundle the
+    request (at most --max-questions), so each picture is encoded once; consecutive requests go through one
+    batched decide_batch() call (at most --batch-questions questions); --no-group asks one question per
+    request in a call of its own (single-question latency), --no-batch keeps one request per call. The checkpoint loads through `devision.load`: with a reading/ bundle the
     reading combination is evaluated (--reading auto / on), --reading off evaluates the plain Decider as a control."""
     _need_train_extra()
     from .. import READING_MODES, load
-    from .evaluate import CONTROLS, MAX_QUESTIONS, evaluate, runtime_code
+    from .evaluate import BATCH_QUESTIONS, CONTROLS, MAX_QUESTIONS, evaluate, runtime_code
 
     p = argparse.ArgumentParser(description=eval_main.__doc__)
     p.add_argument("--checkpoint", required=True)
@@ -151,7 +152,11 @@ def eval_main(argv=None) -> None:
     p.add_argument("--max-questions", type=int, default=MAX_QUESTIONS,
                    help="most questions per decide() request when grouping by picture")
     p.add_argument("--no-group", action="store_true",
-                   help="one question per decide() request (to measure single-question latency; slower)")
+                   help="one question per decide() request (to measure single-question latency; slower); implies --no-batch")
+    p.add_argument("--batch-questions", type=int, default=BATCH_QUESTIONS,
+                   help="most questions per batched decide_batch() call (several requests in one forward pass)")
+    p.add_argument("--no-batch", action="store_true",
+                   help="each request in a decide() call of its own (per-request latency; slower)")
     p.add_argument("--no-temperature", action="store_true",
                    help="evaluate the raw probabilities (all temperatures 1), to compare before / after calibration")
     p.add_argument("--device", default="auto", help="cpu, cuda, mps, or auto (the fastest available; default)")
@@ -162,13 +167,16 @@ def eval_main(argv=None) -> None:
     control = "mismatched" if a.shuffle_images else a.control
     if a.max_questions < 1:
         p.error("--max-questions must be >= 1")
+    if a.batch_questions < 1:
+        p.error("--batch-questions must be >= 1")
 
     records: list = []
     decider = load(a.checkpoint, device=a.device, revision=a.revision, reading=a.reading)
     if a.no_temperature:
         decider.use_raw_temperatures()
     result = evaluate(decider, read_decision_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records,
-                      max_questions=None if a.no_group else a.max_questions)
+                      max_questions=None if a.no_group else a.max_questions,
+                      batch_questions=None if a.no_group or a.no_batch else a.batch_questions)
     result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
                      "device": str(next(decider.model.parameters()).device),
                      "temperature": "none (raw)" if a.no_temperature else "fitted",

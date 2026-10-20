@@ -492,6 +492,28 @@ class Reading:
             table.append([*TEMPLATES[t], rd["value"]])
         return {"table": table, "reads": reads, "seconds": time.perf_counter() - t0}
 
+    def decide_batch(self, requests: Sequence[Dict[str, Any]], diagnostics: Optional[List[Dict]] = None) -> List[Dict]:
+        """`decide` on several requests (dicts with `state`, `questions`, optional `image`), one response each: the
+        requests that read go through `decide` one by one, the others through the plain Decider's batched pass."""
+        from .infer import picture_identity, resolve_request
+        out: List[Optional[Dict]] = [None] * len(requests)
+        diags: List[Dict] = [{} for _ in requests]
+        plain: List[int] = []
+        resolved = [resolve_request(r["state"], r["questions"], r.get("image")) for r in requests]
+        for j, (r, (_, picture)) in enumerate(zip(requests, resolved)):
+            templates = reads_for(r["questions"]) if picture is not None else []
+            if templates and any(domain_of(q.get("instructions", "")) is not None for q in r["questions"].values()):
+                out[j] = self.decide(r["state"], r["questions"], image=r.get("image"), diagnostics=diags[j])
+            else:
+                plain.append(j)
+                diags[j].update(route={k: "ordinary" for k in r["questions"]}, picture=picture_identity(picture))
+        done = self.decider._decide_many([(resolved[j][0], requests[j]["questions"], resolved[j][1], None) for j in plain])
+        for j, res in zip(plain, done):
+            out[j] = res
+        if diagnostics is not None:
+            diagnostics.extend(diags)
+        return [r for r in out if r is not None]
+
     def decide(self, state: Any, questions: Dict[str, Dict], image: Any = None, diagnostics: Optional[Dict] = None) -> Dict:
         """Ordinary decide's response (Jev structure unchanged). The request is first resolved exactly as ordinary
         decide resolves it (`infer.resolve_request`: question checks, the picture from `image=` or an image part in

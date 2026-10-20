@@ -8,7 +8,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, NoReturn, Optional, cast
+from typing import Any, Dict, List, NoReturn, Optional, Sequence, Tuple, cast
 
 import torch
 from laya.common import QTYPES, build_sequence, collate_items, serialize_state
@@ -307,44 +307,94 @@ class Decider:
             diagnostics.update(route={k: "ordinary" for k in questions}, picture=picture_identity(picture))
         return self._decide(text_state, questions, picture)
 
-    @torch.inference_mode()
+    def decide_batch(self, requests: Sequence[Dict[str, Any]],
+                     diagnostics: Optional[List[Dict]] = None) -> List[Dict[str, Any]]:
+        """`decide` on several requests at once: one response per request (each exactly as `decide` would give it, up
+        to float rounding), with every picture encoded and every question scored in one batched forward pass (a pass
+        for the requests with a picture and one for those without). Each request is a dict with `state`, `questions`
+        and optionally `image`, as the arguments of `decide`. `diagnostics` (optional list) receives one dict per
+        request, as `decide`'s. A request that breaks the contract raises InvalidRequest for the whole batch."""
+        jobs = [resolve_request(r["state"], r["questions"], r.get("image")) for r in requests]
+        if diagnostics is not None:
+            diagnostics.extend({"route": {k: "ordinary" for k in r["questions"]}, "picture": picture_identity(pic)}
+                               for r, (_, pic) in zip(requests, jobs))
+        return self._decide_many([(text, r["questions"], pic, None) for r, (text, pic) in zip(requests, jobs)])
+
     def _decide(self, text_state: Any, questions: Dict[str, Any], image: Optional[Image.Image],
                 route_temperature: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """`decide` on an already resolved request (checked questions, text state, PIL picture or None).
         `route_temperature` (question id -> temperature, from the reading combination for its read questions) replaces
         that question's type / bucket temperature; applied once, here, on the logits."""
-        qids = list(questions)
-        items = [question_item(self.tok, self.cfg, text_state, questions[qid]) for qid in qids]
-        for qid, it in zip(qids, items):
-            if len(it["markers"]) != _option_count(questions[qid]):
-                raise InvalidRequest("question %r: options do not fit the model's %d-token input; "
-                                     "use fewer or shorter options" % (qid, self.cfg.max_len))
-            if it["options_distinct"] < len(it["markers"]):
-                raise InvalidRequest("question %r: some options are identical once cut to fit the input; "
-                                     "make them shorter or let them differ earlier" % qid)
+        return self._decide_many([(text_state, questions, image, route_temperature)])[0]
+
+    @torch.inference_mode()
+    def _decide_many(self, jobs: Sequence[Tuple[Any, Dict[str, Any], Optional[Image.Image],
+                                                Optional[Dict[str, float]]]]) -> List[Dict[str, Any]]:
+        """`_decide` on several resolved requests (text state, questions, picture or None, route temperatures):
+        each picture is encoded once, and all questions of the requests with a picture go through one forward
+        pass (those without, through another)."""
+        per_job = []
+        for text_state, questions, _, _ in jobs:
+            items = [question_item(self.tok, self.cfg, text_state, questions[qid]) for qid in questions]
+            for qid, it in zip(questions, items):
+                if len(it["markers"]) != _option_count(questions[qid]):
+                    raise InvalidRequest("question %r: options do not fit the model's %d-token input; "
+                                         "use fewer or shorter options" % (qid, self.cfg.max_len))
+                if it["options_distinct"] < len(it["markers"]):
+                    raise InvalidRequest("question %r: some options are identical once cut to fit the input; "
+                                         "make them shorter or let them differ earlier" % qid)
+            per_job.append(items)
+        logits: List[Optional[torch.Tensor]] = [None] * len(jobs)
+        n_visual = [0] * len(jobs)
+        for with_picture in (True, False):
+            idx = [j for j, job in enumerate(jobs) if (job[2] is not None) == with_picture and per_job[j]]
+            if not idx:
+                continue
+            pictures = [img for j in idx if (img := jobs[j][2]) is not None]
+            out, nv = self._forward([per_job[j] for j in idx], pictures if with_picture else None)
+            start = 0
+            for j in idx:
+                logits[j], n_visual[j] = out[start:start + len(per_job[j])], nv
+                start += len(per_job[j])
+        responses = []
+        for (_, questions, _, route_temperature), items, lg, nv in zip(jobs, per_job, logits, n_visual):
+            answers = {}
+            for i, qid in enumerate(questions):
+                q, it = questions[qid], items[i]
+                k = len(it["markers"])
+                t = (route_temperature or {}).get(qid) or self.cfg.temperature_for(it["qtype"], k)
+                assert lg is not None
+                p = torch.softmax(lg[i, :k] / t, -1).tolist()
+                answers[qid] = self._answer(q, p)
+            input_tokens = sum(len(it["ids"]) + nv for it in items)
+            responses.append({"model": self.cfg.model_name, "answers": answers,
+                              "usage": {"input_tokens": input_tokens, "output_tokens": 0}})
+        return responses
+
+    def _forward(self, groups: List[List[Dict[str, Any]]], images: Optional[List[Image.Image]]):
+        """Option logits [questions, K] (CPU) of the question items of `groups` in order, group g asked about
+        images[g] (None: text only), and the visual tokens each question carried."""
+        items = [it for g in groups for it in g]
         batch = collate_items([items], self.tok.pad_token_id)
         assert batch is not None
         dev = next(self.model.parameters()).device
         visual = patches = geom = None
-        if image is not None:   # the picture is encoded once and shared by every question
-            pixels = image_tensor(image, self.cfg)[None].to(dev)
+        if images is not None:   # each picture is encoded once and shared by its request's questions
+            pixels = torch.stack([image_tensor(img, self.cfg) for img in images]).to(dev)
             patches, visual, geom = self.model.visual_inputs(pixels)
-            patches, visual = patches.expand(len(items), -1, -1), visual.expand(len(items), -1, -1)
-            geom = None if geom is None else geom.expand(len(items), -1, -1)
+            if len(images) == 1:
+                rows = None
+                patches, visual = patches.expand(len(items), -1, -1), visual.expand(len(items), -1, -1)
+                geom = None if geom is None else geom.expand(len(items), -1, -1)
+            else:
+                rows = torch.tensor([g for g, grp in enumerate(groups) for _ in grp], device=dev)
+                patches, visual = patches[rows], visual[rows]
+                geom = None if geom is None else geom[rows]
         logits = self.model(*(batch[k].to(dev) for k in
                               ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
                             visual=visual, patches=patches, patch_geom=geom).cpu()
         n_visual = 0 if visual is None else visual.size(1) + (NUMBER_SLOTS if self.model.reader is not None else 0)
-        answers = {}
-        for i, qid in enumerate(qids):
-            q, it = questions[qid], items[i]
-            k = len(it["markers"])
-            t = (route_temperature or {}).get(qid) or self.cfg.temperature_for(it["qtype"], k)
-            p = torch.softmax(logits[i, :k] / t, -1).tolist()
-            answers[qid] = self._answer(q, p)
-        input_tokens = sum(len(it["ids"]) + n_visual for it in items)
-        return {"model": self.cfg.model_name, "answers": answers,
-                "usage": {"input_tokens": input_tokens, "output_tokens": 0}}
+        return logits, n_visual
 
     @staticmethod
     def _answer(q: Dict[str, Any], p: List[float]) -> Dict[str, Any]:

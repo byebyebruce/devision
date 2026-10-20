@@ -6,8 +6,11 @@ so later slices and comparisons need no new inference (`summarize`, `devision-co
 
 Questions about the same picture file with the same text state (`state_text`) are asked together in
 one decide() request (at most MAX_QUESTIONS each), so the picture is encoded once; answers are the
-same as asking each question alone (up to float rounding). `max_questions=None` (devision-eval
---no-group) asks every question in a request of its own, e.g. to measure single-question latency.
+same as asking each question alone (up to float rounding). Consecutive requests are then sent together
+in one decide_batch() call (at most BATCH_QUESTIONS questions), so pictures are encoded and questions
+scored in batched passes. `max_questions=None` (devision-eval --no-group) asks every question in a
+request of its own and `batch_questions=None` (--no-batch, implied by --no-group) sends every request in
+a decide() call of its own, e.g. to measure single-question latency.
 
 Controls (same questions, one thing changed):
   mismatched  each picture's questions are asked about another picture (fixed-seed derangement of the
@@ -32,6 +35,7 @@ import platform
 import random
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -44,6 +48,9 @@ from ..reading import domain_of
 CONTROLS = ("none", "mismatched", "reversed")
 WARMUP = 3
 MAX_QUESTIONS = 32  # questions per decide() request when grouping
+BATCH_QUESTIONS = 64  # questions per decide_batch() call (several requests in one batched pass)
+LOADERS = 4  # threads reading and decoding the pictures ahead of the model
+PREFETCH_CALLS = 2  # calls whose pictures are prepared ahead
 
 
 def _probabilities(answer: Dict[str, Any]) -> Dict[str, float]:
@@ -90,48 +97,112 @@ def _requests(samples: Sequence[Sample], pairs: Dict[str, str], control: str,
     return out
 
 
+def _calls(requests: List[Tuple[str, str, List[Tuple[int, str, Dict[str, Any]]]]],
+           batch_questions: Optional[int]) -> List[List[Tuple[str, str, List[Tuple[int, str, Dict[str, Any]]]]]]:
+    """Consecutive requests packed into decide_batch() calls of at most `batch_questions` questions (a request
+    larger than that alone); None: one request per decide() call."""
+    if batch_questions is None:
+        return [[r] for r in requests]
+    out: List[List[Tuple[str, str, List[Tuple[int, str, Dict[str, Any]]]]]] = []
+    size = 0
+    for r in requests:
+        if not out or size + len(r[2]) > batch_questions:
+            out.append([])
+            size = 0
+        out[-1].append(r)
+        size += len(r[2])
+    return out
+
+
+def _prepare(data_root, image: str, text: str, items) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """(the decide request of one (image, text state, questions), the identity of the picture sent)."""
+    path = os.path.join(str(data_root), image)
+    with open(path, "rb") as f:
+        raw = f.read()
+    state: List[Any] = [{"type": "image", "base64": base64.b64encode(raw).decode()}]
+    if text:
+        state.append(text)
+    questions = {"%d:%s" % (i, qid): q for i, qid, q in items}  # unique inside the request
+    return {"state": state, "questions": questions}, picture_identity(_decode_picture(raw))
+
+
+def _prefetched(calls, data_root):
+    """(call, [(request, picture identity)]) for each call in order; the pictures are read and decoded by LOADERS
+    threads a few calls ahead of the model, so at most that much is held in memory."""
+    with ThreadPoolExecutor(max_workers=LOADERS) as pool:
+        def submit(call):
+            return call, [pool.submit(_prepare, data_root, *r) for r in call]
+
+        ahead = [submit(c) for c in calls[:PREFETCH_CALLS]]
+        for k in range(len(calls)):
+            if k + PREFETCH_CALLS < len(calls):
+                ahead.append(submit(calls[k + PREFETCH_CALLS]))
+            call, futures = ahead.pop(0)
+            yield call, [f.result() for f in futures]
+
+
 def evaluate_records(decider: Any, samples: Sequence[Sample], data_root, control: str = "none",
-                     seed: int = 0, max_questions: Optional[int] = MAX_QUESTIONS) -> List[Dict[str, Any]]:
+                     seed: int = 0, max_questions: Optional[int] = MAX_QUESTIONS,
+                     batch_questions: Optional[int] = BATCH_QUESTIONS) -> List[Dict[str, Any]]:
     """One record per question asked, in sample order. `max_questions` caps the questions sent in one
     decide() request (questions about the same picture and text state share it, so the picture is
-    encoded once); None asks every question in a request of its own. Each record's `latency_ms` is the
-    wall time of its request, given on the first record of the request only (None on the others), and
-    `questions_in_request` is how many questions that request carried."""
+    encoded once); None asks every question in a request of its own. `batch_questions` packs consecutive
+    requests into one decide_batch() call of at most that many questions (pictures encoded and questions
+    scored in one batched pass; answers as asking each request alone, up to float rounding); None sends
+    each request in a decide() call of its own. Each record's `latency_ms` is the wall time of its call,
+    given on the first record of the call only (None on the others); `questions_in_request` is how many
+    questions its request carried, `questions_in_call` / `requests_in_call` what its call carried."""
     if control not in CONTROLS:
         raise ValueError("control must be one of %s" % (CONTROLS,))
     if max_questions is not None and max_questions < 1:
         raise ValueError("max_questions must be >= 1 or None")
+    if batch_questions is not None and batch_questions < 1:
+        raise ValueError("batch_questions must be >= 1 or None")
+    if not hasattr(decider, "decide_batch"):  # a decider with decide() only: one request per call
+        batch_questions = None
     pairs: Dict[str, str] = picture_pairs(samples, seed) if control == "mismatched" else {}
-    asked: Dict[Tuple[int, str], Tuple[Dict[str, Any], str, Optional[float], int, Dict[str, float], Dict[str, Any]]] = {}
+    asked: Dict[Tuple[int, str], Tuple[Dict[str, Any], str, Optional[float], int, int, int, Dict[str, float], Dict[str, Any]]] = {}
+    calls = _calls(_requests(samples, pairs, control, max_questions), batch_questions)
     warm = 0
-    for image, text, items in _requests(samples, pairs, control, max_questions):
-        with open(os.path.join(str(data_root), image), "rb") as f:
-            state: List[Any] = [{"type": "image", "base64": base64.b64encode(f.read()).decode()}]
-        if text:
-            state.append(text)
-        questions = {"%d:%s" % (i, qid): q for i, qid, q in items}  # unique inside the request
-        while warm < WARMUP:  # first calls pay one-off costs; keep them out of the latency
-            decider.decide(state=state, questions=questions)
-            warm += 1
-        diag: Dict[str, Any] = {}
-        t0 = time.perf_counter()
-        res = decider.decide(state=state, questions=questions, diagnostics=diag)
+    for call, prepared in _prefetched(calls, data_root):
+        sent = [s for _, s in prepared]
+        reqs = [r for r, _ in prepared]
+        diags: List[Dict[str, Any]] = []
+        if batch_questions is None:
+            (req,) = reqs
+            while warm < WARMUP:  # first calls pay one-off costs; keep them out of the latency
+                decider.decide(**req)
+                warm += 1
+            diags.append({})
+            t0 = time.perf_counter()
+            results = [decider.decide(**req, diagnostics=diags[0])]
+        else:
+            while warm < WARMUP:
+                decider.decide_batch(reqs)
+                warm += 1
+            t0 = time.perf_counter()
+            results = decider.decide_batch(reqs, diagnostics=diags)
         ms = (time.perf_counter() - t0) * 1000
-        sent = picture_identity(_open_picture(os.path.join(str(data_root), image)))
-        if diag.get("picture") != sent:
-            raise RuntimeError("request on %s: the picture decided on is not the one sent" % image)
-        for n, (key, (i, qid, q)) in enumerate(zip(questions, items)):
-            route = diag["route"][key]
-            domain = domain_of(q.get("instructions", ""))
-            extra = {"read_table": diag["table"], "read_state": diag["states"][key]} if route == "read" else {}
-            asked[(i, qid)] = (q, image, ms if n == 0 else None, len(items), _probabilities(res["answers"][key]),
-                               dict(extra, route=route, reading_domain=domain, picture_pixels_sha256=sent["pixels_sha256"] if sent else None))
+        n_call = sum(len(items) for _, _, items in call)
+        first = True
+        for (image, _, items), req, res, diag, pic in zip(call, reqs, results, diags, sent):
+            if diag.get("picture") != pic:
+                raise RuntimeError("request on %s: the picture decided on is not the one sent" % image)
+            for key, (i, qid, q) in zip(req["questions"], items):
+                route = diag["route"][key]
+                domain = domain_of(q.get("instructions", ""))
+                extra = {"read_table": diag["table"], "read_state": diag["states"][key]} if route == "read" else {}
+                asked[(i, qid)] = (q, image, ms if first else None, len(items), n_call, len(call),
+                                   _probabilities(res["answers"][key]),
+                                   dict(extra, route=route, reading_domain=domain,
+                                        picture_pixels_sha256=pic["pixels_sha256"] if pic else None))
+                first = False
     records: List[Dict[str, Any]] = []
     for i, s in enumerate(samples):
         for qid in s["questions"]:
             if (i, qid) not in asked:
                 continue
-            q, image, ms, size, probs, route = asked[(i, qid)]
+            q, image, ms, size, n_call, r_call, probs, route = asked[(i, qid)]
             gold = s["gold"][qid]["probabilities"]
             pred = max(probs, key=probs.__getitem__)
             records.append({
@@ -140,7 +211,8 @@ def evaluate_records(decider: Any, samples: Sequence[Sample], data_root, control
                 "type": q["type"], "options": list(q["criteria"]) if q["type"] == "choice" else ["false", "true"],
                 "gold": gold, "gold_answer": max(gold, key=gold.__getitem__), "probabilities": probs,
                 "prediction": pred, "p_prediction": probs[pred], "control": control,
-                "latency_ms": ms, "questions_in_request": size, **route})
+                "latency_ms": ms, "questions_in_request": size, "questions_in_call": n_call,
+                "requests_in_call": r_call, **route})
     return score_records(records)
 
 
@@ -178,11 +250,10 @@ def code_problems(reference: Dict[str, Any], got: Dict[str, Any]) -> List[str]:
     return out
 
 
-def _open_picture(path: str):
+def _decode_picture(raw: bytes):
     from PIL import Image
 
-    with open(path, "rb") as f:
-        return Image.open(io.BytesIO(f.read())).convert("RGB")
+    return Image.open(io.BytesIO(raw)).convert("RGB")
 
 
 def reading_summary(decider: Any, records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
@@ -276,31 +347,42 @@ def summarize(records: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _timing(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Wall time of the decide() requests (the first WARMUP calls excluded):
+    """Wall time of the decide() / decide_batch() calls (the first WARMUP calls excluded).
+    Each call carrying one request (no batching):
       request_latency_ms      P50 / P95 over all requests, whatever they carried;
       questions_per_request   how many questions those requests carried;
-      ms_per_question         throughput: request time / questions in it (P50 / P95 over requests, and
-                              total time / total questions) -- not the latency of a single question;
       latency_ms              single-question latency: P50 / P95 over the requests that carried exactly
-                              one question (all of them with --no-group; absent if there were none)."""
-    reqs = [(r["latency_ms"], r["questions_in_request"]) for r in records if r["latency_ms"] is not None]
-    if not reqs:
+                              one question (all of them with --no-group; absent if there were none).
+    Requests batched (some call carried several): call_latency_ms and questions_per_call / requests_per_call
+    instead -- a batched call says nothing about the latency of one request.
+    Either way, ms_per_question is throughput: call time / questions in it (P50 / P95 over calls, and
+    total time / total questions) -- not the latency of a single question."""
+    calls = [(r["latency_ms"], r.get("questions_in_call", r["questions_in_request"]), r.get("requests_in_call", 1))
+             for r in records if r["latency_ms"] is not None]
+    if not calls:
         return {}
 
     def pct(xs: List[float]) -> Dict[str, Any]:
         return {"p50": float(np.percentile(xs, 50)), "p95": float(np.percentile(xs, 95)),
                 "requests": len(xs), "warmup_excluded": WARMUP}
 
-    ms = [t for t, _ in reqs]
-    sizes = [n for _, n in reqs]
-    per_q = [t / n for t, n in reqs]
-    out: Dict[str, Any] = {
-        "request_latency_ms": pct(ms),
-        "questions_per_request": {"mean": float(np.mean(sizes)), "p50": float(np.percentile(sizes, 50)),
-                                  "max": int(max(sizes))},
-        "ms_per_question": {"p50": float(np.percentile(per_q, 50)), "p95": float(np.percentile(per_q, 95)),
-                            "overall": float(sum(ms) / sum(sizes))}}
-    single = [t for t, n in reqs if n == 1]
+    def spread(xs: List[int]) -> Dict[str, Any]:
+        return {"mean": float(np.mean(xs)), "p50": float(np.percentile(xs, 50)), "max": int(max(xs))}
+
+    ms = [t for t, _, _ in calls]
+    sizes = [n for _, n, _ in calls]
+    per_q = [t / n for t, n, _ in calls]
+    out: Dict[str, Any] = {"ms_per_question": {"p50": float(np.percentile(per_q, 50)),
+                                               "p95": float(np.percentile(per_q, 95)),
+                                               "overall": float(sum(ms) / sum(sizes))}}
+    if any(k > 1 for _, _, k in calls):
+        call_ms = pct(ms)
+        call_ms["calls"] = call_ms.pop("requests")
+        out.update(call_latency_ms=call_ms, questions_per_call=spread(sizes),
+                   requests_per_call=spread([k for _, _, k in calls]))
+        return out
+    out.update(request_latency_ms=pct(ms), questions_per_request=spread(sizes))
+    single = [t for t, n, _ in calls if n == 1]
     if single:
         out["latency_ms"] = pct(single)
     return out
@@ -323,12 +405,14 @@ def order_sensitivity(plain: List[Dict[str, Any]], reversed_: List[Dict[str, Any
 
 def evaluate(decider: Any, samples: Sequence[Sample], data_root, control: str = "none", seed: int = 0,
              records_out: Optional[List[Dict[str, Any]]] = None,
-             max_questions: Optional[int] = MAX_QUESTIONS) -> Dict[str, Any]:
+             max_questions: Optional[int] = MAX_QUESTIONS,
+             batch_questions: Optional[int] = BATCH_QUESTIONS) -> Dict[str, Any]:
     """Summary of `evaluate_records` (accuracy per type / source / kind / axis / option count, NLL,
     Brier, ECE on the top probability with 15 bins, POPE precision / recall / F1 / yes ratio, request
     timing -- see `_timing`). Pass a list as `records_out` to also get the per-question records;
-    `max_questions` as in `evaluate_records` (None: one question per request)."""
-    records = evaluate_records(decider, samples, data_root, control, seed, max_questions)
+    `max_questions` and `batch_questions` as in `evaluate_records` (None: one question per request / one
+    request per call)."""
+    records = evaluate_records(decider, samples, data_root, control, seed, max_questions, batch_questions)
     if records_out is not None:
         records_out.extend(records)
     out = summarize(records)
@@ -339,7 +423,8 @@ def evaluate(decider: Any, samples: Sequence[Sample], data_root, control: str = 
     if getattr(decider.cfg, "temperature_by_route", None):           # V04-ROUTE-TEMP; absent when empty (older records)
         out["temperature"]["by_route"] = dict(decider.cfg.temperature_by_route)
     out["grouping"] = {"max_questions_per_request": max_questions or 1,
-                       "by": "picture file + text state" if max_questions else "none (one question per request)"}
+                       "by": "picture file + text state" if max_questions else "none (one question per request)",
+                       "max_questions_per_call": batch_questions or "one request per call"}
     out["environment"] = {"threads": _threads(), "machine": platform.machine(), "system": platform.system()}
     return out
 
