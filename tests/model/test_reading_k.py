@@ -116,7 +116,9 @@ def test_off_by_default_and_on_only_for_temperature(readers):
     ap, ak = plain.decide("Two samples.", qs, image=img, diagnostics=dp), k.decide("Two samples.", qs, image=img, diagnostics=dk)
     assert dp["k_block"] is None and dk["k_block"] == R.k_block(TABLE)
     assert dk["states"] == {"t": dp["state"] + "\n" + R.k_block(TABLE), "m": dp["state"]} and dk["state"] is None   # two inputs
-    assert ak["answers"]["m"] == ap["answers"]["m"] and ak["answers"]["o"] == ap["answers"]["o"]     # magnets / ordinary unchanged
+    for key in ("m", "o"):       # magnets / ordinary unchanged (up to float rounding: K decides "m" in a batch of its own)
+        assert ak["answers"][key]["choice"] == ap["answers"][key]["choice"]
+        assert ak["answers"][key]["probabilities"] == pytest.approx(ap["answers"][key]["probabilities"], abs=1e-6)
     assert dk["route"] == dp["route"] == {"t": "read", "m": "read", "o": "ordinary"}
     want = plain.decider._decide(dk["states"]["t"], {"t": q(TEMP)}, None)["answers"]["t"]
     assert ak["answers"]["t"] == want                                      # the temperature question sees the K state

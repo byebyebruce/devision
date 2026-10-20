@@ -166,7 +166,7 @@ def test_a_saved_checkpoint_loads_through_the_package_and_answers_the_same(decid
                    questions={"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}})
     decider.save(tmp_path / "ckpt")
 
-    loaded = devision.load(str(tmp_path / "ckpt"))
+    loaded = devision.load(str(tmp_path / "ckpt"), device="cpu")   # the in-memory model is on the CPU: exact equality
 
     assert loaded.predict(**request) == decider.decide(**request)
 
@@ -270,7 +270,7 @@ def test_an_older_checkpoint_with_devision_config_json_loads_the_same(decider, t
                    questions={"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}})
     decider.save(tmp_path / "ckpt")
     os.rename(tmp_path / "ckpt" / "config.json", tmp_path / "ckpt" / "devision_config.json")
-    assert devision.load(str(tmp_path / "ckpt")).predict(**request) == decider.decide(**request)
+    assert devision.load(str(tmp_path / "ckpt"), device="cpu").predict(**request) == decider.decide(**request)
     decider.save(tmp_path / "ckpt")                              # saving over it leaves one config, config.json
     assert sorted(os.listdir(tmp_path / "ckpt"))[0] == "config.json"
     assert not (tmp_path / "ckpt" / "devision_config.json").exists()
