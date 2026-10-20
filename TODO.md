@@ -16,7 +16,6 @@
 
 ## 3. r16
 
-- 从 v0.3 出发的 bf16 与 `amp: off` 短程对照，定精度设置。
 - r16 训练；评测、训练日志、与 v0.3 逐题配对（`devision-compare`）、`scripts/lv_report.py`。
 
 ## 4. 发布 v0.4
