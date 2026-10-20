@@ -14,7 +14,7 @@ data-v2 used 3 of the 21 shards and only GQA's two-option "choose" questions. He
           an attribute of the queried object; never a word containing the answer or contained in it.
 Every object a question refers to must cover >= 1.5% of the picture (data-v2's `visible`). At most 8 questions per
 picture; pictures of every evaluation set under <root> are dropped (COCO and VG ids of a picture both); 2% of the
-pictures (v2_common.in_dev) go to gqa_dev.jsonl. Writes <root>/n1/gqa_train.jsonl, gqa_dev.jsonl, GQA_MANIFEST.json.
+pictures (v2_common.in_dev on "n1:<image id>", independent of data-v2's 3% dev pictures, which are held out) go to gqa_dev.jsonl. Writes <root>/n1/gqa_train.jsonl, gqa_dev.jsonl, GQA_MANIFEST.json.
 """
 import argparse
 import glob
@@ -162,8 +162,8 @@ def main(argv=None) -> None:
         rng.shuffle(ss)
         samples += ss[:PER_PICTURE]
     rng.shuffle(samples)
-    dev = [s for s in samples if in_dev(s["image_id"], DEV_SHARE)]
-    train = [s for s in samples if not in_dev(s["image_id"], DEV_SHARE)]
+    dev = [s for s in samples if in_dev("n1:" + s["image_id"], DEV_SHARE)]
+    train = [s for s in samples if not in_dev("n1:" + s["image_id"], DEV_SHARE)]
     os.makedirs(out_dir, exist_ok=True)
     manifest = {"records": len(records), "shards": len(shards), **seen,
                 "train": _write_jsonl(os.path.join(out_dir, "gqa_train.jsonl"), train),

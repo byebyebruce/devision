@@ -16,7 +16,7 @@ consensus is kept and its gold is the share of the ten answers each option got:
 Dropped: reading questions (data-v2's list), questions whose answer is outside the type's rules, pictures of every
 evaluation set under <root> (COCO and VG ids of a picture both, convert.same_images). A recurring wording (5 or
 more questions) keeps each top answer at most as often as its second most common one, so the wording alone does
-not point at an answer. 2% of the pictures (v2_common.in_dev) go to dev.jsonl for monitoring / temperatures.
+not point at an answer. 2% of the pictures (v2_common.in_dev on "n1:<image id>", independent of data-v2's dev pictures, which are held out) go to dev.jsonl for monitoring / temperatures.
 Writes <root>/n1/vqav2_train.jsonl, dev.jsonl and MANIFEST.json (counts, option counts, a question-only baseline).
 """
 import argparse
@@ -202,8 +202,8 @@ def main(argv=None) -> None:
             and os.path.exists(os.path.join(a.root, s["image"]))]
     samples = finish(flatten(kept, rng), rng)
     rng.shuffle(samples)
-    dev = [s for s in samples if in_dev(s["image_id"], DEV_SHARE)]
-    train = [s for s in samples if not in_dev(s["image_id"], DEV_SHARE)]
+    dev = [s for s in samples if in_dev("n1:" + s["image_id"], DEV_SHARE)]
+    train = [s for s in samples if not in_dev("n1:" + s["image_id"], DEV_SHARE)]
     os.makedirs(out_dir, exist_ok=True)
     manifest = {
         "converted": len(raw), "held_out_pictures_dropped": len(raw) - len(kept), "eval_files": len(evals),
