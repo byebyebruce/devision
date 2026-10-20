@@ -11,15 +11,30 @@ name: full
 stages: []
 
 evaluate:
-  checkpoint: runs/CANDIDATE/stage2     # NOT LOCKED (critic V04-FALLBACK-01): exp32 failed its screen; set to the locked candidate, update history, then freeze
+  checkpoint: runs/v04-k/cand            # the v0.4 K combination (V04-K-FREEZE-PREP-01): LIVE-K source, calibrated, routed temperatures, bound reading/
   calibration_fit: data/r13b/val.jsonl
-  history: [data/ext/dev_ext.jsonl, data/r13/gqa/dev_bind_gqa.jsonl, data/r13b/panel_exist.jsonl, data/r13b/panel_science.jsonl,
-            data/r13b/count_wide.jsonl, data/v11/dev_count_transfer.jsonl, data/exp14/pixmo_count_wide.jsonl,
-            data/exp14/pixmo_count_narrow.jsonl, data/exp14/pixmo_exist.jsonl,
-            data/v6/dev_lr_pairs.jsonl, data/v5/dev_vsr.jsonl,
-            # monitored while training the candidate (exp30 / exp32): stage val / --eval sets
-            data/real_layout/questions_tune.jsonl, data/exp21/dev_sqa_temp.jsonl, data/exp21/dev_sqa_force.jsonl,
-            data/exp21/dev_sqa_temp_mism.jsonl, data/exp21/dev_sqa_force_mism.jsonl, data/exp22/dev16.jsonl]
+  history: [data/ext/dev_ext.jsonl, data/r13/gqa/dev_bind_gqa.jsonl, data/r13b/panel_exist.jsonl,
+            data/r13b/panel_science.jsonl, data/r13b/count_wide.jsonl, data/v11/dev_count_transfer.jsonl,
+            data/exp14/pixmo_count_wide.jsonl, data/exp14/pixmo_count_narrow.jsonl, data/exp14/pixmo_exist.jsonl,
+            data/v6/dev_lr_pairs.jsonl, data/v5/dev_vsr.jsonl, data/real_layout/questions_tune.jsonl,
+            data/exp21/dev_sqa_temp.jsonl, data/exp21/dev_sqa_force.jsonl, data/exp21/dev_sqa_temp_mism.jsonl,
+            data/exp21/dev_sqa_force_mism.jsonl, data/exp22/dev16.jsonl,
+            # the v0.4 K candidate's real development (V04-K-FREEZE-PREP-01): every non-training set the runs from
+            # exp30 to protect-k / LIVE-K / the calibrations read (stage --val / --eval, runner screens, reading fits,
+            # route calibration), from their scripts and configs; training files are not listed here
+            data/cmp/fit.jsonl, data/exp21/dev_syn_erased.jsonl, data/exp21/sqa_blank.jsonl, data/exp21/sqa_text.jsonl,
+            data/exp24/align_val.jsonl, data/exp30/real_captions.jsonl, data/exp31/text_force.jsonl,
+            data/exp33/decisions.jsonl, data/exp34/semantics_tune.jsonl, data/exp36/fit_slice.jsonl,
+            data/exp37/tune_L.jsonl, data/exp37/tune_S.jsonl, data/exp40/rl_tune_L.jsonl, data/exp41/questions.jsonl,
+            data/exp42/fit_L.jsonl, data/exp42/fit_O.jsonl, data/exp42/val_sub.jsonl, data/exp45/regions_readout.jsonl,
+            data/exp45/regions.jsonl, data/exp46/units.jsonl, data/exp48/quads.jsonl, data/exp49/questions.jsonl,
+            data/exp50/val_quarter.jsonl, data/exp52/numbers.jsonl, data/exp61/questions.jsonl, data/exp65/diag.jsonl,
+            data/exp66/questions.jsonl, data/exp68/diag.jsonl, data/exp69/dev_targets.jsonl, data/exp70/diag68_K.jsonl,
+            data/exp70/fid_raw.jsonl, data/exp72/fit_old_K.jsonl, data/exp72/G_K.jsonl, data/exp72/slice_K.jsonl,
+            data/exp72/slice_raw.jsonl, data/facts/fit.jsonl, data/facts/tune_G.jsonl, data/facts/tune_P.jsonl,
+            data/protect_p/P_K.jsonl, data/protect_p/slice_K_text.jsonl, data/r13b/val.jsonl,
+            data/real_layout/captions_tune.jsonl, data/real_layout/questions_confirm.jsonl,
+            data/rl_calib/questions.jsonl, data/v10/dev_sqa_conc.jsonl, data/v10/dev_sqa_repel.jsonl]
   image_identity: data/v5/image_identity.json
   controls: true
   sets:

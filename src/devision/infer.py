@@ -143,6 +143,16 @@ def _image_arg(image: Any, files: bool = True) -> Image.Image:
     return _open(raw)
 
 
+def picture_identity(img: Optional[Image.Image]) -> Optional[Dict[str, Any]]:
+    """The decoded picture a request used: sha256 of its RGB pixels and its size (None without a picture)."""
+    if img is None:
+        return None
+    import hashlib
+
+    rgb = img.convert("RGB")
+    return {"pixels_sha256": hashlib.sha256(rgb.tobytes()).hexdigest(), "size": list(rgb.size)}
+
+
 def _split_state(state: Any):
     """(text state for the encoder, image or None)."""
     if not isinstance(state, (str, dict, list)):
@@ -156,6 +166,32 @@ def _split_state(state: Any):
     if len(text) == 1 and isinstance(text[0], str):
         text = text[0]
     return (text if text else ""), (_load_image(images[0]) if images else None)
+
+
+def resolve_request(state: Any, questions: Any, image: Any = None):
+    """(text state, picture or None) of a request -- the one place that checks the questions and turns the two ways
+    of giving the picture (`image=` or an image part in `state`) into the same PIL image, before anything (ordinary
+    decide or the reading mode) looks at it. `image` as for `Decider.decide`; the HTTP layer resolves its top-level
+    `image` without local files before calling."""
+    if not isinstance(questions, dict) or not questions:
+        raise InvalidRequest("questions must be a non-empty object")
+    for qid, q in questions.items():
+        _validate_question(qid, q)
+    text_state, state_image = _split_state(state)
+    if image is not None and state_image is not None:
+        raise InvalidRequest("give the image either as image= or as an image part in state, not both")
+    return text_state, (_image_arg(image) if image is not None else state_image)
+
+
+def resolve_checkpoint(path: Any, revision: Optional[str] = None, token: Optional[str] = None) -> str:
+    """A local checkpoint directory: `path` itself, or the Hugging Face snapshot of the repo id `path` at
+    `revision` (with `token` for private repos)."""
+    path = str(path)
+    if os.path.isdir(path):
+        return path
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(path, revision=revision, token=token)
 
 
 def _validate_question(qid: str, q: Any) -> None:
@@ -238,11 +274,7 @@ class Decider:
         `revision` and `token` apply to the latter. `device`: "auto" (default: the fastest available --
         CUDA, then MPS, then CPU, so it also runs on machines without a GPU), or "cuda" / "mps" / "cpu"."""
         device = best_device() if device == "auto" else device
-        path = str(path)
-        if not os.path.isdir(path):
-            from huggingface_hub import snapshot_download
-
-            path = snapshot_download(path, revision=revision, token=token)
+        path = resolve_checkpoint(path, revision, token)
         with open(config_path(path)) as f:
             cfg = ModelConfig.from_dict(json.load(f))
         with _parameters_on_meta():     # no memory and no random init for weights the file replaces anyway
@@ -252,26 +284,35 @@ class Decider:
         tok = AutoTokenizer.from_pretrained(os.path.join(path, "tokenizer"))
         return cls(model.to(device).float(), tok, cfg)
 
+    reading_status: Dict[str, Any] = {"mode": "none"}      # no reading bundle (see devision.reading)
+
     def predict(self, state: Any, questions: Any, image: Any = None) -> Dict[str, Any]:
         """Same as `decide`, under Laya's name."""
         return self.decide(state, questions, image=image)
 
-    @torch.inference_mode()
-    def decide(self, state: Any, questions: Any, image: Any = None) -> Dict[str, Any]:
+    def use_raw_temperatures(self) -> None:
+        """Every temperature this object applies set to 1 (the raw-probability control)."""
+        self.cfg.temperature, self.cfg.temperature_by_options, self.cfg.temperature_by_route = [1.0, 1.0, 1.0], {}, {}
+
+    def decide(self, state: Any, questions: Any, image: Any = None, diagnostics: Optional[Dict] = None) -> Dict[str, Any]:
         """Jev answers. Each question's probabilities are softmax(option logits / T), T being its
         (type, option count) bucket's temperature, or its type's when the bucket has none.
 
         `image`: the picture as an http(s) URL, data URI, local file path, base64 string, bytes, pathlib.Path or
         PIL image -- the same as an image part in `state`, which must then not have one. The HTTP request's
-        top-level `image` comes here too, as a URL, data URI or base64 only (never a server-side file). A key named "image" inside an object state stays plain text, as in Jev."""
-        if not isinstance(questions, dict) or not questions:
-            raise InvalidRequest("questions must be a non-empty object")
-        for qid, q in questions.items():
-            _validate_question(qid, q)
-        text_state, state_image = _split_state(state)
-        if image is not None and state_image is not None:
-            raise InvalidRequest("give the image either as image= or as an image part in state, not both")
-        image = _image_arg(image) if image is not None else state_image
+        top-level `image` comes here too, as a URL, data URI or base64 only (never a server-side file). A key named "image" inside an object state stays plain text, as in Jev.
+        `diagnostics` (optional dict) receives each question's route ("ordinary": no reading here)."""
+        text_state, picture = resolve_request(state, questions, image)
+        if diagnostics is not None:
+            diagnostics.update(route={k: "ordinary" for k in questions}, picture=picture_identity(picture))
+        return self._decide(text_state, questions, picture)
+
+    @torch.inference_mode()
+    def _decide(self, text_state: Any, questions: Dict[str, Any], image: Optional[Image.Image],
+                route_temperature: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """`decide` on an already resolved request (checked questions, text state, PIL picture or None).
+        `route_temperature` (question id -> temperature, from the reading combination for its read questions) replaces
+        that question's type / bucket temperature; applied once, here, on the logits."""
         qids = list(questions)
         items = [question_item(self.tok, self.cfg, text_state, questions[qid]) for qid in qids]
         for qid, it in zip(qids, items):
@@ -298,7 +339,7 @@ class Decider:
         for i, qid in enumerate(qids):
             q, it = questions[qid], items[i]
             k = len(it["markers"])
-            t = self.cfg.temperature_for(it["qtype"], k)
+            t = (route_temperature or {}).get(qid) or self.cfg.temperature_for(it["qtype"], k)
             p = torch.softmax(logits[i, :k] / t, -1).tolist()
             answers[qid] = self._answer(q, p)
         input_tokens = sum(len(it["ids"]) + n_visual for it in items)

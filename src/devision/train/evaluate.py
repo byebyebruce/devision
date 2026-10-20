@@ -16,8 +16,16 @@ Controls (same questions, one thing changed):
   reversed    choice options in reverse order (the option keys and gold are unchanged); compared with
               the plain run by `order_sensitivity` -- answer flips mean the order matters. Only choice
               questions are asked: a noul question has no option order to change.
+
+`decider` is whatever `devision.load` returns: a plain `Decider` or the reading combination
+(`devision.reading.Reading`). Each record carries the route its question actually took ("read" /
+"ordinary"), and every request checks that the picture decided on (its decoded pixels) is the file this
+evaluation sent -- for the mismatched control the swapped picture. The summary's `reading` gives the
+loaded mode and how many questions the reading router covers (`routed_questions`) vs were actually read
+(`read_questions`).
 """
 import base64
+import io
 import math
 import os
 import platform
@@ -30,7 +38,8 @@ import numpy as np
 from laya.common import ece_score
 
 from .samples import Sample
-from ..infer import Decider
+from ..infer import picture_identity
+from ..reading import domain_of
 
 CONTROLS = ("none", "mismatched", "reversed")
 WARMUP = 3
@@ -81,7 +90,7 @@ def _requests(samples: Sequence[Sample], pairs: Dict[str, str], control: str,
     return out
 
 
-def evaluate_records(decider: Decider, samples: Sequence[Sample], data_root, control: str = "none",
+def evaluate_records(decider: Any, samples: Sequence[Sample], data_root, control: str = "none",
                      seed: int = 0, max_questions: Optional[int] = MAX_QUESTIONS) -> List[Dict[str, Any]]:
     """One record per question asked, in sample order. `max_questions` caps the questions sent in one
     decide() request (questions about the same picture and text state share it, so the picture is
@@ -93,7 +102,7 @@ def evaluate_records(decider: Decider, samples: Sequence[Sample], data_root, con
     if max_questions is not None and max_questions < 1:
         raise ValueError("max_questions must be >= 1 or None")
     pairs: Dict[str, str] = picture_pairs(samples, seed) if control == "mismatched" else {}
-    asked: Dict[Tuple[int, str], Tuple[Dict[str, Any], str, Optional[float], int, Dict[str, float]]] = {}
+    asked: Dict[Tuple[int, str], Tuple[Dict[str, Any], str, Optional[float], int, Dict[str, float], Dict[str, Any]]] = {}
     warm = 0
     for image, text, items in _requests(samples, pairs, control, max_questions):
         with open(os.path.join(str(data_root), image), "rb") as f:
@@ -104,17 +113,25 @@ def evaluate_records(decider: Decider, samples: Sequence[Sample], data_root, con
         while warm < WARMUP:  # first calls pay one-off costs; keep them out of the latency
             decider.decide(state=state, questions=questions)
             warm += 1
+        diag: Dict[str, Any] = {}
         t0 = time.perf_counter()
-        res = decider.decide(state=state, questions=questions)
+        res = decider.decide(state=state, questions=questions, diagnostics=diag)
         ms = (time.perf_counter() - t0) * 1000
+        sent = picture_identity(_open_picture(os.path.join(str(data_root), image)))
+        if diag.get("picture") != sent:
+            raise RuntimeError("request on %s: the picture decided on is not the one sent" % image)
         for n, (key, (i, qid, q)) in enumerate(zip(questions, items)):
-            asked[(i, qid)] = (q, image, ms if n == 0 else None, len(items), _probabilities(res["answers"][key]))
+            route = diag["route"][key]
+            domain = domain_of(q.get("instructions", ""))
+            extra = {"read_table": diag["table"], "read_state": diag["states"][key]} if route == "read" else {}
+            asked[(i, qid)] = (q, image, ms if n == 0 else None, len(items), _probabilities(res["answers"][key]),
+                               dict(extra, route=route, reading_domain=domain, picture_pixels_sha256=sent["pixels_sha256"] if sent else None))
     records: List[Dict[str, Any]] = []
     for i, s in enumerate(samples):
         for qid in s["questions"]:
             if (i, qid) not in asked:
                 continue
-            q, image, ms, size, probs = asked[(i, qid)]
+            q, image, ms, size, probs, route = asked[(i, qid)]
             gold = s["gold"][qid]["probabilities"]
             pred = max(probs, key=probs.__getitem__)
             records.append({
@@ -123,8 +140,57 @@ def evaluate_records(decider: Decider, samples: Sequence[Sample], data_root, con
                 "type": q["type"], "options": list(q["criteria"]) if q["type"] == "choice" else ["false", "true"],
                 "gold": gold, "gold_answer": max(gold, key=gold.__getitem__), "probabilities": probs,
                 "prediction": pred, "p_prediction": probs[pred], "control": control,
-                "latency_ms": ms, "questions_in_request": size})
+                "latency_ms": ms, "questions_in_request": size, **route})
     return score_records(records)
+
+
+REQUIRED_MODULES = ("devision", "devision.infer", "devision.image", "devision.model", "devision.reading",
+                    "devision.train.evaluate", "devision.train.cli")
+
+
+def runtime_code() -> Dict[str, Any]:
+    """The code this process actually runs: every loaded devision.* module -> its file and the file's sha256 (the
+    path is for tracing; identities compare names and contents), plus the package version and Python version."""
+    import hashlib
+    import sys
+
+    import devision
+
+    mods = {}
+    for name, m in sorted(sys.modules.items()):
+        f = getattr(m, "__file__", None)
+        if (name == "devision" or name.startswith("devision.")) and f and os.path.exists(f):
+            with open(f, "rb") as fh:
+                mods[name] = {"path": f, "sha256": hashlib.sha256(fh.read()).hexdigest()}
+    return {"modules": mods, "version": devision.__version__, "python": platform.python_version()}
+
+
+def code_problems(reference: Dict[str, Any], got: Dict[str, Any]) -> List[str]:
+    """Differences between a frozen reference `runtime_code()` and the one an evaluation recorded: every module the
+    evaluation loaded must be in the reference with the same content (a module the reference never loaded is a
+    difference, not ignored), the required modules must have been loaded, and the versions must agree."""
+    ref, mods = reference.get("modules", {}), (got or {}).get("modules", {})
+    out = ["module %s: not in the frozen reference" % n for n in sorted(set(mods) - set(ref))]
+    out += ["module %s: content differs from the frozen reference" % n for n in sorted(set(mods) & set(ref)) if mods[n]["sha256"] != ref[n]["sha256"]]
+    out += ["module %s: required but not loaded" % n for n in REQUIRED_MODULES if n not in mods]
+    out += ["%s %r differs from the frozen %r" % (k, (got or {}).get(k), reference.get(k)) for k in ("version", "python")
+            if (got or {}).get(k) != reference.get(k)]
+    return out
+
+
+def _open_picture(path: str):
+    from PIL import Image
+
+    with open(path, "rb") as f:
+        return Image.open(io.BytesIO(f.read())).convert("RGB")
+
+
+def reading_summary(decider: Any, records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """The loaded reading mode (`reading_status`) and, over `records`, the questions the reading router covers vs
+    those actually read."""
+    routed = sum(r.get("reading_domain") is not None for r in records)
+    return {**getattr(decider, "reading_status", {"mode": "none"}), "routed_questions": routed,
+            "read_questions": sum(r.get("route") == "read" for r in records)}
 
 
 def score_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -255,7 +321,7 @@ def order_sensitivity(plain: List[Dict[str, Any]], reversed_: List[Dict[str, Any
             "mean_abs_probability_change": float(np.mean(dp))}
 
 
-def evaluate(decider: Decider, samples: Sequence[Sample], data_root, control: str = "none", seed: int = 0,
+def evaluate(decider: Any, samples: Sequence[Sample], data_root, control: str = "none", seed: int = 0,
              records_out: Optional[List[Dict[str, Any]]] = None,
              max_questions: Optional[int] = MAX_QUESTIONS) -> Dict[str, Any]:
     """Summary of `evaluate_records` (accuracy per type / source / kind / axis / option count, NLL,
@@ -267,8 +333,11 @@ def evaluate(decider: Decider, samples: Sequence[Sample], data_root, control: st
         records_out.extend(records)
     out = summarize(records)
     out["model"] = decider.cfg.model_name
+    out["reading"] = reading_summary(decider, records)
     out["temperature"] = {"choice": decider.cfg.temperature[0], "noul": decider.cfg.temperature[2],
                           "by_options": dict(decider.cfg.temperature_by_options)}
+    if getattr(decider.cfg, "temperature_by_route", None):           # V04-ROUTE-TEMP; absent when empty (older records)
+        out["temperature"]["by_route"] = dict(decider.cfg.temperature_by_route)
     out["grouping"] = {"max_questions_per_request": max_questions or 1,
                        "by": "picture file + text state" if max_questions else "none (one question per request)"}
     out["environment"] = {"threads": _threads(), "machine": platform.machine(), "system": platform.system()}

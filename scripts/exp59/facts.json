@@ -1,0 +1,15 @@
+{
+ "_note": "exp59 G-facts (critic EXP59-PREP-01): the non-number facts the 12 transcribed magnet pictures show -- each pair's magnets left to right, their shape and their size relative to the other magnets in the picture. Read by Claude Code from the original pictures on 2026-10-18 (data/v10/images/sqa_test/<id>.jpg), not checked by a person. Never a force relation, a rule or an answer; pole labels are not listed (the questions ask about magnitude only). Monitoring only, never training data.",
+ "v3-sqa-test:test-3898": "Pair 1: a large circular magnet and a large circular magnet. Pair 2: a large circular magnet and a small circular magnet.",
+ "v3-sqa-test:test-2030": "Pair 1: a small bar magnet and a large bar magnet. Pair 2: a large bar magnet and a large bar magnet.",
+ "v3-sqa-test:test-3589": "Pair 1: two bar magnets. Pair 2: two bar magnets. All four magnets are the same size.",
+ "v3-sqa-test:test-4069": "Pair 1: two bar magnets. Pair 2: two bar magnets. All four magnets are the same size.",
+ "v3-sqa-test:test-2097": "Pair 1: a ring magnet and a diamond-shaped magnet. Pair 2: a ring magnet and a diamond-shaped magnet. The two ring magnets are the same size, and the two diamond-shaped magnets are the same size.",
+ "v3-sqa-test:test-362": "Pair 1: two ring magnets. Pair 2: two ring magnets. All four magnets are the same size.",
+ "v3-sqa-test:test-1376": "Pair 1: two bar magnets. Pair 2: two bar magnets. All four magnets are the same size.",
+ "v3-sqa-test:test-2479": "Pair 1: a small diamond-shaped magnet and a small diamond-shaped magnet. Pair 2: a large diamond-shaped magnet and a small diamond-shaped magnet.",
+ "v3-sqa-test:test-2360": "Pair 1: two bar magnets. Pair 2: two bar magnets. All four magnets are the same size.",
+ "v3-sqa-test:test-2054": "Pair 1: a solid circular magnet and a ring magnet. Pair 2: a solid circular magnet and a ring magnet. The two solid circular magnets are the same size, and the two ring magnets are the same size.",
+ "v3-sqa-test:test-4157": "Pair 1: a diamond-shaped magnet and a bar magnet. Pair 2: a diamond-shaped magnet and a bar magnet. The two diamond-shaped magnets are the same size, and the two bar magnets are the same size.",
+ "v3-sqa-test:test-3665": "Pair 1: two bar magnets. Pair 2: two bar magnets. All four magnets are the same size."
+}

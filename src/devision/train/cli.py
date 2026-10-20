@@ -129,13 +129,17 @@ def eval_main(argv=None) -> None:
     per question (--details, default <out without .json>.details.jsonl), from which every number of the
     summary can be recomputed. Questions about the same picture and text state go into one decide()
     request (at most --max-questions), so each picture is encoded once; --no-group asks one question per
-    request (single-question latency)."""
+    request (single-question latency). The checkpoint loads through `devision.load`: with a reading/ bundle the
+    reading combination is evaluated (--reading auto / on), --reading off evaluates the plain Decider as a control."""
     _need_train_extra()
-    from ..infer import Decider
-    from .evaluate import CONTROLS, MAX_QUESTIONS, evaluate
+    from .. import READING_MODES, load
+    from .evaluate import CONTROLS, MAX_QUESTIONS, evaluate, runtime_code
 
     p = argparse.ArgumentParser(description=eval_main.__doc__)
     p.add_argument("--checkpoint", required=True)
+    p.add_argument("--revision", help="hub commit, tag or branch when --checkpoint is a repo id")
+    p.add_argument("--reading", choices=READING_MODES, default="auto",
+                   help="auto (default): the reading combination if the checkpoint has reading/; on: require it; off: plain Decider")
     p.add_argument("--data", required=True)
     p.add_argument("--data-root", default="data")
     p.add_argument("--out")
@@ -160,15 +164,16 @@ def eval_main(argv=None) -> None:
         p.error("--max-questions must be >= 1")
 
     records: list = []
-    decider = Decider.load(a.checkpoint, device=a.device)
+    decider = load(a.checkpoint, device=a.device, revision=a.revision, reading=a.reading)
     if a.no_temperature:
-        decider.cfg.temperature, decider.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}
+        decider.use_raw_temperatures()
     result = evaluate(decider, read_decision_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records,
                       max_questions=None if a.no_group else a.max_questions)
     result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
                      "device": str(next(decider.model.parameters()).device),
                      "temperature": "none (raw)" if a.no_temperature else "fitted",
-                     "control": control, "seed": a.seed, "code": _code_version()}
+                     "control": control, "seed": a.seed, "code": _code_version(), "reading": result["reading"],
+                     "code_identity": runtime_code()}
     text = json.dumps(result, indent=2)
     print(text)
     if a.out:
@@ -212,7 +217,12 @@ def calibrate_main(argv=None) -> None:
     if a.out and os.path.exists(a.out):
         raise SystemExit("%s already exists" % a.out)
 
-    decider = Decider.load(a.checkpoint, device=a.device)
+    from ..infer import resolve_checkpoint
+    src_dir = resolve_checkpoint(a.checkpoint)
+    if os.path.exists(os.path.join(src_dir, "reading")):
+        raise SystemExit("%s has a reading/ bundle bound to its config.json: calibrate the decision checkpoint first, "
+                         "then bind the bundle again (docs/experiments/2026-10-19-v04-reader-evidence-prep03.md 5.2)" % a.checkpoint)
+    decider = Decider.load(src_dir, device=a.device)
     device = str(next(decider.model.parameters()).device)
     report = calibrate(decider, read_decision_jsonl(a.data), a.data_root, device=device, min_bucket=a.min_bucket)
     report["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data),
