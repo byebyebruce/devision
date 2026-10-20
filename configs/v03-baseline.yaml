@@ -1,5 +1,5 @@
 # The published v0.3 (Hugging Face lukbit/devision, snapshot af353dc...) on the sets rebuilt on this machine: the
-# reference every v0.4 candidate is paired with (devision-compare), per docs/experiments/2026-10-20-r16-cuda-scratch-plan.md.
+# reference every v0.4 candidate is paired with (devision-compare), per docs/experiments/2026-10-20-r16-cuda-plan.md.
 # Evaluation only (not a round); results in runs/v03/eval/. v0.3's own monitoring sets were the old machine's files,
 # so the roles here are decided against this config only and are mostly heldout.
 #   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 uv run devision-pipeline configs/v03-baseline.yaml
