@@ -1,0 +1,174 @@
+{
+ "temperature": {
+  "choice": 2.3641862869262695,
+  "noul": 1.0895380973815918,
+  "by_options": {
+   "choice:2": 3.563119649887085,
+   "choice:3-5": 2.1145524978637695,
+   "noul:2": 1.0895380973815918
+  }
+ },
+ "test_sets": {
+  "test_exist": {
+   "questions": 1120,
+   "accuracy": 0.9554,
+   "nll": 0.1957,
+   "ece": 0.0924,
+   "accuracy_mismatched": 0.4973
+  },
+  "test_vqa_choice": {
+   "questions": 1453,
+   "accuracy": 0.905,
+   "nll": 0.2802,
+   "ece": 0.0534,
+   "accuracy_mismatched": 0.3696
+  },
+  "test_size": {
+   "questions": 1198,
+   "accuracy": 0.8698,
+   "nll": 0.5065,
+   "ece": 0.2345,
+   "accuracy_mismatched": 0.5159
+  },
+  "bench_pope": {
+   "questions": 9000,
+   "accuracy": 0.8653,
+   "nll": 0.363,
+   "ece": 0.0483,
+   "accuracy_mismatched": 0.5201
+  },
+  "test_gqa": {
+   "questions": 986,
+   "accuracy": 0.8428,
+   "nll": 0.3828,
+   "ece": 0.0857,
+   "accuracy_mismatched": 0.5456
+  },
+  "test_position": {
+   "questions": 1276,
+   "accuracy": 0.9381,
+   "nll": 0.2384,
+   "ece": 0.0468,
+   "accuracy_mismatched": 0.5086
+  },
+  "test_vqa_yesno": {
+   "questions": 1000,
+   "accuracy": 0.722,
+   "nll": 0.5713,
+   "ece": 0.0552,
+   "accuracy_mismatched": 0.5
+  },
+  "test_relation": {
+   "questions": 2366,
+   "accuracy": 0.9167,
+   "nll": 0.2805,
+   "ece": 0.0367,
+   "accuracy_mismatched": 0.4801
+  },
+  "test_vsr": {
+   "questions": 902,
+   "accuracy": 0.7306,
+   "nll": 0.5905,
+   "ece": 0.0734,
+   "accuracy_mismatched": 0.4601
+  },
+  "test_v7w": {
+   "questions": 1000,
+   "accuracy": 0.783,
+   "nll": 0.5967,
+   "ece": 0.073,
+   "accuracy_mismatched": 0.442
+  },
+  "bench_countbench": {
+   "questions": 491,
+   "accuracy": 0.501,
+   "nll": 1.3872,
+   "ece": 0.1655,
+   "accuracy_mismatched": 0.1018
+  },
+  "test_position_flip": {
+   "questions": 640,
+   "accuracy": 0.9328,
+   "nll": 0.283,
+   "ece": 0.0532,
+   "accuracy_mismatched": 0.5031
+  },
+  "test_relation_flip": {
+   "questions": 1786,
+   "accuracy": 0.9143,
+   "nll": 0.3004,
+   "ece": 0.0485,
+   "accuracy_mismatched": 0.4938
+  },
+  "bench_whatsup": {
+   "questions": 820,
+   "accuracy": 0.4671,
+   "nll": 1.2142,
+   "ece": 0.0926,
+   "accuracy_mismatched": 0.2329
+  }
+ },
+ "laya_vision": {
+  "vqav2_yesno": {
+   "questions": 4887,
+   "laya_vision": 0.7172,
+   "devision": 0.7559,
+   "difference": 0.0387,
+   "ci95": [
+    0.0244,
+    0.0533
+   ]
+  },
+  "aokvqa": {
+   "questions": 1138,
+   "laya_vision": 0.5984,
+   "devision": 0.6336,
+   "difference": 0.0351,
+   "ci95": [
+    0.0026,
+    0.0659
+   ]
+  },
+  "scienceqa": {
+   "questions": 2097,
+   "laya_vision": 0.824,
+   "devision": 0.8207,
+   "difference": -0.0033,
+   "ci95": [
+    -0.0224,
+    0.0172
+   ]
+  },
+  "scienceqa_natural_needs_picture": {
+   "questions": 323,
+   "laya_vision": 0.6997,
+   "devision": 0.6378,
+   "difference": -0.0619,
+   "ci95": [
+    -0.1269,
+    0.0
+   ]
+  },
+  "pope": {
+   "random": {
+    "laya_vision_published": 0.836,
+    "devision": 0.8987
+   },
+   "popular": {
+    "laya_vision_published": 0.819,
+    "devision": 0.8733
+   },
+   "adversarial": {
+    "laya_vision_published": 0.777,
+    "devision": 0.824
+   }
+  }
+ },
+ "cpu_latency": {
+  "p50": 289,
+  "p95": 301,
+  "threads": 4,
+  "machine": "Linux x86_64",
+  "source": "release/v0.4/cpu_latency.json"
+ }
+}

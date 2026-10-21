@@ -1,12 +1,10 @@
-# DRAFT (2026-10-19, V04-K-MATERIALS-PREP-01): the candidate is the frozen K reading combination runs/v04-k/cand
-# (IDENTITY c14863e2...); cpu_latency, delivery_vs_v0.3 and results come from the sealed full evaluation and the CPU
-# latency / clean-install checks that follow it. Do not build for publishing before those are done and the release
-# decision is made.
+# deVision v0.4 = runs/r21-soft/train (v0.3 -> r19-n2 -> r20-science -> r21-soft; docs/training-log.md). Owner decision
+# 2026-10-22 ("发布这一版"): published although the frozen rule 4 (calibration) is not met -- see adoption.md.
 version: v0.4
 git_tag: model-v0.4
 model_name: devision-v0.4
-round: runs/v04-k
-stage: cand
+round: runs/r21-soft
+stage: train
 hub_repo: lukbit/devision
 license: apache-2.0
 base_model:
@@ -25,24 +23,11 @@ datasets:
 - ryokamoi/VisOnlyQA_Train
 - RyanWW/Super-CLEVR
 - allenai/pixmo-count
-# min_package_version: set when the locked candidate needs a newer inference package than PyPI's 0.2.1 -- a 512-input
-# candidate (interpolate_pos_encoding) or a local-view candidate (local_views / local_overlap / local_source and the
-# conditioning's geometry layer; both read by 0.3.0, unreleased build 0.3.0.dev1, docs/experiments/2026-10-18-v04-local-
-# release-prep.md). 0.2.1 cannot read either. Verify the version is free before release. The card then installs
-# "devision>=X" on HF and ModelScope. Not set for a candidate with v0.3's structure.
-# The K combination needs 0.3.0 (local views, the reading bundle, temperature_by_route; built and checked as
-# 0.3.0.dev1): verify 0.3.0 is free and published before the card goes out.
-min_package_version: 0.3.0
 cpu_latency: release/v0.4/cpu_latency.json
 modelscope_repo: baibaibai000/devision
 evidence:
+  accept_vs_v0.3.json: release/v0.4/accept_vs_v0.3.json
+  accept_vs_v0.3.md: release/v0.4/accept_vs_v0.3.md
+  adoption.md: release/v0.4/adoption.md
   cpu_latency.json: release/v0.4/cpu_latency.json
-  delivery_vs_v0.3.json: release/v0.4/delivery_vs_v0.3.json
-  real_layout_manifest.json: data/real_layout/MANIFEST.json
-  # the frozen combination's provenance and confirmation (copied as they are)
-  identity.json: runs/v04-k/eval/IDENTITY.json
-  reading_source.json: runs/v04-k/reading_lineage/source.json
-  reading_lineage.json: runs/v04-k/reading_lineage/lineage.json
-  route_calibration.json: runs/v04-k-calib/route_calibration.json
-  synthetic_confirmation.json: runs/v04-k-confirm/report.json
-  # TBD at build: the decision model's training configs (protect-k and its chain) as training.yaml
+  training.yaml: release/v0.4/training.yaml

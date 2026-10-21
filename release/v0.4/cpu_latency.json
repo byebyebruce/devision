@@ -1,0 +1,247 @@
+{
+  "n": 200,
+  "images": 199,
+  "accuracy_all": 0.63,
+  "accuracy": {
+    "noul": null,
+    "choice": 0.63
+  },
+  "nll": 0.9023860797262202,
+  "brier": 0.48241933227960376,
+  "ece": 0.05323468044400214,
+  "ece_bins": 15,
+  "reliability": [
+    {
+      "bin": [
+        0.2,
+        0.3
+      ],
+      "n": 8,
+      "confidence": 0.28236541524529457,
+      "accuracy": 0.25
+    },
+    {
+      "bin": [
+        0.3,
+        0.4
+      ],
+      "n": 41,
+      "confidence": 0.3474449958743119,
+      "accuracy": 0.36585365853658536
+    },
+    {
+      "bin": [
+        0.4,
+        0.5
+      ],
+      "n": 31,
+      "confidence": 0.44290193915367126,
+      "accuracy": 0.5161290322580645
+    },
+    {
+      "bin": [
+        0.5,
+        0.6
+      ],
+      "n": 20,
+      "confidence": 0.5382369369268417,
+      "accuracy": 0.6
+    },
+    {
+      "bin": [
+        0.6,
+        0.7
+      ],
+      "n": 29,
+      "confidence": 0.6475593776538454,
+      "accuracy": 0.6206896551724138
+    },
+    {
+      "bin": [
+        0.7,
+        0.8
+      ],
+      "n": 18,
+      "confidence": 0.7407801515526242,
+      "accuracy": 0.7777777777777778
+    },
+    {
+      "bin": [
+        0.8,
+        0.9
+      ],
+      "n": 17,
+      "confidence": 0.8483305994202109,
+      "accuracy": 0.9411764705882353
+    },
+    {
+      "bin": [
+        0.9,
+        1.0
+      ],
+      "n": 36,
+      "confidence": 0.9695057719945908,
+      "accuracy": 0.9166666666666666
+    }
+  ],
+  "thresholds": {
+    "0.6": {
+      "coverage": 0.5,
+      "accuracy": 0.81
+    },
+    "0.7": {
+      "coverage": 0.355,
+      "accuracy": 0.8873239436619719
+    },
+    "0.8": {
+      "coverage": 0.265,
+      "accuracy": 0.9245283018867925
+    },
+    "0.9": {
+      "coverage": 0.18,
+      "accuracy": 0.9166666666666666
+    }
+  },
+  "by_source": {
+    "aokvqa": {
+      "n": 200,
+      "images": 199,
+      "accuracy": 0.63,
+      "nll": 0.9023860797262202,
+      "ece": 0.05323468044400214
+    }
+  },
+  "by_kind": {
+    "aokvqa": {
+      "n": 200,
+      "images": 199,
+      "accuracy": 0.63,
+      "nll": 0.9023860797262202,
+      "ece": 0.05323468044400214
+    }
+  },
+  "by_axis": {
+    "-": {
+      "n": 200,
+      "images": 199,
+      "accuracy": 0.63,
+      "nll": 0.9023860797262202,
+      "ece": 0.05323468044400214
+    }
+  },
+  "by_options": {
+    "4": {
+      "n": 200,
+      "images": 199,
+      "accuracy": 0.63,
+      "nll": 0.9023860797262202,
+      "ece": 0.05323468044400214
+    }
+  },
+  "ms_per_question": {
+    "p50": 289.0499159984756,
+    "p95": 301.4491552057734,
+    "overall": 289.6095040804357
+  },
+  "request_latency_ms": {
+    "p50": 289.0499159984756,
+    "p95": 301.4491552057734,
+    "requests": 200,
+    "warmup_excluded": 3
+  },
+  "questions_per_request": {
+    "mean": 1.0,
+    "p50": 1.0,
+    "max": 1
+  },
+  "latency_ms": {
+    "p50": 289.0499159984756,
+    "p95": 301.4491552057734,
+    "requests": 200,
+    "warmup_excluded": 3
+  },
+  "control": "none",
+  "model": "devision-v0.3",
+  "reading": {
+    "mode": "none",
+    "routed_questions": 0,
+    "read_questions": 0
+  },
+  "temperature": {
+    "choice": 2.3641862869262695,
+    "noul": 1.0895380973815918,
+    "by_options": {
+      "choice:2": 3.563119649887085,
+      "choice:3-5": 2.1145524978637695,
+      "noul:2": 1.0895380973815918
+    }
+  },
+  "grouping": {
+    "max_questions_per_request": 1,
+    "by": "none (one question per request)",
+    "max_questions_per_call": "one request per call"
+  },
+  "environment": {
+    "threads": 4,
+    "machine": "x86_64",
+    "system": "Linux"
+  },
+  "run": {
+    "checkpoint": "runs/r21-soft/train",
+    "data": "runs/v04-cpu/latency200.jsonl",
+    "data_sha256": "e0f4d5b0f82ff59ba91d141f49833ad9a097ac36842b98c32e2c4a834d0b9691",
+    "role": "monitoring",
+    "device": "cpu",
+    "temperature": "fitted",
+    "control": "none",
+    "seed": 0,
+    "code": "a6b4e8a+dirty",
+    "reading": {
+      "mode": "none",
+      "routed_questions": 0,
+      "read_questions": 0
+    },
+    "code_identity": {
+      "modules": {
+        "devision": {
+          "path": "/home/bruce/proj/devision/src/devision/__init__.py",
+          "sha256": "aa00e0d329f33444a51bc4cab7691911b6b226664fdc2fbd438103de8d0c27a1"
+        },
+        "devision.image": {
+          "path": "/home/bruce/proj/devision/src/devision/image.py",
+          "sha256": "a139a63f985b8a210de4b9a5327dd56cc078a986cb36ebcc7fd3c4aba4bef312"
+        },
+        "devision.infer": {
+          "path": "/home/bruce/proj/devision/src/devision/infer.py",
+          "sha256": "d7e3e5f8bc54278cbdba99f77da567344cf40e9748c6b1a55ecb48e48d593893"
+        },
+        "devision.model": {
+          "path": "/home/bruce/proj/devision/src/devision/model.py",
+          "sha256": "079e9c9c60545242146a99ec66ba09a5cd1435545967b37b2649e071b3245209"
+        },
+        "devision.reading": {
+          "path": "/home/bruce/proj/devision/src/devision/reading.py",
+          "sha256": "dc2f3cc2151ec4761dcfc404b28d609a932aac70ff0ff02b0dd6e170b6c1f8ba"
+        },
+        "devision.train": {
+          "path": "/home/bruce/proj/devision/src/devision/train/__init__.py",
+          "sha256": "16c32ba2bae66029fb0afd4946827c475729aa45c7dde335864d002c564df289"
+        },
+        "devision.train.cli": {
+          "path": "/home/bruce/proj/devision/src/devision/train/cli.py",
+          "sha256": "aab8811a63c89726fd78dd7ea88ab930c6d115b529a011173ccc8637f081d342"
+        },
+        "devision.train.evaluate": {
+          "path": "/home/bruce/proj/devision/src/devision/train/evaluate.py",
+          "sha256": "4d5df39b37b0854ead1b8c7d0a04933e24ab9b05e0e341f0bdbfbc6911af2d90"
+        },
+        "devision.train.samples": {
+          "path": "/home/bruce/proj/devision/src/devision/train/samples.py",
+          "sha256": "5a4d5a75ec31380f5470a22c0ba4e370e170ba0499e5d4a77ed573450f9c3e31"
+        }
+      },
+      "version": "0.3.0.dev1",
+      "python": "3.12.3"
+    }
+  }
+}
