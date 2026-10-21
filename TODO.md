@@ -4,9 +4,9 @@
 
 负责人 2026-10-21 定：走优质训练数据（自造或处理公开数据）补齐短板；教师蒸馏暂缓。方案见 `docs/experiments/2026-10-21-v04-plan.md`。每小时自动汇报进度（cc-connect cron `e6f6d043`）。
 
-1. 补全评测：数据 B 生成计数、What'sUp、绑定、CoGenT B；下载并转换 MMBench-en dev、SEED-Bench 图片、CV-Bench、NaturalBench、MME；v0.3、r17 补评；冻结评测集与验收规则。
-2. 错误分析（开发集）：失败簇 → 补什么数据。
-3. data-n2：示意图 / 科学、空间、计数、存在（LVIS）、常识（V7W 全量、A-OKVQA、OK-VQA）、对比对；每块带测试与 MANIFEST，过质量门。
-4. r19：从 v0.3 一遍 n1（降采样）+ 存在题 + data-n2；评测、逐题配对、lv_report、训练日志。
+1. ~~补全评测~~（2026-10-21 完成：What'sUp、CountBench、CoGenT B、COCO val2014 计数、MMBench-en dev、CV-Bench、MME、NaturalBench、ScienceQA test 当开发集；v0.3 / r17 补评；冻结清单与规则见 `docs/experiments/2026-10-21-v04-eval-freeze.md`，判定脚本 `scripts/v04/accept.py`）。未做：SEED-Bench（27 GB，含视频）、LVIS（只有官方直连地址，待负责人决定）、`test_bind_gqa` / `test_count_fresh` 的本机重建。
+2. ~~错误分析~~（What'sUp 几乎总选 on / in front of；计数从不答 5、10；ScienceQA 自然科学弱在磁铁、溶液浓度、粒子运动等示意图题）。
+3. ~~data-n2~~（`scripts/data/n2/`，`data/n2/train_mix.MIX.json`：785k 题）。
+4. r19-n2 训练中（2026-10-21 13:47 起，95,745 步）；之后评测、`scripts/v04/accept.py`、lv_report、训练日志。
 5. 需要时补洞（r20 / 权重插值）。
 6. 发布 v0.4：按冻结的验收规则；CPU 延迟；`scripts/release/hf.py build|verify|publish`，PyPI 按 `docs/pypi-release.md`。
