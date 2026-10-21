@@ -1,0 +1,41 @@
+# v0.4 candidate B DRAFT (docs/experiments/2026-10-18-v04b-candidate-plan.md; critic V04-NIGHT-02 / 03,
+# V04-B-PREP-04 / 05). NOT approved: runs only if exp39-H meets its four conditions and the critic approves this
+# plan. Decision training (RLCD + gold CE, as exp32 B) from exp39-H's end at 512, on data/v04b/train_mix.jsonl
+# (r14b replay 12,000 + original-picture real-layout 9,600 + exp34 semantics 2,380 + exp25 panels as whole
+# families 1,920 picture + 484 text = 26,384 questions, 3,298 updates of 8); evaluation in forward passes of 8.
+name: v04b-fit
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp39-h/stage1
+  data: data/v04b/train_mix.jsonl
+  val: data/r13b/val.jsonl
+  eval:
+    rl_tune: data/real_layout/questions_tune.jsonl
+    sqa_temp: data/exp21/dev_sqa_temp.jsonl
+    sqa_force: data/exp21/dev_sqa_force.jsonl
+    sqa_temp_mism: data/exp21/dev_sqa_temp_mism.jsonl
+    sqa_force_mism: data/exp21/dev_sqa_force_mism.jsonl
+    exist: data/r13b/panel_exist.jsonl
+    science: data/r13b/panel_science.jsonl
+    dev16: data/exp22/dev16.jsonl
+    exp31: data/exp31/text_force.jsonl
+    semantics_tune: data/exp34/semantics_tune.jsonl
+  params:
+    epochs: 1
+    micro_batch: 8
+    eval_batch: 8
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    warmup: 100
+    eval_every: 1600
+    save_every: 500
+    amp: 'off'
+    seed: 1
+    monitor_details: true
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06

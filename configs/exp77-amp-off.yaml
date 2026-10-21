@@ -1,0 +1,23 @@
+# EXP77 -- precision on CUDA for continuing from v0.3 (docs/experiments/2026-10-20-r16-cuda-plan.md, TODO.md section 3).
+# Not a round. Two runs differ only in `amp`: exp77-amp-bf16 (bf16 autocast of the forward pass, rlcd's default on
+# CUDA) and exp77-amp-off (fp32). From v0.3 (runs/v03/model), 1,000 updates on the first 8,000 questions of the
+# data-v2 mix (already shuffled; v0.3 has seen them -- this measures precision, not learning), exp21's settings for
+# continuing from r15, seed 0. Compared on: val NLL / accuracy every 250 steps, step time, peak GPU memory.
+#   head -n 8000 data/v2/train_mix.jsonl > data/exp77/train_8k.jsonl
+#   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 uv run devision-pipeline configs/exp77-amp-off.yaml
+name: exp77-amp-off
+device: cuda
+common:
+  log_every: 25
+
+stages:
+  - name: train
+    kind: train
+    init: runs/v03/model
+    data: data/exp77/train_8k.jsonl
+    val: data/v2/dev_mix_half.jsonl
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 100, eval_every: 250,
+             vision_unfreeze_top: 4, lr_vision: 5.0e-6, seed: 0, amp: "off"}
+
+evaluate:
+  sets: {}

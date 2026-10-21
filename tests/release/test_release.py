@@ -126,3 +126,21 @@ def test_publish_refuses_to_overwrite_an_existing_tag(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="already exists"):
         hf.publish("unused", True, str(tmp_path))
     api.upload_folder.assert_not_called()
+
+
+def test_routed_temperatures_on_the_card_only_when_configured():
+    """V04-ROUTE-TEMP-NOTE-01: results and the card's temperature table list the per-domain read-question temperatures
+    and that they cover only questions actually read; a config without the field gives exactly the old table."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("hf_rt", os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "release", "hf.py"))
+    assert spec and spec.loader
+    hf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hf)
+    old = {"temperature": [1.5, 1.0, 1.2], "temperature_by_options": {"choice:2": 2.0}}
+    new = dict(old, temperature_by_route={"temperature": 3.238142943837961, "magnets": 4.664590270988126})
+    r_old, r_new = hf.results("/nonexistent/round", old), hf.results("/nonexistent/round", new)
+    assert "by_route" not in r_old["temperature"] and r_new["temperature"]["by_route"] == new["temperature_by_route"]
+    t_old, t_new = hf.temperature_table(r_old), hf.temperature_table(r_new)
+    assert t_old == "\n".join(["| Bucket | Temperature |", "|---|---:|", "| Choice, 2 options | 2.0000 |", "| Choice, any other count | 1.5000 |"])
+    assert t_new.startswith(t_old) and "| Read questions, temperature diagrams | 3.2381 |" in t_new and "| Read questions, magnet diagrams | 4.6646 |" in t_new
+    assert "actually read" in t_new

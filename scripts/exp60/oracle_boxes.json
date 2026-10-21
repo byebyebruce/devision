@@ -1,0 +1,651 @@
+{
+ "_note": "exp60 oracle field boxes (critic EXP60-PREP-01): one box per needed field of the 24 transcribed pictures, by a fixed CPU rule on the original pixels -- never from reading results. Text = dark, unsaturated pixels (max channel < 110, channel spread < 40); the picture is split at its middle column (sample A / Pair 1 left, sample B / Pair 2 right); in each half the rows holding text form bands (gaps of >= 3 text-free rows separate them).   temperature: the half's last two bands below its middle are the mass line and the speed line (EXP45 / 51 semantics:                the whole field text line of that sample);   magnets:     the half's last band is the distance label band (the \"|- 42.8 mm -|\" label of that pair). Box = the band's text extent in that half, padded by 2 px and clipped: [x0, y0, w, h] in original pixels (reading's pixel_box / region convention). Source: computed by this rule, previews looked at by Claude Code; not checked by a person.",
+ "v3-sqa-test:test-236": {
+  "image": "v10/images/sqa_test/ceb13c2d299be06b.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-1663": {
+  "image": "v10/images/sqa_test/0806b5b4fe2c24f5.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-1799": {
+  "image": "v10/images/sqa_test/3ffe89df7fe778c2.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-1810": {
+  "image": "v10/images/sqa_test/7a918ed17a8aebe2.jpg",
+  "size": [
+   550,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    19.0,
+    351.0,
+    193.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    231.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    339.0,
+    351.0,
+    193.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    231.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-1953": {
+  "image": "v10/images/sqa_test/cea34fee18461c24.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-2272": {
+  "image": "v10/images/sqa_test/9c4278c24cd38c63.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-2438": {
+  "image": "v10/images/sqa_test/a20c6ce2b7766b26.jpg",
+  "size": [
+   550,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    19.0,
+    351.0,
+    193.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    231.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    339.0,
+    351.0,
+    193.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    231.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-2575": {
+  "image": "v10/images/sqa_test/92f12b263cbb504b.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-3041": {
+  "image": "v10/images/sqa_test/6a46dc5f31b15dc6.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-3049": {
+  "image": "v10/images/sqa_test/03df44b14ad9d636.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-3132": {
+  "image": "v10/images/sqa_test/f7ec8019d960cae1.jpg",
+  "size": [
+   563,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    26.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    245.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    346.0,
+    351.0,
+    192.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    319.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-3145": {
+  "image": "v10/images/sqa_test/894896aa5754d8c2.jpg",
+  "size": [
+   556,
+   405
+  ],
+  "boxes": {
+   "What is the mass of each particle in sample A?": [
+    19.0,
+    351.0,
+    193.0,
+    19.0
+   ],
+   "What is the average particle speed in sample A?": [
+    0.0,
+    388.0,
+    231.0,
+    17.0
+   ],
+   "What is the mass of each particle in sample B?": [
+    339.0,
+    351.0,
+    193.0,
+    19.0
+   ],
+   "What is the average particle speed in sample B?": [
+    312.0,
+    388.0,
+    244.0,
+    17.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-362": {
+  "image": "v10/images/sqa_test/60d664cdb2bc384b.jpg",
+  "size": [
+   692,
+   171
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    115.0,
+    147.0,
+    145.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    500.0,
+    147.0,
+    75.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-1376": {
+  "image": "v10/images/sqa_test/b794023776451760.jpg",
+  "size": [
+   692,
+   93
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    115.0,
+    69.0,
+    75.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    430.0,
+    69.0,
+    145.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-2030": {
+  "image": "v10/images/sqa_test/6a14d16faf67b2c5.jpg",
+  "size": [
+   580,
+   171
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    89.0,
+    147.0,
+    41.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    405.0,
+    147.0,
+    41.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-2054": {
+  "image": "v10/images/sqa_test/2d35edffc18b1bdb.jpg",
+  "size": [
+   692,
+   171
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    115.0,
+    147.0,
+    75.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    430.0,
+    147.0,
+    145.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-2097": {
+  "image": "v10/images/sqa_test/278f6f1e32ebafd2.jpg",
+  "size": [
+   622,
+   171
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    115.0,
+    147.0,
+    75.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    430.0,
+    147.0,
+    75.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-2360": {
+  "image": "v10/images/sqa_test/ba04768fe5eea7ce.jpg",
+  "size": [
+   520,
+   127
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    72.0,
+    104.0,
+    75.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    301.0,
+    104.0,
+    145.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-2479": {
+  "image": "v10/images/sqa_test/47aa5245d0af6bba.jpg",
+  "size": [
+   492,
+   110
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    88.0,
+    76.0,
+    42.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    360.0,
+    86.0,
+    41.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-3589": {
+  "image": "v10/images/sqa_test/c7bbc78c73532639.jpg",
+  "size": [
+   694,
+   171
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    161.0,
+    147.0,
+    53.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    513.0,
+    147.0,
+    52.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-3665": {
+  "image": "v10/images/sqa_test/de4568aad9ff3dc1.jpg",
+  "size": [
+   622,
+   93
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    115.0,
+    69.0,
+    75.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    430.0,
+    69.0,
+    75.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-3898": {
+  "image": "v10/images/sqa_test/c57e8d7f091890b1.jpg",
+  "size": [
+   579,
+   171
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    115.0,
+    147.0,
+    75.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    440.0,
+    147.0,
+    54.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-4069": {
+  "image": "v10/images/sqa_test/159ab6d1201550e7.jpg",
+  "size": [
+   450,
+   127
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    72.0,
+    104.0,
+    75.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    301.0,
+    104.0,
+    75.0,
+    13.0
+   ]
+  }
+ },
+ "v3-sqa-test:test-4157": {
+  "image": "v10/images/sqa_test/dc2b8bb18413874e.jpg",
+  "size": [
+   536,
+   149
+  ],
+  "boxes": {
+   "What is the distance between the magnets in Pair 1?": [
+    107.0,
+    126.0,
+    48.0,
+    13.0
+   ],
+   "What is the distance between the magnets in Pair 2?": [
+    379.0,
+    126.0,
+    48.0,
+    13.0
+   ]
+  }
+ }
+}

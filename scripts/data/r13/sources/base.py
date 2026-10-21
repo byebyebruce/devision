@@ -284,7 +284,7 @@ def contact_sheet(root: str, items: List[dict], path: str, cols: int = 5, cell: 
     sheet = Image.new("RGB", (cols * cell, rows * (cell + text_h)), "white")
     draw = ImageDraw.Draw(sheet)
     try:
-        font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 13)
+        font = ImageFont.truetype(__import__("fonts").font_path("Arial"), 13)
     except OSError:
         font = ImageFont.load_default()
     for k, it in enumerate(items):

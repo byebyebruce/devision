@@ -130,10 +130,10 @@ def test_grouping_questions_by_picture_changes_no_answer(tmp_path):
     rows = per_picture_samples(tmp_path)
     decider = tiny_decider()
 
-    def run(control, max_questions):
+    def run(control, max_questions, batch_questions=None):
         records = []
         summary = evaluate(decider, rows, tmp_path, control=control, records_out=records,
-                           max_questions=max_questions)
+                           max_questions=max_questions, batch_questions=batch_questions)
         return sorted(records, key=lambda r: (r["sample_id"], r["qid"])), summary
 
     plain = {}
@@ -141,15 +141,18 @@ def test_grouping_questions_by_picture_changes_no_answer(tmp_path):
         alone, s_alone = run(control, None)
         grouped, s_grouped = run(control, 32)
         capped, _ = run(control, 3)  # a picture's questions split over several requests
+        batched, s_batched = run(control, 32, 128)  # every picture's request in one batched call
+        batched_small, _ = run(control, 3, 5)  # requests split over calls, a call mixing pictures
         assert {r["questions_in_request"] for r in alone} == {1}
         assert max(r["questions_in_request"] for r in grouped) > 3
         assert max(r["questions_in_request"] for r in capped) == 3
-        for other in (grouped, capped):
+        assert max(r["requests_in_call"] for r in batched) == 6 and max(r["requests_in_call"] for r in batched_small) > 1
+        for other in (grouped, capped, batched, batched_small):
             assert len(other) == len(alone)
             for a, b in zip(alone, other):
                 assert a.keys() == b.keys()
                 for key in a:
-                    if key in ("latency_ms", "questions_in_request"):
+                    if key in ("latency_ms", "questions_in_request", "questions_in_call", "requests_in_call"):
                         continue
                     if key == "probabilities":
                         assert a[key].keys() == b[key].keys()
@@ -161,12 +164,17 @@ def test_grouping_questions_by_picture_changes_no_answer(tmp_path):
         for key in ("n", "images", "accuracy_all", "accuracy", "nll", "brier", "ece", "reliability", "by_source",
                     "by_kind", "by_options", "pope", "noul_confusion", "thresholds", "control"):
             assert close(s_grouped.get(key), s_alone.get(key)), (control, key)
+            assert close(s_batched.get(key), s_alone.get(key)), (control, key)
         # timing: each request counted once; single-question latency only from one-question requests
         assert s_alone["request_latency_ms"]["requests"] == len(alone) == s_alone["latency_ms"]["requests"]
         assert s_grouped["request_latency_ms"]["requests"] == 3 * 2  # per picture: without / with text state
         assert s_grouped["questions_per_request"]["max"] > 3
         singles = [r for r in grouped if r["questions_in_request"] == 1]
         assert s_grouped.get("latency_ms", {}).get("requests", 0) == len(singles)
+        # batched: one call; no per-request latency is claimed
+        assert s_batched["call_latency_ms"]["calls"] == 1 and s_batched["requests_per_call"]["max"] == 6
+        assert s_batched["questions_per_call"]["max"] == len(batched)
+        assert "request_latency_ms" not in s_batched and "latency_ms" not in s_batched
         plain[control] = (alone, grouped)
     a = order_sensitivity(plain["none"][0], plain["reversed"][0])
     b = order_sensitivity(plain["none"][1], plain["reversed"][1])

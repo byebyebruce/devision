@@ -7,10 +7,32 @@ before saving), as vision-language encoders do when they align. Deciding straigh
 projector stalls at nll = ln2 (docs/experiments/2026-09-30-rlcd-plateau.md); this gives it a dense
 signal first.
 
+With `decision_data` (exp33, docs/experiments/2026-10-17-exp33-decision-protect-plan.md) every step also takes
+`decision_micro_batch` decision questions (samples.py decision format) and adds `decision_weight` times their gold
+cross-entropy over the options (raw logits through the frozen decision head, no RLCD noise) to the caption loss,
+before one backward / clip / optimizer step: the old decisions supervise the same projector / LoRA that alignment
+moves. Decision questions are drawn from their own seeded order, so the caption and mask random stream is the same
+as without them; with no decision data or weight 0 the step is exactly the caption-only one.
+
+With `number_mask_sources` (exp36, docs/experiments/2026-10-17-exp36-number-mask-plan.md) captions of those sources
+are supervised only on their numbers: after the usual random mask is drawn (so the random stream, caption choice and
+every other row are exactly as without it), such a row is rewritten so that every token of every number span (mass /
+speed / distance values of both objects, see `number_spans`) is masked and is the only target; labels, quantity
+names and units stay visible. A caption whose expected numbers are missing or cut by max_caption_tokens is refused.
+`track_sources` logs, per listed source and for the rest, the supervised tokens and their share of the batch loss.
+
+With `micro_batch` (exp39, docs/experiments/2026-10-17-exp39-lowmem-plan.md) each batch of `batch` rows is drawn,
+masked and rewritten exactly as without it, then run in forward / backward passes of `micro_batch` rows: each part's
+loss is its masked-token cross-entropy SUM divided by the masked tokens of the whole batch, so the summed gradient is
+the whole batch's mean; one zero_grad, one clip, one optimizer and one scheduler step per batch; every part is checked
+finite before the step. Evaluation keeps its batches of `batch` rows (captions, masks, rotated pictures) and only
+splits the forward pass. Not combined with decision supervision.
+
 The checkpoint is a normal devision checkpoint; `devision-train --init` continues from it.
 """
 import math
 import random
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -19,8 +41,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.models.modernbert.modeling_modernbert import ModernBertPredictionHead
 
-from .rlcd import _device, _Images
-from .samples import Sample
+from laya.common import collate_items
+
+from .rlcd import _device, _forward, _Images, _items
+from .samples import Sample, read_decision_jsonl
 from .tracking import Tracker, TrainLog
 from ..infer import Decider
 from ..model import text_encoder
@@ -44,6 +68,12 @@ class AlignConfig:
     log_every: int = 10
     swanlab_project: str = ""
     run_name: str = ""
+    decision_data: str = ""        # JSONL of decision samples supervised alongside the captions (exp33)
+    decision_weight: float = 1.0
+    decision_micro_batch: int = 8
+    number_mask_sources: str = ""  # comma-separated caption sources supervised only on their numbers (exp36)
+    track_sources: str = ""        # comma-separated sources whose supervised tokens / loss share are logged
+    micro_batch: int = 0           # > 0: run each batch of `batch` rows in forward passes of this many rows (exp39)
 
 
 class _MLMHead(nn.Module):
@@ -89,13 +119,82 @@ def _masked_batch(tok, captions: Sequence[str], c: AlignConfig, rng: random.Rand
     return input_ids, attention, target
 
 
+NUMBER_PATTERNS = [("mass", re.compile(r"mass of each particle ([\d,]+(?:\.\d+)?) u")),
+                   ("speed", re.compile(r"average particle speed ([\d,]+(?:\.\d+)?) m/s")),
+                   ("distance", re.compile(r"(\d[\d,]*(?:\.\d+)?) (?:in|cm|mm) apart"))]
+NUMBERS_EXPECTED = {"Sample": 4, "Pair": 2, "Panel": 2}   # real layout: 2 samples x (mass, speed), 2 pairs x distance
+# an EXP26 two-panel caption, "A: <quantity> <number> <unit>. B: <quantity> <number> <unit>." (PANEL-NUMBER-PREP-01; the
+# rule scripts/panel_bind/probe.py reads with)
+PANEL_PATTERN = re.compile(r"^A: (?P<qa>.+?) (?P<a>[\d,]+(?:\.\d+)?) (?P<ua>\S+)\. B: (?P<qb>.+?) (?P<b>[\d,]+(?:\.\d+)?) (?P<ub>\S+)\.$")
+
+
+def _kind(caption: str) -> Optional[str]:
+    return "Sample" if caption.startswith("Sample") else "Pair" if caption.startswith("Pair") else \
+        "Panel" if PANEL_PATTERN.match(caption) else None
+
+
+def number_spans(caption: str) -> List[Dict[str, Any]]:
+    """[{field, start, end, text}] of the numbers of a real-layout caption -- the digits (with "," / ".") after
+    "mass of each particle", "average particle speed" and before "<unit> apart"; never a "Pair 1" / "Sample A"
+    label or a unit (the rule scripts/exp35/mlm_numbers.py read with) -- or of a two-panel caption (PANEL_PATTERN):
+    the A and B numbers."""
+    m = PANEL_PATTERN.match(caption)
+    if m:                                        # a two-panel caption: the A and B numbers, never a label / quantity / unit
+        return [{"field": f, "start": m.start(f.lower()), "end": m.end(f.lower()), "text": m.group(f.lower())} for f in ("A", "B")]
+    out = [{"field": f, "start": m.start(1), "end": m.end(1), "text": m.group(1)}
+           for f, pat in NUMBER_PATTERNS for m in pat.finditer(caption)]
+    return sorted(out, key=lambda x: x["start"])
+
+
+def _number_rows(tok, captions: Sequence[str], rows: Sequence[int], input_ids, target, c: AlignConfig) -> None:
+    """Rewrites rows `rows` of a _masked_batch batch in place: every token overlapping a number span masked and the
+    only target, every other token visible and not a target."""
+    for i in rows:
+        cap = captions[i]
+        spans = number_spans(cap)
+        kind = _kind(cap)
+        if kind is None or len(spans) != NUMBERS_EXPECTED[kind]:
+            raise ValueError("number mask: %r does not hold the expected numbers" % cap)
+        enc = tok(cap, add_special_tokens=False, return_offsets_mapping=True)
+        ids, offs = enc["input_ids"], enc["offset_mapping"]
+        hit = [any(a < s["end"] and b > s["start"] and b > a for s in spans) for a, b in offs]
+        if len(ids) > c.max_caption_tokens:
+            raise ValueError("number mask: %r is longer than max_caption_tokens" % cap)
+        for s in spans:
+            covered = "".join(cap[a:b] for (a, b), h in zip(offs, hit) if h and a < s["end"] and b > s["start"])
+            if covered.strip() != s["text"]:
+                raise ValueError("number mask: tokens of %r cover %r" % (s["text"], covered))
+        for t, (tid, h) in enumerate(zip(ids, hit)):
+            input_ids[i, 1 + t] = tok.mask_token_id if h else tid
+            target[i, 1 + t] = tid if h else -100
+
+
+def _full_picture(model, pixels: torch.Tensor) -> torch.Tensor:
+    """The whole picture of a batch: as is, or -- for a model with fixed local views, whose pixels are packed by
+    image.local_pixels -- its full-picture channels, the same picture model.visual_inputs projects into the visual
+    tokens (PANEL-LEARN-PREP-01; the views only feed the conditioning, which caption alignment does not use)."""
+    n = getattr(model, "local_views", 0)
+    if not n:
+        return pixels
+    from ..image import unpack_local
+    return unpack_local(pixels, n)[0]
+
+
 def _mlm_logits(model, head, input_ids, attention, pixels, device) -> torch.Tensor:
     """Vocabulary logits at text positions 1.. (they line up with labels[:, 1:])."""
     with torch.no_grad():
-        patches = model.vision(pixel_values=pixels.to(device)).last_hidden_state
+        patches = model.vision_patches(_full_picture(model, pixels.to(device)))
     visual = model.projector(patches)
     h, _ = model.encode(input_ids.to(device), attention.to(device), visual)
     return head(h[:, visual.size(1) + 1:]).float()
+
+
+def _logits_in_parts(model, head, input_ids, attention, pixels, device, micro: int) -> torch.Tensor:
+    """_mlm_logits of a whole batch, run `micro` rows at a time when micro > 0 (same rows, same padding)."""
+    if not micro or micro >= input_ids.size(0):
+        return _mlm_logits(model, head, input_ids, attention, pixels, device)
+    return torch.cat([_mlm_logits(model, head, input_ids[i:i + micro], attention[i:i + micro], pixels[i:i + micro], device)
+                      for i in range(0, input_ids.size(0), micro)])
 
 
 def _evaluate(model, head, tok, samples, images, c: AlignConfig, device) -> Dict[str, float]:
@@ -114,8 +213,8 @@ def _evaluate(model, head, tok, samples, images, c: AlignConfig, device) -> Dict
                 caps = [rng.choice(s["captions"]) for s in chunk]
                 pix_src = chunk if mode == "real" else chunk[1:] + chunk[:1]
                 input_ids, attention, target = _masked_batch(tok, caps, c, rng)
-                logits = _mlm_logits(model, head, input_ids, attention,
-                                        torch.stack([images(s["image"]) for s in pix_src]), device)
+                logits = _logits_in_parts(model, head, input_ids, attention,
+                                          torch.stack([images(s["image"]) for s in pix_src]), device, c.micro_batch)
                 y = target[:, 1:].to(device)
                 m = y != -100
                 nll += F.cross_entropy(logits[m], y[m], reduction="sum").item()
@@ -126,6 +225,53 @@ def _evaluate(model, head, tok, samples, images, c: AlignConfig, device) -> Dict
     out["val/mlm_acc_gap"] = out["val/mlm_acc_real"] - out["val/mlm_acc_shuffled"]  # what the image adds
     model.train(was_training)
     return out
+
+
+def _gold_ce(logits: torch.Tensor, mask: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Gold cross-entropy over each question's options (the CE term of rlcd._rlcd_loss), mean over questions."""
+    return -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
+
+
+def _micro_step(model, head, input_ids, attention, target, chunk, images, device, c: AlignConfig, tracked, optimizer,
+                params, step: int):
+    """One optimizer step over a whole batch run in parts of c.micro_batch rows (see the module docstring); returns
+    (mean masked-token loss, accuracy, tracked-source stats, grad norm)."""
+    y_all = target[:, 1:]
+    n_tok = int((y_all != -100).sum().item())
+    pixels = torch.stack([images(s["image"]) for s in chunk])
+    optimizer.zero_grad(set_to_none=True)
+    loss_sum, hits = 0.0, 0
+    src_tok: Dict[str, float] = {}
+    src_ce: Dict[str, float] = {}
+    for r0 in range(0, len(chunk), c.micro_batch):
+        rows = slice(r0, r0 + c.micro_batch)
+        logits = _mlm_logits(model, head, input_ids[rows], attention[rows], pixels[rows], device)
+        y = y_all[rows].to(device)
+        m = y != -100
+        part = F.cross_entropy(logits[m], y[m], reduction="sum") / max(1, n_tok)
+        if not math.isfinite(part.item()):   # before the step: a broken part never reaches the weights
+            raise RuntimeError("step %d: loss is %r: the device is returning invalid results" % (step, part.item()))
+        part.backward()
+        loss_sum += part.item()
+        hits += int((logits[m].argmax(-1) == y[m]).sum().item())
+        if tracked:
+            with torch.no_grad():
+                per = F.cross_entropy(logits.transpose(1, 2), y.clamp(min=0), reduction="none") * m
+                for i, s in enumerate(chunk[rows]):
+                    name = s.get("source") if s.get("source") in tracked else "rest"
+                    src_tok[name] = src_tok.get(name, 0.0) + float(m[i].sum().item())
+                    src_ce[name] = src_ce.get(name, 0.0) + float(per[i].sum().item())
+        del logits, part
+    grad_norm = torch.nn.utils.clip_grad_norm_(params, 1.0)
+    optimizer.step()
+    extra: Dict[str, float] = {}
+    if tracked:
+        total = sum(src_ce.values()) or 1.0
+        for name in tracked + ["rest"]:
+            key = name.replace("-", "_")
+            extra["tokens_" + key] = src_tok.get(name, 0.0)
+            extra["loss_share_" + key] = src_ce.get(name, 0.0) / total
+    return loss_sum, hits / max(1, n_tok), extra, float(grad_norm.item())
 
 
 def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
@@ -172,13 +318,33 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     train_samples = [s for s in samples if s["captions"]]
     val = [s for s in (val_samples or []) if s["captions"]]
     steps = c.epochs * max(1, len(train_samples) // c.batch)
+    decide = bool(c.decision_data) and c.decision_weight != 0
+    dec_items = _items(decider, read_decision_jsonl(c.decision_data)) if decide else []
+    dec_rng = random.Random(c.seed + 1)            # its own stream: the caption / mask draws stay unchanged
+    dec_order: List[int] = []
+    if c.micro_batch and decide:
+        raise ValueError("micro_batch is not combined with decision supervision")
+    if c.micro_batch < 0 or (c.micro_batch and c.batch % c.micro_batch):
+        raise ValueError("micro_batch must divide batch")
+    number_sources = {x for x in c.number_mask_sources.split(",") if x}
+    tracked = [x for x in c.track_sources.split(",") if x]
+
+    def decision_batch() -> List[Dict[str, Any]]:
+        out = []
+        while len(out) < c.decision_micro_batch:
+            if not dec_order:
+                dec_order.extend(dec_rng.sample(range(len(dec_items)), len(dec_items)))
+            out.append(dec_items[dec_order.pop()])
+        return out
+
     optimizer = torch.optim.AdamW([{"params": params, "lr": c.lr}]
                                   + ([{"params": lora_params, "lr": c.lr_lora}] if lora_params else []),
                                   weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
     tracker = Tracker(c.swanlab_project, c.run_name, {"align": asdict(c), "model": decider.cfg.to_dict(),
-                           "train_images": len(train_samples), "val_images": len(val), "steps": steps},
+                           "train_images": len(train_samples), "val_images": len(val), "steps": steps,
+                           "decision_items": len(dec_items)},
                       record_dir=str(out_dir or ""))
     losses: List[float] = []
     evals: List[Dict[str, float]] = []
@@ -197,20 +363,62 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         rng.shuffle(order)
         for b in range(0, len(order) - c.batch + 1, c.batch):
             chunk = order[b:b + c.batch]
-            input_ids, attention, target = _masked_batch(tok, [rng.choice(s["captions"]) for s in chunk], c, rng)
+            caps = [rng.choice(s["captions"]) for s in chunk]
+            input_ids, attention, target = _masked_batch(tok, caps, c, rng)
+            if number_sources:   # after the random draw, so the random stream is the same as without it
+                _number_rows(tok, caps, [i for i, s in enumerate(chunk) if s.get("source") in number_sources],
+                             input_ids, target, c)
+            if c.micro_batch:
+                mlm_value, acc_value, extra, grad_norm = _micro_step(model, head, input_ids, attention, target, chunk,
+                                                                     images, device, c, tracked, optimizer,
+                                                                     params + lora_params, len(losses))
+                scheduler.step()
+                losses.append(mlm_value)
+                log.add(len(chunk), loss=losses[-1], accuracy=acc_value, grad_norm=grad_norm, **extra)
+                means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
+                                                           **({"lora": optimizer.param_groups[1]["lr"]}
+                                                              if lora_params else {})})
+                if means:
+                    print("epoch %d step %d/%d loss %.4f acc %.3f" % (epoch + 1, len(losses), steps,
+                                                                     means["train/loss"], means["train/accuracy"]), flush=True)
+                if c.eval_every and len(losses) % c.eval_every == 0:
+                    run_eval()
+                continue
             logits = _mlm_logits(model, head, input_ids, attention,
                                     torch.stack([images(s["image"]) for s in chunk]), device)
             y = target[:, 1:].to(device)
             m = y != -100
-            loss = F.cross_entropy(logits[m], y[m])
+            loss = mlm = F.cross_entropy(logits[m], y[m])
+            extra: Dict[str, float] = {}
+            if tracked:
+                with torch.no_grad():
+                    per = F.cross_entropy(logits.transpose(1, 2), y.clamp(min=0), reduction="none") * m
+                    total = per.sum()
+                    for name in tracked + ["rest"]:
+                        rows = [i for i, s in enumerate(chunk) if (s.get("source") == name if name != "rest" else s.get("source") not in tracked)]
+                        key = name.replace("-", "_")
+                        extra["tokens_" + key] = float(m[rows].sum().item()) if rows else 0.0
+                        extra["loss_share_" + key] = float((per[rows].sum() / total).item()) if rows else 0.0
+            if decide:
+                chunk_d = decision_batch()
+                batch = collate_items([chunk_d], tok.pad_token_id)
+                assert batch is not None
+                d_logits = _forward(model, batch, torch.stack([images(it["image"]) for it in chunk_d]), device).float()
+                d_mask, d_target = batch["marker_mask"].to(device), batch["target"].to(device)
+                dec = _gold_ce(d_logits, d_mask, d_target)
+                loss = mlm + c.decision_weight * dec
+                extra = {"decision_ce": dec.item(), "decision_accuracy": (d_logits.masked_fill(~d_mask, -1e4).argmax(-1)
+                                                                         == d_target.argmax(-1)).float().mean().item()}
+            if not math.isfinite(loss.item()):   # before any update: nothing is saved from a broken run (critic EXP38-R1-03)
+                raise RuntimeError("step %d: loss is %r: the device is returning invalid results" % (len(losses), loss.item()))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(params + lora_params, 1.0)
             optimizer.step()
             scheduler.step()
-            losses.append(loss.item())
+            losses.append(mlm.item())
             log.add(len(chunk), loss=losses[-1], accuracy=(logits[m].argmax(-1) == y[m]).float().mean().item(),
-                    grad_norm=grad_norm.item())
+                    grad_norm=grad_norm.item(), **extra)
             means = log.flush(len(losses), epoch + 1, {"projector": optimizer.param_groups[0]["lr"],
                                                        **({"lora": optimizer.param_groups[1]["lr"]}
                                                           if lora_params else {})})

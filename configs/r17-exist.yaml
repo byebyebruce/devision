@@ -1,0 +1,42 @@
+# Round 17 -- r16-n1 plus existence questions about things of every size (docs/experiments/2026-10-20-r16-cuda-plan.md;
+# training log r16-n1): r16 said "no" with near certainty to small things that are there (POPE NLL 0.37 -> 0.97, 67%
+# of its errors at p > 0.99), having seen "yes" existence questions only for things >= 0.5% (COCO) / 1.5% (GQA) of
+# the picture. One pass from runs/r16-n1/train over data/n1/r17_mix.jsonl: 62,846 COCO train2014 existence questions
+# with no minimum size for "yes" (scripts/data/n1_exist.py; yes = no per category, hard negatives) + 120,000 drawn
+# at random from r16's mix as replay (scripts/data/n1_cont_mix.py). r16's settings; the same evaluation sets.
+#   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 nohup uv run devision-pipeline configs/r17-exist.yaml > runs/r17-exist.out 2>&1 &
+name: r17-exist
+device: cuda
+common:
+  log_every: 100
+
+stages:
+  - name: train
+    kind: train
+    init: runs/r16-n1/train
+    data: data/n1/r17_mix.jsonl
+    val: data/n1/dev_mix.jsonl
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 5000,
+             vision_unfreeze_top: 4, lr_vision: 5.0e-6, seed: 0}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl

@@ -19,7 +19,8 @@ def model_card(text, cfg):
     repo = cfg["modelscope_repo"]
     text = text.replace('src="assets/logo.png"',
                         f'src="https://modelscope.cn/models/{repo}/resolve/master/assets/logo.png"')
-    text = text.replace("pip install devision\n", "pip install devision modelscope-hub\n")
+    spec = hf.package_spec(cfg)
+    text = text.replace("pip install %s\n" % spec, "pip install %s modelscope-hub\n" % spec)
     text = text.replace(
         f'model = devision.load("{cfg["hub_repo"]}")   # latest release; device defaults to auto',
         'from modelscope_hub import HubApi\n\n'

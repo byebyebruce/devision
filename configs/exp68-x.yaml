@@ -1,0 +1,28 @@
+# exp68 arm X (docs/experiments/2026-10-19-exp68-combinations-plan.md; critic EXP68-PREP-01 / -R1-ACCEPT-01): from EXP63's
+# frozen end (3e8443e9 / 70c302c4), a new LoRA r16 + the decision head, EXP63's recipe = EXP65-C's arm exactly, on
+# data/exp68/train.jsonl (magnets byte for byte, 600 new temperature combinations) and its real plan (1,200 updates of 8,
+# every question once, two-view units whole), all weights 1. Run only by scripts/exp68/run.sh.
+name: exp68-x
+device: mps
+common:
+  log_every: 25
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp63/stage2
+  data: data/exp68/train.jsonl
+  val: data/facts/fit.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    text_only: true
+    micro_batch: 8
+    eval_batch: 8
+    lora_r: 16
+    lr_lora: 5.0e-05
+    lr_head: 1.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 0
+    amp: 'off'
+    seed: 1

@@ -1,0 +1,44 @@
+# Round 18 -- the v0.4 candidate recipe in one pass from v0.3 (docs/experiments/2026-10-20-r16-cuda-plan.md;
+# training log r16-n1 / r17-exist). r16's data-n1 plus r17's existence questions about things of every size, with
+#   - label smoothing 0.1 of every one-hot gold (r16 / r17 made p > 0.99 common on yes/no: POPE wanted a temperature
+#     near 6.5 while the fit set wanted 2.15; at 6.5 r17's POPE NLL is 0.361 vs v0.3's 0.372, so the answers rank
+#     well and only their scale is off);
+#   - ScienceQA / AI2D / TQA replay twice (r17: ScienceQA -1.8 [-3.2, -0.3] vs v0.3).
+# data/n1/r18_mix.jsonl = n1_mix.py --extra n1/exist_train.jsonl --repeat scienceqa=2 ai2d=2 tqa=2 --smooth 0.1
+# (818,471 questions). r16's settings; the same evaluation sets.
+#   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 nohup uv run devision-pipeline configs/r18-smooth.yaml > runs/r18-smooth.out 2>&1 &
+name: r18-smooth
+device: cuda
+common:
+  log_every: 100
+
+stages:
+  - name: train
+    kind: train
+    init: runs/v03/model
+    data: data/n1/r18_mix.jsonl
+    val: data/n1/dev_mix.jsonl
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 5000,
+             vision_unfreeze_top: 4, lr_vision: 5.0e-6, seed: 0}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl

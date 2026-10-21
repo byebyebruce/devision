@@ -8,7 +8,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, NoReturn, Optional, cast
+from typing import Any, Dict, List, NoReturn, Optional, Sequence, Tuple, cast
 
 import torch
 from laya.common import QTYPES, build_sequence, collate_items, serialize_state
@@ -16,8 +16,8 @@ from PIL import Image
 from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoTokenizer, SiglipVisionConfig
 
-from .image import to_pixel_values
-from .model import ModelConfig, VisionDecisionModel, build_model, text_encoder
+from .image import local_pixels, to_pixel_values
+from .model import NUMBER_SLOTS, ModelConfig, VisionDecisionModel, build_model, text_encoder
 
 CONFIG_FILE = "config.json"                       # the model config save() writes (the Hub's standard name)
 LEGACY_CONFIG_FILE = "devision_config.json"       # its name in checkpoints saved before 2026-10-07
@@ -143,6 +143,16 @@ def _image_arg(image: Any, files: bool = True) -> Image.Image:
     return _open(raw)
 
 
+def picture_identity(img: Optional[Image.Image]) -> Optional[Dict[str, Any]]:
+    """The decoded picture a request used: sha256 of its RGB pixels and its size (None without a picture)."""
+    if img is None:
+        return None
+    import hashlib
+
+    rgb = img.convert("RGB")
+    return {"pixels_sha256": hashlib.sha256(rgb.tobytes()).hexdigest(), "size": list(rgb.size)}
+
+
 def _split_state(state: Any):
     """(text state for the encoder, image or None)."""
     if not isinstance(state, (str, dict, list)):
@@ -156,6 +166,32 @@ def _split_state(state: Any):
     if len(text) == 1 and isinstance(text[0], str):
         text = text[0]
     return (text if text else ""), (_load_image(images[0]) if images else None)
+
+
+def resolve_request(state: Any, questions: Any, image: Any = None):
+    """(text state, picture or None) of a request -- the one place that checks the questions and turns the two ways
+    of giving the picture (`image=` or an image part in `state`) into the same PIL image, before anything (ordinary
+    decide or the reading mode) looks at it. `image` as for `Decider.decide`; the HTTP layer resolves its top-level
+    `image` without local files before calling."""
+    if not isinstance(questions, dict) or not questions:
+        raise InvalidRequest("questions must be a non-empty object")
+    for qid, q in questions.items():
+        _validate_question(qid, q)
+    text_state, state_image = _split_state(state)
+    if image is not None and state_image is not None:
+        raise InvalidRequest("give the image either as image= or as an image part in state, not both")
+    return text_state, (_image_arg(image) if image is not None else state_image)
+
+
+def resolve_checkpoint(path: Any, revision: Optional[str] = None, token: Optional[str] = None) -> str:
+    """A local checkpoint directory: `path` itself, or the Hugging Face snapshot of the repo id `path` at
+    `revision` (with `token` for private repos)."""
+    path = str(path)
+    if os.path.isdir(path):
+        return path
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(path, revision=revision, token=token)
 
 
 def _validate_question(qid: str, q: Any) -> None:
@@ -196,6 +232,8 @@ def question_item(tok, cfg: ModelConfig, text_state: Any, q: Dict[str, Any]) -> 
 
 
 def image_tensor(img: Image.Image, cfg: ModelConfig) -> torch.Tensor:
+    if cfg.local_views:   # exp50: the full picture, its fixed local views and their rectangles, packed
+        return local_pixels(img, cfg.image_size, cfg.local_views, cfg.local_overlap, cfg.local_source)
     return to_pixel_values(img, cfg.image_size)
 
 
@@ -236,11 +274,7 @@ class Decider:
         `revision` and `token` apply to the latter. `device`: "auto" (default: the fastest available --
         CUDA, then MPS, then CPU, so it also runs on machines without a GPU), or "cuda" / "mps" / "cpu"."""
         device = best_device() if device == "auto" else device
-        path = str(path)
-        if not os.path.isdir(path):
-            from huggingface_hub import snapshot_download
-
-            path = snapshot_download(path, revision=revision, token=token)
+        path = resolve_checkpoint(path, revision, token)
         with open(config_path(path)) as f:
             cfg = ModelConfig.from_dict(json.load(f))
         with _parameters_on_meta():     # no memory and no random init for weights the file replaces anyway
@@ -250,57 +284,117 @@ class Decider:
         tok = AutoTokenizer.from_pretrained(os.path.join(path, "tokenizer"))
         return cls(model.to(device).float(), tok, cfg)
 
+    reading_status: Dict[str, Any] = {"mode": "none"}      # no reading bundle (see devision.reading)
+
     def predict(self, state: Any, questions: Any, image: Any = None) -> Dict[str, Any]:
         """Same as `decide`, under Laya's name."""
         return self.decide(state, questions, image=image)
 
-    @torch.inference_mode()
-    def decide(self, state: Any, questions: Any, image: Any = None) -> Dict[str, Any]:
+    def use_raw_temperatures(self) -> None:
+        """Every temperature this object applies set to 1 (the raw-probability control)."""
+        self.cfg.temperature, self.cfg.temperature_by_options, self.cfg.temperature_by_route = [1.0, 1.0, 1.0], {}, {}
+
+    def decide(self, state: Any, questions: Any, image: Any = None, diagnostics: Optional[Dict] = None) -> Dict[str, Any]:
         """Jev answers. Each question's probabilities are softmax(option logits / T), T being its
         (type, option count) bucket's temperature, or its type's when the bucket has none.
 
         `image`: the picture as an http(s) URL, data URI, local file path, base64 string, bytes, pathlib.Path or
         PIL image -- the same as an image part in `state`, which must then not have one. The HTTP request's
-        top-level `image` comes here too, as a URL, data URI or base64 only (never a server-side file). A key named "image" inside an object state stays plain text, as in Jev."""
-        if not isinstance(questions, dict) or not questions:
-            raise InvalidRequest("questions must be a non-empty object")
-        for qid, q in questions.items():
-            _validate_question(qid, q)
-        text_state, state_image = _split_state(state)
-        if image is not None and state_image is not None:
-            raise InvalidRequest("give the image either as image= or as an image part in state, not both")
-        image = _image_arg(image) if image is not None else state_image
-        qids = list(questions)
-        items = [question_item(self.tok, self.cfg, text_state, questions[qid]) for qid in qids]
-        for qid, it in zip(qids, items):
-            if len(it["markers"]) != _option_count(questions[qid]):
-                raise InvalidRequest("question %r: options do not fit the model's %d-token input; "
-                                     "use fewer or shorter options" % (qid, self.cfg.max_len))
-            if it["options_distinct"] < len(it["markers"]):
-                raise InvalidRequest("question %r: some options are identical once cut to fit the input; "
-                                     "make them shorter or let them differ earlier" % qid)
+        top-level `image` comes here too, as a URL, data URI or base64 only (never a server-side file). A key named "image" inside an object state stays plain text, as in Jev.
+        `diagnostics` (optional dict) receives each question's route ("ordinary": no reading here)."""
+        text_state, picture = resolve_request(state, questions, image)
+        if diagnostics is not None:
+            diagnostics.update(route={k: "ordinary" for k in questions}, picture=picture_identity(picture))
+        return self._decide(text_state, questions, picture)
+
+    def decide_batch(self, requests: Sequence[Dict[str, Any]],
+                     diagnostics: Optional[List[Dict]] = None) -> List[Dict[str, Any]]:
+        """`decide` on several requests at once: one response per request (each exactly as `decide` would give it, up
+        to float rounding), with every picture encoded and every question scored in one batched forward pass (a pass
+        for the requests with a picture and one for those without). Each request is a dict with `state`, `questions`
+        and optionally `image`, as the arguments of `decide`. `diagnostics` (optional list) receives one dict per
+        request, as `decide`'s. A request that breaks the contract raises InvalidRequest for the whole batch."""
+        jobs = [resolve_request(r["state"], r["questions"], r.get("image")) for r in requests]
+        if diagnostics is not None:
+            diagnostics.extend({"route": {k: "ordinary" for k in r["questions"]}, "picture": picture_identity(pic)}
+                               for r, (_, pic) in zip(requests, jobs))
+        return self._decide_many([(text, r["questions"], pic, None) for r, (text, pic) in zip(requests, jobs)])
+
+    def _decide(self, text_state: Any, questions: Dict[str, Any], image: Optional[Image.Image],
+                route_temperature: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """`decide` on an already resolved request (checked questions, text state, PIL picture or None).
+        `route_temperature` (question id -> temperature, from the reading combination for its read questions) replaces
+        that question's type / bucket temperature; applied once, here, on the logits."""
+        return self._decide_many([(text_state, questions, image, route_temperature)])[0]
+
+    @torch.inference_mode()
+    def _decide_many(self, jobs: Sequence[Tuple[Any, Dict[str, Any], Optional[Image.Image],
+                                                Optional[Dict[str, float]]]]) -> List[Dict[str, Any]]:
+        """`_decide` on several resolved requests (text state, questions, picture or None, route temperatures):
+        each picture is encoded once, and all questions of the requests with a picture go through one forward
+        pass (those without, through another)."""
+        per_job = []
+        for text_state, questions, _, _ in jobs:
+            items = [question_item(self.tok, self.cfg, text_state, questions[qid]) for qid in questions]
+            for qid, it in zip(questions, items):
+                if len(it["markers"]) != _option_count(questions[qid]):
+                    raise InvalidRequest("question %r: options do not fit the model's %d-token input; "
+                                         "use fewer or shorter options" % (qid, self.cfg.max_len))
+                if it["options_distinct"] < len(it["markers"]):
+                    raise InvalidRequest("question %r: some options are identical once cut to fit the input; "
+                                         "make them shorter or let them differ earlier" % qid)
+            per_job.append(items)
+        logits: List[Optional[torch.Tensor]] = [None] * len(jobs)
+        n_visual = [0] * len(jobs)
+        for with_picture in (True, False):
+            idx = [j for j, job in enumerate(jobs) if (job[2] is not None) == with_picture and per_job[j]]
+            if not idx:
+                continue
+            pictures = [img for j in idx if (img := jobs[j][2]) is not None]
+            out, nv = self._forward([per_job[j] for j in idx], pictures if with_picture else None)
+            start = 0
+            for j in idx:
+                logits[j], n_visual[j] = out[start:start + len(per_job[j])], nv
+                start += len(per_job[j])
+        responses = []
+        for (_, questions, _, route_temperature), items, lg, nv in zip(jobs, per_job, logits, n_visual):
+            answers = {}
+            for i, qid in enumerate(questions):
+                q, it = questions[qid], items[i]
+                k = len(it["markers"])
+                t = (route_temperature or {}).get(qid) or self.cfg.temperature_for(it["qtype"], k)
+                assert lg is not None
+                p = torch.softmax(lg[i, :k] / t, -1).tolist()
+                answers[qid] = self._answer(q, p)
+            input_tokens = sum(len(it["ids"]) + nv for it in items)
+            responses.append({"model": self.cfg.model_name, "answers": answers,
+                              "usage": {"input_tokens": input_tokens, "output_tokens": 0}})
+        return responses
+
+    def _forward(self, groups: List[List[Dict[str, Any]]], images: Optional[List[Image.Image]]):
+        """Option logits [questions, K] (CPU) of the question items of `groups` in order, group g asked about
+        images[g] (None: text only), and the visual tokens each question carried."""
+        items = [it for g in groups for it in g]
         batch = collate_items([items], self.tok.pad_token_id)
         assert batch is not None
         dev = next(self.model.parameters()).device
-        visual = patches = None
-        if image is not None:   # the picture is encoded once and shared by every question
-            pixels = image_tensor(image, self.cfg)[None].to(dev)
-            patches, visual = self.model.image_features(pixels)
-            patches, visual = patches.expand(len(items), -1, -1), visual.expand(len(items), -1, -1)
+        visual = patches = geom = None
+        if images is not None:   # each picture is encoded once and shared by its request's questions
+            pixels = torch.stack([image_tensor(img, self.cfg) for img in images]).to(dev)
+            patches, visual, geom = self.model.visual_inputs(pixels)
+            if len(images) == 1:
+                rows = None
+                patches, visual = patches.expand(len(items), -1, -1), visual.expand(len(items), -1, -1)
+                geom = None if geom is None else geom.expand(len(items), -1, -1)
+            else:
+                rows = torch.tensor([g for g, grp in enumerate(groups) for _ in grp], device=dev)
+                patches, visual = patches[rows], visual[rows]
+                geom = None if geom is None else geom[rows]
         logits = self.model(*(batch[k].to(dev) for k in
                               ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
-                            visual=visual, patches=patches).cpu()
-        n_visual = 0 if visual is None else visual.size(1)
-        answers = {}
-        for i, qid in enumerate(qids):
-            q, it = questions[qid], items[i]
-            k = len(it["markers"])
-            t = self.cfg.temperature_for(it["qtype"], k)
-            p = torch.softmax(logits[i, :k] / t, -1).tolist()
-            answers[qid] = self._answer(q, p)
-        input_tokens = sum(len(it["ids"]) + n_visual for it in items)
-        return {"model": self.cfg.model_name, "answers": answers,
-                "usage": {"input_tokens": input_tokens, "output_tokens": 0}}
+                            visual=visual, patches=patches, patch_geom=geom).cpu()
+        n_visual = 0 if visual is None else visual.size(1) + (NUMBER_SLOTS if self.model.reader is not None else 0)
+        return logits, n_visual
 
     @staticmethod
     def _answer(q: Dict[str, Any], p: List[float]) -> Dict[str, Any]:

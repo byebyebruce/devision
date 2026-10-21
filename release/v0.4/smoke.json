@@ -1,0 +1,68 @@
+{
+ "questions": {
+  "person": {
+   "type": "noul",
+   "instructions": "Is there a person in the image?"
+  },
+  "animal": {
+   "type": "noul",
+   "instructions": "Is there a dog in the image?"
+  },
+  "sport": {
+   "type": "choice",
+   "instructions": "Which sport is shown?",
+   "criteria": {
+    "tennis": null,
+    "skiing": null,
+    "soccer": null,
+    "surfing": null
+   }
+  }
+ },
+ "tolerance": 0.0001,
+ "source": "runs/r21-soft/train",
+ "answers": {
+  "1-dog-skier.jpg": {
+   "person": {
+    "type": "noul",
+    "noul": 0.8911990523338318
+   },
+   "animal": {
+    "type": "noul",
+    "noul": 0.8913512229919434
+   },
+   "sport": {
+    "type": "choice",
+    "choice": "skiing",
+    "probabilities": {
+     "tennis": 0.00012958227307535708,
+     "skiing": 0.9996160268783569,
+     "soccer": 0.00012702734966296703,
+     "surfing": 0.00012742458784487098
+    },
+    "confidence": 0.9994880358378092
+   }
+  },
+  "2-tennis-lying.jpg": {
+   "person": {
+    "type": "noul",
+    "noul": 0.8896195292472839
+   },
+   "animal": {
+    "type": "noul",
+    "noul": 0.11011546850204468
+   },
+   "sport": {
+    "type": "choice",
+    "choice": "tennis",
+    "probabilities": {
+     "tennis": 0.9996107220649719,
+     "skiing": 0.00012995844008401036,
+     "soccer": 0.00012885182513855398,
+     "surfing": 0.0001305273181060329
+    },
+    "confidence": 0.9994809627532959
+   }
+  }
+ }
+}

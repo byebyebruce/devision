@@ -1,0 +1,30 @@
+# exp33 (docs/experiments/2026-10-17-exp33-decision-protect-plan.md; critic EXP30-NEXT-01 item 5, EXP33-DESIGN-01):
+# exp30 with one change -- every alignment step also supervises 8 old decision questions of v0.3's mix
+# (data/exp33/decisions.jsonl, 20,000) with their gold cross-entropy through the frozen decision head, weight 1;
+# the same captions, init, learning rates, LoRA, frozen tower, 2,500 steps and seed. Not started until the critic
+# chooses it after exp32.
+name: exp33-align-decide
+device: mps
+common:
+  log_every: 50
+stages:
+- name: stage1
+  kind: align
+  init: runs/r15-vision/stage2
+  data: data/exp30/align_mix.jsonl
+  val: data/exp24/align_val.jsonl
+  params:
+    epochs: 1
+    batch: 16
+    lr: 2.0e-05
+    lora_r: 16
+    lora_alpha: 32
+    lr_lora: 1.0e-04
+    warmup: 100
+    mask_prob: 0.5
+    max_caption_tokens: 40
+    eval_every: 500
+    seed: 0
+    decision_data: data/exp33/decisions.jsonl
+    decision_weight: 1.0
+    decision_micro_batch: 8

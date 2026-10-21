@@ -1,0 +1,521 @@
+"""exp53 without the real model: the oracle box through the selector's box rule gives EXP51's region exactly; the
+selector's per-question input is the question text and the picture only (box, target, field, object, qid, twin changes
+leave it unchanged; another question changes it and the predicted box); the global features are visual_inputs' first 256
+keys / values; training changes only the selector; the frozen head loads strictly and needs no gradient; the box rule's
+clipping / degenerate cases; an incomplete run reports missing paths and never an automatic result from the oracle; the
+whole run finalizes within its limit."""
+import gzip
+import importlib.util
+import json
+import os
+import sys
+
+import numpy as np
+import pytest
+import torch
+
+HERE = os.path.dirname(__file__)
+ROOT = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+
+
+def load(name, rel):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, rel))
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+st = load("exp53_stages", "stages.py")
+sel = st.sel
+
+
+@pytest.fixture(scope="module")
+def qs():
+    cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        q = st.questions()
+        st.load_texts(q)
+        return q
+    finally:
+        os.chdir(cwd)
+
+
+def test_oracle_box_through_the_box_rule_is_exp51s_region(qs):
+    oracle = json.load(gzip.open(os.path.join(ROOT, st.ORACLE_REGIONS), "rt"))
+    for i in range(0, len(qs), 47):
+        q = qs[i]
+        px, bad = sel.pixel_box(sel.target_of(q["box"], q["width"], q["height"]), q["width"], q["height"])
+        assert not bad and np.allclose(px, q["box"], atol=1e-4)
+        r = st.reg51.region(px, q["width"], q["height"])
+        assert r["index"] == oracle[i]["index"] and r["rel"] == oracle[i]["rel"]
+        assert np.allclose(r["geom"], oracle[i]["geom"], atol=1e-4)
+
+
+def tiny():
+    from conftest import tiny_decider  # type: ignore
+    d = tiny_decider(seed=3)
+    d.model.add_question_conditioning()
+    d.model.enable_local_views(12)
+    return d
+
+
+def real_tokenizer_decider():
+    """EXP50-T's real tokenizer files (no weights) with a small random embedding table standing in for the model's."""
+    from types import SimpleNamespace
+
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(os.path.join(ROOT, st.RUN, "stage2", "tokenizer"))
+    torch.manual_seed(0)
+    emb = torch.nn.Embedding(len(tok), 16)
+    enc = SimpleNamespace(get_input_embeddings=lambda: emb)
+    return SimpleNamespace(tok=tok, model=SimpleNamespace(decision=SimpleNamespace(encoder=enc)))
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, "runs/exp50-t/stage2/tokenizer")), reason="needs EXP50-T's tokenizer files")
+def test_selector_input_is_the_question_text_and_the_picture(qs):
+    d = real_tokenizer_decider()
+    q = dict(qs[0])
+    meta = dict(q, box=[0, 0, 5, 5], target="999", field="speed", object="B", qid="zz", key=q["key"], twin=None, family="x")
+    w1, m1 = st.question_words(d, [q])
+    w2, m2 = st.question_words(d, [meta])                    # same text, other metadata: same input
+    assert torch.equal(w1, w2) and torch.equal(m1, m2)
+    other = next(x for x in qs if st.q_text(x) != st.q_text(q))
+    w3, m3 = st.question_words(d, [q, other])                 # another question: another input
+    assert m3[0].sum() != m3[1].sum() or not torch.equal(w3[0, : m3[0].sum()], w3[1, : m3[1].sum()])
+    torch.manual_seed(0)
+    s = sel.Selector(32, w3.shape[-1]).eval()
+    inp = sel.Inputs(torch.randn(1, 256, 32), torch.rand(1, 256, 4), [0, 0], w3, m3)
+    b = sel.predict(s, inp, [0, 1])
+    assert b[0] != b[1]                                       # A / B on the same picture: different boxes
+
+
+def test_global_features_are_visual_inputs_first_256():
+    from PIL import Image, ImageDraw
+
+    from devision.image import local_pixels, to_pixel_values
+    d = tiny()
+    img = Image.new("RGB", (560, 405), "white")
+    ImageDraw.Draw(img).text((20, 380), "Mass 14 u", fill="black")
+    with torch.no_grad():
+        g = d.model.vision_patches(to_pixel_values(img, 256)[None])
+        kv = d.model.visual_inputs(local_pixels(img, 256, 12, 0.25, "T")[None])[0]
+    assert torch.allclose(g, kv[:, :256], atol=1e-6)
+
+
+def test_training_changes_only_the_selector_and_the_head_is_frozen(tmp_path):
+    torch.manual_seed(1)
+    inp = sel.Inputs(torch.randn(4, 256, 32), torch.rand(4, 256, 4), [0, 1, 2, 3, 0, 1], torch.randn(6, 5, 16), torch.ones(6, 5, dtype=torch.bool))
+    tg = torch.rand(6, 4) * 0.5 + 0.25
+    before = inp.patches.clone()
+    model, stats = sel.train(inp, [0, 1, 2, 3], tg, steps=20)
+    assert torch.equal(before, inp.patches) and stats["exposures"] == 20 * sel.BATCH
+    assert all(p.grad is not None for p in model.parameters() if p.requires_grad)
+    head = st.frozen_head(os.path.join(ROOT, st.HEAD)) if os.path.exists(os.path.join(ROOT, st.HEAD)) else None
+    if head is not None:
+        assert not any(p.requires_grad for p in head.parameters())
+    bad = tmp_path / "head.pt"
+    torch.save({"inp.weight": torch.zeros(1)}, bad)
+    with pytest.raises(SystemExit):
+        st.frozen_head(str(bad))                              # not the registered head
+
+
+def test_box_rule():
+    px, bad = sel.pixel_box([0.5, 0.5, 0.2, 0.1], 500, 400)
+    assert not bad and np.allclose(px, [200, 180, 100, 40])
+    px, bad = sel.pixel_box([0.99, 0.5, 0.5, 0.0001], 500, 400)  # clipped right, height below 1 px
+    assert bad and px[0] + px[2] <= 500 and px[3] == pytest.approx(1.0) and px[2] >= 1
+    px, bad = sel.pixel_box([0.0, 0.0, 0.0, 0.0], 10, 10)
+    assert bad and px == [0.0, 0.0, 1.0, 1.0]
+    a = torch.tensor([[0.5, 0.5, 0.2, 0.2]])
+    assert float(sel.box_loss(a, a)) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_incomplete_run_reports_missing_and_no_automatic_result(tmp_path):
+    out = str(tmp_path / "exp53")
+    os.makedirs(out)
+    json.dump({"started": "x"}, open(os.path.join(out, "START.json"), "w"))
+    cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        res = st.report(out, finalize=" local=124")
+    finally:
+        os.chdir(cwd)
+    assert res["states"]["auto"]["state"] == res["states"]["oracle"]["state"] == "missing"
+    assert res["branch"].startswith("incomplete") and "INCOMPLETE" in open(os.path.join(out, "report.txt")).read()
+
+
+def fake_run(out, qs, auto_pred=None, oracle_from_exp51=True, paths=("oracle", "auto")):
+    """A run directory as the stages leave it: START (with the bound sources), registered local / selector products and
+    per-path registered details. The oracle path reuses EXP51-T's registered details (so it reproduces); the automatic
+    path is perfect unless `auto_pred` is given."""
+    os.makedirs(out, exist_ok=True)
+    start = {"started": "x", "questions_sha256": st.sha(os.path.join(ROOT, st.QUESTIONS)),
+             "oracle_regions_sha256": st.sha(os.path.join(ROOT, st.ORACLE_REGIONS)),
+             "exp51_details_sha256": st.sha(os.path.join(ROOT, st.EXP51_DETAILS))}
+    json.dump(start, open(os.path.join(out, "START.json"), "w"))
+    for f in ("oracle.npz", "auto.npz", "selector.pt", "train.json", "auto_regions.json.gz"):
+        open(os.path.join(out, f), "wb").write(f.encode())
+    with open(os.path.join(out, "boxes.jsonl"), "w") as fh:
+        for q in qs:
+            fh.write(json.dumps({"key": q["key"], "frac": sel.target_of(q["box"], q["width"], q["height"]), "box": q["box"], "degenerate": False}) + "\n")
+    st.register(out, "selector", {f: st.sha(os.path.join(out, f)) for f in ("selector.pt", "boxes.jsonl", "train.json")})
+    st.register(out, "local", {f: st.sha(os.path.join(out, f)) for f in ("oracle.npz", "auto.npz", "auto_regions.json.gz")})
+    perfect = [st.p49.labels(q["target"]) for q in qs]
+    key_i = {q["key"]: i for i, q in enumerate(qs)}
+    twin = [key_i[q["twin"]] if q["twin"] else i for i, q in enumerate(qs)]
+    e51_pred, e51_donor, _ = st.p49.read_details(os.path.join(ROOT, st.EXP51_DETAILS), qs)
+    for name in paths:
+        pred = (e51_pred if oracle_from_exp51 else perfect) if name == "oracle" else (auto_pred or perfect)
+        donor = (e51_donor if oracle_from_exp51 else [perfect[j] for j in twin]) if name == "oracle" else [pred[j] for j in twin]
+        ident = {"path": name, "start_sha256": st.sha(os.path.join(out, "START.json")), "head_sha256": st.HEAD_SHA,
+                 "questions_sha256": start["questions_sha256"], "features_sha256": st.sha(os.path.join(out, name + ".npz")), "model": st.T_SHA,
+                 "regions_sha256": start["oracle_regions_sha256"] if name == "oracle" else st.sha(os.path.join(out, "auto_regions.json.gz")),
+                 "boxes_sha256": st.sha(os.path.join(out, "boxes.jsonl")) if name == "auto" else None}
+        dsha = st.p49.write_details(os.path.join(out, "details_%s.jsonl" % name), qs, pred, donor, twin, ident)
+        st.register(out, "readout_" + name, {"details_%s.jsonl" % name: dsha})
+    return out
+
+
+def run_report(out):
+    cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        return st.report(out)
+    finally:
+        os.chdir(cwd)
+
+
+def test_branch_needs_reproduction_and_fit_validity_first(tmp_path, qs):
+    """critic R1-01: an automatic pass is a continuation only with a reproducing oracle and a valid fit."""
+    ok = run_report(fake_run(str(tmp_path / "ok"), qs))
+    assert ok["oracle_reproduction"]["reproduced"] and ok["paths"]["auto"]["conditions"]["invest_original"]
+    assert ok["branch"].startswith("automatic path readable")
+    perfect_oracle = run_report(fake_run(str(tmp_path / "po"), qs, oracle_from_exp51=False))   # oracle 1.0 != 0.827
+    assert not perfect_oracle["oracle_reproduction"]["reproduced"] and perfect_oracle["branch"].startswith("not located: the oracle")
+    no_oracle = run_report(fake_run(str(tmp_path / "no"), qs, paths=("auto",)))
+    assert no_oracle["states"]["oracle"]["state"] == "missing" and no_oracle["branch"].startswith("incomplete")
+    assert no_oracle["paths"]["auto"]["conditions"]["invest_original"]                          # raw score kept
+    wrong = [[st.p49.EOS] + [-100] * 4 if q["set"] == "fit_O" else st.p49.labels(q["target"]) for q in qs]
+    fit_bad = run_report(fake_run(str(tmp_path / "fb"), qs, auto_pred=wrong))
+    assert fit_bad["paths"]["auto"]["conditions"]["invest_original"] and fit_bad["branch"].startswith("not located: the automatic")
+
+
+def test_paths_are_registered_and_checked_separately(tmp_path, qs):
+    """critic R1-02: a complete oracle path survives a missing or damaged automatic path; edits / swaps are refused."""
+    only = run_report(fake_run(str(tmp_path / "only"), qs, paths=("oracle",)))
+    assert only["states"]["oracle"]["state"] == "completed" and only["states"]["auto"]["state"] == "missing"
+    bad = fake_run(str(tmp_path / "edited"), qs)
+    p = os.path.join(bad, "details_auto.jsonl")
+    lines = open(p).read().splitlines()
+    row = json.loads(lines[1])
+    row["pred"] = st.p49.labels("9" if row["target"] != "9" else "8")
+    lines[1] = json.dumps(row)
+    open(p, "w").write("\n".join(lines) + "\n")
+    r2 = run_report(bad)
+    assert r2["states"]["auto"]["state"] == "invalid" and r2["states"]["oracle"]["state"] == "completed"
+    assert r2["branch"].startswith("incomplete")
+    sw = fake_run(str(tmp_path / "swapped"), qs)
+    a, o = os.path.join(sw, "details_auto.jsonl"), os.path.join(sw, "details_oracle.jsonl")
+    os.rename(a, a + ".x")
+    os.rename(o, a)
+    os.rename(a + ".x", o)
+    st.register(sw, "readout_oracle", {"details_oracle.jsonl": st.sha(o)})
+    st.register(sw, "readout_auto", {"details_auto.jsonl": st.sha(a)})
+    r3 = run_report(sw)
+    assert r3["states"]["auto"]["state"] == r3["states"]["oracle"]["state"] == "invalid"
+
+
+def test_inputs_and_the_reproduction_record_are_bound(tmp_path, qs, monkeypatch):
+    """critic R1-03: a changed picture or question source is refused before any forward; a changed EXP51 record before
+    the reproduction check."""
+    out = str(tmp_path / "bound")
+    os.makedirs(out)
+    json.dump({"pictures_sha256": "0" * 64, "sources": {n: "0" * 64 for n in st.SOURCES}}, open(os.path.join(out, "START.json"), "w"))
+    cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        sub = qs[:3]
+        with pytest.raises(SystemExit, match="pictures differ"):
+            st.check_pictures(sub, out)
+        with pytest.raises(SystemExit, match="question sources differ"):
+            st.load_texts(sub, st.start_record(out)["sources"])
+        ok = st.pictures_digest(sub)
+        json.dump({"pictures_sha256": ok, "sources": {n: st.sha(p) for n, p in st.SOURCES.items()}}, open(os.path.join(out, "START.json"), "w"))
+        st.check_pictures(sub, out)
+        st.load_texts(sub, st.start_record(out)["sources"])
+    finally:
+        os.chdir(cwd)
+    run = fake_run(str(tmp_path / "e51"), qs)
+    changed = tmp_path / "details_T.jsonl"                                  # EXP51's record altered after START bound it
+    lines = open(os.path.join(ROOT, st.EXP51_DETAILS)).read().splitlines()
+    row = json.loads(lines[1])
+    row["pred"] = st.p49.labels("9" if row["target"] != "9" else "8")
+    lines[1] = json.dumps(row)
+    changed.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(st, "EXP51_DETAILS", str(changed))
+    with pytest.raises(SystemExit, match="EXP51's details_T changed"):
+        run_report(run)
+
+
+def test_region_budget_refuses_before_any_allocation(tmp_path, qs, monkeypatch):
+    """critic R1-04: whole-picture predicted boxes would exceed the limit; local stops before loading the model."""
+    out = str(tmp_path / "budget")
+    os.makedirs(out)
+    json.dump({"started": "x"}, open(os.path.join(out, "START.json"), "w"))
+    with open(os.path.join(out, "boxes.jsonl"), "w") as fh:
+        for q in qs:
+            fh.write(json.dumps({"key": q["key"], "frac": [0.5, 0.5, 1, 1], "box": [0, 0, q["width"], q["height"]], "degenerate": False}) + "\n")
+    for f in ("selector.pt", "train.json"):
+        open(os.path.join(out, f), "wb").write(b"x")
+    st.register(out, "selector", {f: st.sha(os.path.join(out, f)) for f in ("selector.pt", "boxes.jsonl", "train.json")})
+    import devision.infer as inf
+    monkeypatch.setattr(inf.Decider, "load", classmethod(lambda cls, *a, **k: (_ for _ in ()).throw(AssertionError("model loaded"))))
+    cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        with pytest.raises(SystemExit, match="resource incomplete"):
+            st.stage_local(out)
+    finally:
+        os.chdir(cwd)
+    b = json.load(open(os.path.join(out, "local_budget.json")))
+    assert not b["within"] and b["questions_done"] < b["questions"] == 4752 and not os.path.exists(os.path.join(out, "auto.npz"))
+    ok = st.region_budget([{"index": [1] * 10}], [{"index": [1] * 10}], limit=10 ** 6)
+    assert ok["within"] and ok["bytes"] == 20 * 768 * 2
+
+
+def test_sha_is_chunked(tmp_path):
+    import hashlib
+    p = tmp_path / "big.bin"
+    p.write_bytes(os.urandom(3 * (1 << 20) + 17))
+    assert st.sha(str(p)) == hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+wt = load("exp53_watch", "watch.py")
+CHILD = """import os, signal, sys, time
+prog = sys.argv[1]
+if sys.argv[2] == 'ignore':
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+open(prog, 'a').write('%.3f 1 100\\n' % time.time())
+if sys.argv[2] == 'slow':
+    for i in range(2, 100):
+        time.sleep(0.5); open(prog, 'a').write('%.3f %d 100\\n' % (time.time(), i))
+time.sleep(300)
+"""
+
+
+@pytest.mark.parametrize("mode", ["stall", "ignore", "memory", "late"])
+def test_watch_stops_only_its_group(tmp_path, mode):
+    import subprocess
+    import time
+    child = tmp_path / "child.py"
+    child.write_text(CHILD)
+    bystander = subprocess.Popen(["sleep", "60"])
+    prog, log = str(tmp_path / "p.txt"), str(tmp_path / "w.txt")
+    arg = {"stall": "stall", "ignore": "ignore", "memory": "stall", "late": "slow"}[mode]
+    t = time.time()
+    rc = wt.watch([sys.executable, str(child), prog, arg], deadline=time.time() + (30 if mode == "late" else 60), progress=prog,
+                  logpath=log, first=5, stall=2 if mode in ("stall", "ignore") else 30, grace=1.5, mem_floor=1.5, mem_seconds=1,
+                  check=1, poll=0.2, mem=(lambda: 0.1) if mode == "memory" else (lambda: 99.0))
+    took = time.time() - t
+    assert rc == 124, open(log).read()
+    text = open(log).read()
+    reason = {"stall": "no progress for", "ignore": "no progress for", "memory": "available memory", "late": "two checks"}[mode]
+    assert reason in text and took < 15
+    if mode == "ignore":
+        assert "KILL" in text
+    if mode == "late":
+        assert "first window" in text
+    assert bystander.poll() is None                                          # outside the group: untouched
+    bystander.kill()
+    left = subprocess.run(["/usr/bin/pgrep", "-f", str(child)], capture_output=True, text=True).stdout.split()
+    assert not left
+
+
+STUB = """#!/bin/bash
+echo "uv $*" >> "${MARK}"
+case "$*" in
+  *"stages.py start"*) exit 0;;
+  *"watch.py"*) while [ "$1" != "--" ]; do shift; done; shift; exec "$@";;
+  *"stages.py global"*) exit 0;;
+  *"stages.py train"*) [ "${HANG}" = train ] && exec sleep 300; exit 0;;
+  *"stages.py local"*) exit 0;;
+  *"stages.py readout"*) exit 0;;
+  *"stages.py report --finalize"*) mkdir -p runs/exp53; echo final > runs/exp53/report.txt; exit 0;;
+  *"stages.py report"*) exit "${REPORT_RC:-0}";;
+esac
+exit 9
+"""
+
+
+def run_stub(tmp_path, **env):
+    import shutil
+    import stat
+    import subprocess
+    import time
+    root = tmp_path / "repo"
+    for rel in ("scripts/exp53/run.sh", "scripts/exp35/guard.sh", "scripts/exp38/steps.sh"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(os.path.join(ROOT, rel), root / rel)
+    b = tmp_path / "bin"
+    b.mkdir()
+    for name, body in {"uv": STUB, "pgrep": '#!/bin/bash\n[ "$1" = "-fl" ] && exit 1\nexec /usr/bin/pgrep "$@"\n'}.items():
+        (b / name).write_text(body)
+        (b / name).chmod((b / name).stat().st_mode | stat.S_IEXEC)
+    e = {**os.environ, "PATH": "%s:%s" % (b, os.environ["PATH"]), "MARK": str(tmp_path / "calls"), "EXP53_LIMIT": "24", "EXP53_RESERVE": "4", **env}
+    t = time.time()
+    p = subprocess.run(["bash", str(root / "scripts/exp53/run.sh")], env=e, capture_output=True, text=True, timeout=60)
+    return p, time.time() - t, root
+
+
+def test_run_finalizes_within_the_limit(tmp_path):
+    import subprocess
+    p, took, root = run_stub(tmp_path, HANG="train")
+    assert p.returncode == 124 and took < 24 + 3, p.stdout + p.stderr
+    calls = (tmp_path / "calls").read_text()
+    assert "report --finalize" in calls and "stages.py local" not in calls
+    assert "train interrupted" in (root / "runs/exp53-status.txt").read_text()
+    left = subprocess.run(["/usr/bin/pgrep", "-f", "sleep 300"], capture_output=True, text=True).stdout.split()
+    assert not [x for x in left if subprocess.run(["ps", "-o", "ppid=", "-p", x], capture_output=True, text=True).stdout.strip() == "1"]
+
+
+def test_a_failed_report_fails_the_run(tmp_path):
+    p, _, _ = run_stub(tmp_path, REPORT_RC="1", EXP53_LIMIT="90")
+    assert p.returncode == 1, p.stdout + p.stderr                           # all stages 0, report 1 -> not exit 0
+
+
+# ---- critic EXP53-R2-01 / 02
+
+
+@pytest.mark.parametrize("damaged", ["auto.npz", "auto_regions.json.gz"])
+def test_damaged_automatic_products_do_not_take_the_oracle_down(tmp_path, qs, damaged):
+    run = fake_run(str(tmp_path / damaged.split(".")[0]), qs)
+    open(os.path.join(run, damaged), "ab").write(b"x")
+    r = run_report(run)
+    assert r["states"]["oracle"]["state"] == "completed" and r["states"]["auto"]["state"] == "invalid"
+    assert r["branch"].startswith("incomplete")
+
+
+def test_automatic_regions_stop_as_soon_as_the_budget_is_exceeded(qs):
+    calls = []
+
+    def big(box, w, h):
+        calls.append(1)
+        return {"index": list(range(3328)), "view": [0] * 3328, "rel": [[0, 0]] * 3328, "geom": [[0, 0, 1, 1]] * 3328}
+    bx = {q["key"]: {"box": q["box"]} for q in qs}
+    regs, budget = st.auto_regions(qs, bx, oracle_tokens=713844, limit=st.BUDGET_BYTES, region_fn=big)
+    assert regs is None and not budget["within"] and len(calls) == budget["questions_done"] < len(qs)
+    assert len(calls) < 500                                                 # stopped early, not after the whole list
+    small = lambda box, w, h: {"index": [1], "view": [0], "rel": [[0, 0]], "geom": [[0, 0, 1, 1]]}  # noqa: E731
+    regs, budget = st.auto_regions(qs, bx, oracle_tokens=10, region_fn=small)
+    assert regs is not None and len(regs) == len(qs) and budget["within"]
+
+
+STAGE = """import os, signal, subprocess, sys, time
+child = subprocess.Popen([sys.executable, '-c', 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)'])
+open(sys.argv[1] + '.child', 'w').write(str(child.pid))
+if len(sys.argv) > 2 and sys.argv[2] == 'one':
+    open(sys.argv[1], 'a').write('%.3f 1 10\\n' % time.time())
+time.sleep(300)
+"""
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def test_watch_forwards_term_and_cleans_its_group(tmp_path):
+    import signal
+    import subprocess
+    import time
+    stage = tmp_path / "stage.py"
+    stage.write_text(STAGE)
+    prog, log = str(tmp_path / "p.txt"), str(tmp_path / "w.txt")
+    bystander = subprocess.Popen(["sleep", "60"])
+    w = subprocess.Popen([sys.executable, os.path.join(HERE, "watch.py"), "--deadline", str(time.time() + 300), "--progress", prog,
+                          "--log", log, "--grace", "2", "--", sys.executable, str(stage), prog])
+    for _ in range(50):
+        if os.path.exists(prog + ".child"):
+            break
+        time.sleep(0.1)
+    child = int(open(prog + ".child").read())
+    time.sleep(0.5)
+    w.send_signal(signal.SIGTERM)                                            # the outer bound's TERM
+    assert w.wait(timeout=15) == 124
+    time.sleep(0.3)
+    assert not alive(child) and "signal 15" in open(log).read() and "KILL" in open(log).read()
+    assert bystander.poll() is None
+    bystander.kill()
+
+
+def test_watch_cleans_up_on_an_exception_and_does_not_invent_an_eta(tmp_path):
+    import time
+    stage = tmp_path / "stage.py"
+    stage.write_text(STAGE)
+    prog, log = str(tmp_path / "p.txt"), str(tmp_path / "w.txt")
+    n = {"calls": 0}
+
+    def broken():
+        n["calls"] += 1
+        if n["calls"] > 5:
+            raise RuntimeError("monitor failed")
+        return 99.0
+    with pytest.raises(RuntimeError):
+        wt.watch([sys.executable, str(stage), prog], deadline=time.time() + 300, progress=prog, logpath=log, grace=2, poll=0.2, mem=broken)
+    time.sleep(0.3)
+    assert not alive(int(open(prog + ".child").read())) and "abnormally" in open(log).read()
+    prog2, log2 = str(tmp_path / "p2.txt"), str(tmp_path / "w2.txt")          # one progress point only: no ETA stop
+    rc = wt.watch([sys.executable, str(stage), prog2, "one"], deadline=time.time() + 5, progress=prog2, logpath=log2, stall=60,
+                  grace=2, check=0.3, poll=0.2, mem=lambda: 99.0)
+    text = open(log2).read()
+    assert rc == 124 and "stopping: deadline" in text and "two checks" not in text and "first window" not in text
+
+
+CHAIN_STUB = """#!/bin/bash
+echo "uv $*" >> "${MARK}"
+case "$*" in
+  *"watch.py"*) shift 2; exec python3 "$@";;
+  *"stages.py start"*) exit 0;;
+  *"stages.py global"*) exit 0;;
+  *"stages.py train"*) exec python3 "${STAGE}" runs/exp53/progress-train.txt;;
+  *"stages.py report --finalize"*) mkdir -p runs/exp53; echo final > runs/exp53/report.txt; exit 0;;
+esac
+exit 9
+"""
+
+
+def test_chain_with_the_real_watch_stops_at_its_deadline_and_finalizes(tmp_path):
+    import shutil
+    import stat
+    import subprocess
+    import time
+    root = tmp_path / "repo"
+    for rel in ("scripts/exp53/run.sh", "scripts/exp53/watch.py", "scripts/exp35/guard.sh", "scripts/exp38/steps.sh"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(os.path.join(ROOT, rel), root / rel)
+    (tmp_path / "stage.py").write_text(STAGE)
+    b = tmp_path / "bin"
+    b.mkdir()
+    for name, body in {"uv": CHAIN_STUB, "pgrep": '#!/bin/bash\n[ "$1" = "-fl" ] && exit 1\nexec /usr/bin/pgrep "$@"\n'}.items():
+        (b / name).write_text(body)
+        (b / name).chmod((b / name).stat().st_mode | stat.S_IEXEC)
+    bystander = subprocess.Popen(["sleep", "120"])
+    env = {**os.environ, "PATH": "%s:%s" % (b, os.environ["PATH"]), "MARK": str(tmp_path / "calls"), "STAGE": str(tmp_path / "stage.py"),
+           "EXP53_LIMIT": "70", "EXP53_RESERVE": "4"}
+    t = time.time()
+    p = subprocess.run(["bash", str(root / "scripts/exp53/run.sh")], env=env, capture_output=True, text=True, timeout=120)
+    took = time.time() - t
+    assert p.returncode == 124 and took < 70, p.stdout + p.stderr        # inside the run's limit
+    calls = (tmp_path / "calls").read_text()
+    assert "report --finalize" in calls and "stages.py local" not in calls
+    wlog = (root / "runs/exp53/watch-train.txt").read_text()
+    assert "stopping: deadline" in wlog and "KILL" in wlog                 # the watch, not the outer bound, ended it
+    child = int((root / "runs/exp53/progress-train.txt.child").read_text())
+    assert not alive(child) and bystander.poll() is None
+    bystander.kill()

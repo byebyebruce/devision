@@ -1,0 +1,40 @@
+# exp20 (docs/experiments/2026-10-15-exp20-tokens256-plan.md; owner 2026-10-15: prepare the next experiment, critic
+# reviews, then run): 256 visual tokens instead of 64 (no 2x2 pixel shuffle). Init = r15 / v0.3 with its projector
+# folded by scripts/exp20/fold.py (exactly the old tokens wherever a 2x2 patch block is uniform); everything else is
+# post-r15-order-a exactly (same data, seed 1, learning rates, warmup, 2,000 steps, panels), so A is the reused
+# 64-token control. Stopped by scripts/exp20/chain.sh once step 2000 is recorded; readout scripts/exp20/report.py.
+name: exp20-tokens256
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp20-tokens256/init
+  data: data/post-r15-order/a.jsonl
+  val: data/r13b/val.jsonl
+  eval:
+    ext: data/ext/dev_ext.jsonl
+    science: data/r13b/panel_science.jsonl
+    exist: data/r13b/panel_exist.jsonl
+    flip: data/v6/dev_lr_pairs.jsonl
+    count_wide: data/r13b/count_wide.jsonl
+    count_narrow: data/v11/dev_count_transfer.jsonl
+    count_wide_reverse: data/post-r15-order/count_wide_reverse.jsonl
+    count_narrow_reverse: data/post-r15-order/count_narrow_reverse.jsonl
+  params:
+    epochs: 1
+    micro_batch: 8
+    lr_new: 1.0e-05
+    lr_head: 5.0e-06
+    lr_lora: 2.0e-05
+    warmup: 100
+    eval_every: 1000
+    save_every: 500
+    amp: 'off'
+    seed: 1
+    monitor_details: true
+    vision_unfreeze_top: 0
+    distill_weight: 0.0
+    question_conditioning: false
+    grounding_weight: 0.0

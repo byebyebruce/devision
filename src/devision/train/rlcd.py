@@ -17,6 +17,7 @@ import json
 import math
 import os
 import random
+import re
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
@@ -24,6 +25,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from laya.common import QTYPES, clamp_temperature, collate_items, ece_score, proper_reward
 from peft import LoraConfig, PeftModel, get_peft_model
 from PIL import Image
@@ -45,6 +47,7 @@ MIN_BUCKET_ITEMS = 50    # fewer val questions in a bucket: no bucket temperatur
 class TrainConfig:
     epochs: int = 4
     micro_batch: int = 8
+    eval_batch: int = 32         # questions per forward pass when evaluating (val / --eval sets); results do not depend on it
     group_size: int = 4          # RLCD noisy-logit samples per item
     sigma_start: float = 0.4
     sigma_end: float = 0.1
@@ -89,6 +92,65 @@ class TrainConfig:
     # tower's top N encoder layers and its final layer norm, at lr_vision; 0: the tower stays frozen
     vision_unfreeze_top: int = 0
     lr_vision: float = 5e-6
+    # exp42 (docs/experiments/2026-10-18-exp42-objective-plan.md): "rlcd" = the RLCD policy term + gold CE (every run
+    # before it); "ce" = gold CE only. The RLCD noise is drawn either way, so both use the same random stream.
+    objective: str = "rlcd"
+    # exp44 (docs/experiments/2026-10-18-exp44-number-plan.md): aux_weight > 0 adds aux_weight x a per-question
+    # number reconstruction loss -- the same picture, state text and question, no options, aux_slots [MASK] slots
+    # read by ModernBERT's frozen MLM head (aux_head, a training device only) into the gold number's tokens and an
+    # end token. 0: off, nothing loaded, the run is exactly the one before it.
+    aux_weight: float = 0.0
+    aux_slots: int = 8
+    aux_head: str = "answerdotai/ModernBERT-large"
+    # exp45 (docs/experiments/2026-10-18-exp45-region-plan.md): region_file (a sidecar JSONL: per training row id,
+    # the asked field's box [x, y, w, h] and the picture's width / height) makes the training keep the attention of
+    # the question conditioning module (model.QuestionConditioning, needs question_conditioning) and adds
+    # region_weight x KL(target || attention), the target being the box's share of each SigLIP patch mixed 0.9 / 0.1
+    # with the uniform distribution. The same attention path runs whatever the weight (0 = the matched control).
+    # "" = off: nothing loaded, the run is the one before it; decide never uses the boxes.
+    region_file: str = ""
+    region_weight: float = 0.0
+    # exp48 (docs/experiments/2026-10-18-exp48-interaction-plan.md): interaction_file (a sidecar JSONL: per training
+    # row id, its four-corner quad, view 0 / 1, object 0 / 1 and the a / b option indices) adds interaction_weight x
+    # mean over the batch's quads of softplus(1 - J), J = (m[0,A] - m[0,B] - m[1,A] + m[1,B]) / 4 with
+    # m[v,o] = z[v,o,a] - z[v,o,b] on the ordinary option logits. Computed (for monitoring) whatever the weight;
+    # "" = off: nothing loaded, the run is the one before it.
+    interaction_file: str = ""
+    interaction_weight: float = 0.0
+    # exp50 (docs/experiments/2026-10-18-exp50-local-views-plan.md): local_views > 0 gives the model that many fixed
+    # local views (ModelConfig.local_views / local_overlap / local_source, saved with the checkpoint, so decide reads
+    # them the same way) read through the question conditioning, whose zero-initialised geometry layer joins the cond
+    # group; needs question_conditioning. Each micro batch's pictures are encoded once. 0: off, the run is the one before it.
+    local_views: int = 0
+    local_overlap: float = 0.0
+    local_source: str = ""
+    # exp52 (docs/experiments/2026-10-18-exp52-number-reader-plan.md): number_reader adds model.NumberReader (seeded from
+    # seed + 52, before the batch seeds, so both arms start from the same tensors); its content tokens join ModernBERT's
+    # input in every forward. number_file (a sidecar JSONL: per training row id and qid, the number answer's target
+    # string, e.g. "1360") gives number_weight x the strict character CE of the reader's character head (digits, ".",
+    # EOS; per question the mean over its valid slots, then the mean over the batch's questions that have a target),
+    # computed for monitoring whatever the weight. lr_reader: the reader's learning rate.
+    # exp57 (docs/experiments/2026-10-18-decision-cmp-plan.md): text_only trains and validates the decision on the text
+    # alone -- every question with image=None exactly as ordinary decide(..., image=None) scores it: no picture is
+    # loaded, the vision tower / projector / conditioning are never called and are frozen, only LoRA and the decision
+    # head train. The JSONL's image fields stay as source identity only. False: the picture path, unchanged.
+    text_only: bool = False
+    # PROTECT-PREP-01 (docs/experiments/2026-10-19-protect-replay-plan.md): mixed_input -- every training / validation row
+    # says how it is scored: "input": "text" exactly as text_only (image=None, no picture loaded even if the row names
+    # one) or "input": "picture" (its real picture, the ordinary path); a row without it is refused, a blank picture is
+    # never substituted. Units stay whole and a micro batch holds one input mode only (plan_mixed). As text_only, only
+    # LoRA and the decision head train; vision, projector, conditioning and reader are frozen (the picture batches go
+    # through them unchanged).
+    mixed_input: bool = False
+    # exp65 (docs/experiments/2026-10-19-exp65-weight-plan.md): question_weight_file, a JSONL of {"id", "qid", "weight"}
+    # covering every training question exactly once, scales each question's gold CE: loss = sum(w_i * CE_i) / questions
+    # in the batch (objective ce only; the RLCD noise is still drawn, so the random stream is the arm without weights).
+    # Training only: validation, decide and the fitted temperatures are unchanged. "": off (the original code path).
+    question_weight_file: str = ""
+    number_reader: bool = False
+    number_file: str = ""
+    number_weight: float = 0.0
+    lr_reader: float = 5e-4
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -162,6 +224,17 @@ def plan_batches(items: Sequence[Dict[str, Any]], micro_batch: int, rng: Any = r
     return batches
 
 
+def plan_mixed(items: Sequence[Dict[str, Any]], micro_batch: int, rng: Any = random) -> List[List[int]]:
+    """plan_batches on each input mode ("text" / "picture") separately -- units whole, no batch mixing the two -- then
+    the batches of both shuffled together."""
+    out: List[List[int]] = []
+    for mode in ("text", "picture"):
+        idx = [i for i, it in enumerate(items) if it["input"] == mode]
+        out += [[idx[j] for j in bt] for bt in plan_batches([items[i] for i in idx], micro_batch, rng)]
+    rng.shuffle(out)
+    return out
+
+
 def _device(name: str) -> torch.device:
     if name == "auto":
         return torch.device(best_device())
@@ -183,6 +256,8 @@ def _items(decider: Decider, samples: Sequence[Sample]) -> List[Dict[str, Any]]:
             it["target"] = [t / total for t in target]
             it["image"] = s["image"]
             it["source"] = s.get("source", "")
+            if "input" in s:
+                it["input"] = s["input"]
             it["qid"] = qid
             # what a per-question monitor record needs (the same fields devision-eval writes)
             it["sample_id"], it["image_id"] = s.get("id", ""), s.get("image_id", s["image"])
@@ -232,19 +307,34 @@ def _vision_params(vision, top: int) -> List[nn.Parameter]:
     return [p for name, p in vision.named_parameters() if any(k in name for k in keys)]
 
 
-def _forward(model, batch, pixels, device, return_hidden: bool = False):
+def _forward(model, batch, pixels, device, return_hidden: bool = False, index: Optional[torch.Tensor] = None):
+    """Option logits of `batch`; `pixels` one per question, or (exp50) one per distinct picture with `index` giving
+    each question's picture."""
+    if pixels is None:                    # exp57 text_only: ordinary decide(image=None)'s scoring, no vision call
+        return model(*(batch[k].to(device) for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
+                     return_hidden=return_hidden)
     trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
-    with torch.set_grad_enabled(trains_vision):
-        patches = model.vision(pixel_values=pixels.to(device)).last_hidden_state
-    visual = model.projector(patches)
+    patches, visual, geom = model.visual_inputs(pixels.to(device), grad_vision=trains_vision)
+    if index is not None:
+        index = index.to(device)
+        patches, visual = patches.index_select(0, index), visual.index_select(0, index)
+        geom = None if geom is None else geom.index_select(0, index)
     return model(*(batch[k].to(device) for k in
                    ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
-                 visual=visual, patches=patches, return_hidden=return_hidden)
+                 visual=visual, patches=patches, return_hidden=return_hidden, patch_geom=geom)
 
 
-def _rlcd_loss(logits, mask, target, qtype, sigma, group_size):
+def _rlcd_loss(logits, mask, target, qtype, sigma, group_size, objective: str = "rlcd", weight: Optional[torch.Tensor] = None):
+    """(loss, gold CE). objective "ce": the gold CE alone, after drawing the same RLCD noise (same random stream);
+    with `weight` (exp65, ce only) the loss is sum(w_i * CE_i) / batch questions, the returned CE stays unweighted."""
     k = mask.sum(-1, keepdim=True).float()
     eps = torch.randn((group_size,) + logits.shape, device=logits.device) * sigma * mask
+    if objective == "ce":
+        per = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1)
+        ce = per.mean()
+        if weight is None:
+            return ce, ce
+        return (weight.to(per.dtype) * per).sum() / per.shape[0], ce
     eps = (eps - eps.sum(-1, keepdim=True) / k) * mask
     z = logits.detach().unsqueeze(0) + eps
     q = torch.softmax(z.masked_fill(~mask, -1e4), -1)
@@ -255,6 +345,235 @@ def _rlcd_loss(logits, mask, target, qtype, sigma, group_size):
     logp = -(((z - logits.unsqueeze(0)) ** 2) * mask).sum(-1) / (2 * sigma ** 2)
     ce = -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
     return -(adv * logp).mean() + ce, ce
+
+def question_weights(path: str, samples: Sequence[Sample]) -> Dict[Tuple[str, str], float]:
+    """exp65's per-question CE weights: exactly one finite positive weight for every training question, no other key."""
+    want = {(s["id"], qid) for s in samples for qid in s["questions"]}
+    out: Dict[Tuple[str, str], float] = {}
+    for line in open(path):
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        k = (r["id"], r["qid"])
+        w = float(r["weight"])
+        if k in out:
+            raise ValueError("question_weight_file: %s %s twice" % k)
+        if k not in want:
+            raise ValueError("question_weight_file: %s %s is not a training question" % k)
+        if not (w > 0 and w == w and w != float("inf")):
+            raise ValueError("question_weight_file: %s %s weight %r" % (k[0], k[1], w))
+        out[k] = w
+    if set(out) != want:
+        raise ValueError("question_weight_file misses %d training questions" % len(want - set(out)))
+    return out
+
+
+INTERACTION_FORMULA = "J4/softplus(1-J)/v1"
+
+
+def interaction_table(path: str, samples: Sequence[Sample]) -> Dict[Tuple[str, str], Tuple[str, int, int, int, int]]:
+    """(sample id, qid) -> (quad, view, object, a index, b index) for every training question; every question needs a
+    row and every quad its four distinct corners."""
+    rows = {}
+    for line in open(path):
+        if line.strip():
+            r = json.loads(line)
+            k = (r["id"], r["qid"])
+            if k in rows:
+                raise ValueError("interaction: %s repeated in %s" % (k, path))
+            rows[k] = (r["quad"], int(r["view"]), int(r["object"]), int(r["a_index"]), int(r["b_index"]))
+    out, corners = {}, defaultdict(set)
+    for s in samples:
+        for qid, q in s["questions"].items():
+            k = (s.get("id", ""), qid)
+            if k not in rows:
+                raise ValueError("interaction: no quad for %s" % (k,))
+            quad, v, o, a, b = rows[k]
+            n = len(q.get("criteria") or {})
+            if not (0 <= a < n and 0 <= b < n and a != b):
+                raise ValueError("interaction: %s a / b indices %d / %d do not fit %d options" % (k, a, b, n))
+            if (v, o) in corners[quad]:
+                raise ValueError("interaction: quad %s corner %s twice" % (quad, (v, o)))
+            corners[quad].add((v, o))
+            out[k] = rows[k]
+    bad = [q for q, c in corners.items() if c != {(0, 0), (0, 1), (1, 0), (1, 1)}]
+    if bad:
+        raise ValueError("interaction: %d quads without their four corners, e.g. %s" % (len(bad), bad[0]))
+    return out
+
+
+def number_labels(target: str, slots: int = 5) -> List[int]:
+    """The character targets of a number string: its characters among model.NUMBER_CHARS, then EOS, padded with -100."""
+    from ..model import NUMBER_CHARS
+    eos = len(NUMBER_CHARS)
+    if not target or len(target) + 1 > slots or any(ch not in NUMBER_CHARS for ch in target):
+        raise ValueError("number target %r does not fit %d slots of %r + EOS" % (target, slots, NUMBER_CHARS))
+    ids = [NUMBER_CHARS.index(ch) for ch in target] + [eos]
+    return ids + [-100] * (slots - len(ids))
+
+
+def number_table(path: str, samples: Sequence[Sample]) -> Dict[Tuple[str, str], List[int]]:
+    """(sample id, qid) -> character targets, for the training questions the sidecar lists (each at most once; every
+    listed question must be a training question)."""
+    keys = {(s.get("id", ""), qid) for s in samples for qid in s["questions"]}
+    out: Dict[Tuple[str, str], List[int]] = {}
+    for line in open(path):
+        if line.strip():
+            r = json.loads(line)
+            k = (r["id"], r["qid"])
+            if k in out:
+                raise ValueError("number: %s repeated in %s" % (k, path))
+            if k not in keys:
+                raise ValueError("number: %s is not a training question" % (k,))
+            out[k] = number_labels(r["target"])
+    return out
+
+
+def number_loss(chars: torch.Tensor, labels: Sequence[Optional[List[int]]]) -> Tuple[Optional[torch.Tensor], float, int]:
+    """(loss or None, share of whole strings right, questions with a target): strict character CE of the reader's
+    character head [B, slots, classes] -- per question the mean over its valid slots (characters and EOS), then the mean
+    over the questions that have a target; a string is right when every valid slot is."""
+    rows = [i for i, y in enumerate(labels) if y is not None]
+    if not rows:
+        return None, 0.0, 0
+    y = torch.tensor([labels[i] for i in rows], device=chars.device)
+    lg = chars[rows].float()
+    valid = y != -100
+    ce = F.cross_entropy(lg.transpose(1, 2), y.clamp(min=0), reduction="none") * valid
+    loss = (ce.sum(1) / valid.sum(1)).mean()
+    right = ((lg.argmax(-1) == y) | ~valid).all(1).float().mean().item()
+    return loss, right, len(rows)
+
+
+def interaction_loss(logits: torch.Tensor, corners: Sequence[Tuple[str, int, int, int, int]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    """(mean softplus(1 - J) over the quads of a batch, mean J): `corners[i]` is row i's (quad, view, object, a, b)."""
+    by: Dict[str, Dict[Tuple[int, int], torch.Tensor]] = defaultdict(dict)
+    for i, (quad, v, o, a, b) in enumerate(corners):
+        by[quad][(v, o)] = logits[i, a] - logits[i, b]
+    js = []
+    for quad, m in by.items():
+        if set(m) != {(0, 0), (0, 1), (1, 0), (1, 1)}:
+            raise ValueError("interaction: quad %s split across batches" % quad)
+        js.append((m[(0, 0)] - m[(0, 1)] - m[(1, 0)] + m[(1, 1)]) / 4)
+    j = torch.stack(js)
+    return nn.functional.softplus(1 - j).mean(), j.mean()
+
+
+REGION_SMOOTH = 0.1     # exp45: the target is 0.9 x the box's patch shares + 0.1 x uniform, fixed before the run
+
+
+def region_targets(path: str, samples: Sequence[Sample], side: int, size: int) -> Dict[str, List[float]]:
+    """Sample id -> the target distribution over the side x side SigLIP patches (box_grid of the sidecar's box on the
+    letterboxed picture); every training sample needs a box inside its picture."""
+    boxes = {}
+    for line in open(path):
+        if line.strip():
+            r = json.loads(line)
+            boxes[r["id"]] = r
+    out = {}
+    for s in samples:
+        r = boxes.get(s.get("id", ""))
+        if r is None:
+            raise ValueError("region: no box for %s in %s" % (s.get("id"), path))
+        x, y, w, h = r["box"]
+        if not (w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= r["width"] and y + h <= r["height"]):
+            raise ValueError("region: box %s of %s is not inside its %dx%d picture" % (r["box"], s.get("id"), r["width"], r["height"]))
+        grid = box_grid([r["box"]], r["width"], r["height"], size, grid=side, smooth=REGION_SMOOTH)
+        if not grid:
+            raise ValueError("region: box of %s covers no patch" % s.get("id"))
+        out[s["id"]] = grid
+    return out
+
+
+def region_kl(weights: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Per-question KL(target || attention) over the patches, averaged over the questions."""
+    return (target * (target.log() - weights.float().clamp_min(1e-12).log())).sum(-1).mean()
+
+
+AUX_NUMBER = re.compile(r"^(\d[\d,]*(?:\.\d+)?) ")
+
+
+def aux_number(option: str) -> str:
+    """The number of a reading answer ("1,200 m/s" -> "1,200"); anything else is refused."""
+    m = AUX_NUMBER.match(option + " ")
+    if not m:
+        raise ValueError("aux: %r is not a number answer" % option)
+    return m.group(1)
+
+
+def aux_example(tok, state_text: str, instructions: str, gold: str, slots: int) -> Tuple[List[int], List[int]]:
+    """(input ids, slot targets): [CLS] state text [SEP] question [SEP] [MASK] x slots [SEP] -- no option, no number;
+    the input never depends on the answer. Targets: the number's tokens (as after a space) and [SEP], then -100."""
+    ids = ([tok.cls_token_id] + tok(state_text or "", add_special_tokens=False)["input_ids"] + [tok.sep_token_id]
+           + tok(instructions, add_special_tokens=False)["input_ids"] + [tok.sep_token_id]
+           + [tok.mask_token_id] * slots + [tok.sep_token_id])
+    target = tok(" " + aux_number(gold), add_special_tokens=False)["input_ids"] + [tok.sep_token_id]
+    if len(target) > slots:
+        raise ValueError("aux: %r needs %d slots, only %d" % (gold, len(target), slots))
+    if len(ids) > 512:
+        raise ValueError("aux: input of %d tokens" % len(ids))
+    return ids, target + [-100] * (slots - len(target))
+
+
+def aux_table(tok, samples: Sequence[Sample], slots: int) -> Dict[Tuple[str, str], Tuple[List[int], List[int]]]:
+    """(sample id, qid) -> aux_example, for every question; a gold that is not exactly one option is refused."""
+    out = {}
+    for s in samples:
+        for qid, q in s["questions"].items():
+            probs = s["gold"][qid]["probabilities"]
+            ones = [o for o, p in probs.items() if p == 1.0]
+            if len(ones) != 1 or sum(probs.values()) != 1.0:
+                raise ValueError("aux: %s %s has no single gold option" % (s.get("id"), qid))
+            out[(s.get("id", ""), qid)] = aux_example(tok, s.get("state_text", ""), q["instructions"], ones[0], slots)
+    return out
+
+
+def aux_head(encoder, repo: str):
+    """ModernBERT's MLM head (align._MLMHead, tied to the encoder's frozen word embeddings), frozen; and its identity:
+    the file and the sha256 of its three tensors."""
+    import hashlib
+    from huggingface_hub import hf_hub_download
+    from safetensors import safe_open
+    from .align import _MLMHead
+    head = _MLMHead(encoder)
+    ident: Dict[str, Any] = {"repo": repo}
+    if repo:                               # "" -> a random frozen head (tiny test models only)
+        path = hf_hub_download(repo, "model.safetensors")
+        head.load_pretrained(repo)
+        ident["file"] = os.path.realpath(path)
+        with safe_open(path, "pt") as f:
+            for k in ("head.dense.weight", "head.norm.weight", "decoder.bias"):
+                ident[k] = hashlib.sha256(f.get_tensor(k).float().numpy().tobytes()).hexdigest()
+    for p in head.head.parameters():
+        p.requires_grad_(False)
+    head.bias.requires_grad_(False)
+    return head, ident
+
+
+def aux_logits(model, head, ids: Sequence[List[int]], pixels, device, slots: int, pad_id: int) -> torch.Tensor:
+    """Vocabulary logits [B, slots, vocab] at the [MASK] slots (only there: no full-sequence vocabulary output)."""
+    n, L = len(ids), max(map(len, ids))
+    input_ids = torch.full((n, L), pad_id, dtype=torch.long)
+    attention = torch.zeros((n, L), dtype=torch.long)
+    for i, x in enumerate(ids):
+        input_ids[i, :len(x)], attention[i, :len(x)] = torch.tensor(x), 1
+    trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
+    visual = model.visual_inputs(pixels.to(device), grad_vision=trains_vision)[1]
+    h, _ = model.encode(input_ids.to(device), attention.to(device), visual)
+    start = torch.tensor([len(x) - 1 - slots for x in ids], device=device) + visual.size(1)
+    pos = start[:, None] + torch.arange(slots, device=device)[None]
+    hs = h.gather(1, pos[..., None].expand(-1, -1, h.size(-1)))
+    return head(hs).float()
+
+
+def aux_loss(logits: torch.Tensor, target: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """(loss: per question the mean CE over its number tokens and end token, then the mean over questions;
+    whole-number accuracy: every target slot right)."""
+    valid = target != -100
+    ce = nn.functional.cross_entropy(logits.transpose(1, 2), target.clamp(min=0), reduction="none") * valid
+    loss = (ce.sum(1) / valid.sum(1)).mean()
+    right = ((logits.argmax(-1) == target) | ~valid).all(1).float().mean()
+    return loss, right
 
 
 def _distill_kl(student_logits, teacher_logits, mask):
@@ -309,17 +628,25 @@ def fit_temperatures(logits, items, previous: Optional[ModelConfig] = None,
     return temperature, dict(sorted(by_options.items()))
 
 
-def _val_logits(model, items, images, pad_id, device):
-    """Temperature-free option logits for each item, in eval mode."""
+def _val_logits(model, items, images, pad_id, device, per: int = 32, text_only: bool = False, mixed: bool = False):
+    """Temperature-free option logits for each item, in eval mode; `per` questions per forward pass. `mixed`: each
+    item scored by its own "input" (text: image=None; picture: its picture), the order kept."""
+    if mixed:
+        out: List[Any] = [None] * len(items)
+        for mode in ("text", "picture"):
+            idx = [i for i, it in enumerate(items) if it["input"] == mode]
+            for i, row in zip(idx, _val_logits(model, [items[i] for i in idx], images, pad_id, device, per, mode == "text")):
+                out[i] = row
+        return out
     was_training = model.training
     model.eval()
     out = []
     with torch.no_grad():
-        for b in range(0, len(items), 32):
-            chunk = items[b:b + 32]
+        for b in range(0, len(items), per):
+            chunk = items[b:b + per]
             batch = collate_items([chunk], pad_id)
             assert batch is not None
-            logits = _forward(model, batch, torch.stack([images(it["image"]) for it in chunk]), device)
+            logits = _forward(model, batch, None if text_only else torch.stack([images(it["image"]) for it in chunk]), device)
             out.extend(row[:len(it["markers"])].tolist() for row, it in zip(logits.float().cpu(), chunk))
     model.train(was_training)
     model.vision.eval()
@@ -448,7 +775,9 @@ RESUME = "resume.pt"
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
-                "distill_blocks", "vision_unfreeze_top", "lr_vision")
+                "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
+                "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
+                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file", "mixed_input")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -496,14 +825,60 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     c = config or TrainConfig()
     device = _device(c.device)
     distill_blocks = {b for b in c.distill_blocks.split(",") if b}
+    if c.objective not in ("rlcd", "ce"):
+        raise ValueError("objective must be rlcd or ce, got %r" % c.objective)
     if c.start_check and not (c.monitor_details and out_dir):
         raise ValueError("start_check compares step-0 records: it needs monitor_details and an out directory")
+    if c.mixed_input and c.text_only:
+        raise ValueError("mixed_input and text_only are exclusive: mixed_input scores each row by its own input")
+    if (c.text_only or c.mixed_input) and (c.local_views or c.number_reader or c.region_file or c.grounding_weight > 0 or c.aux_weight > 0
+                        or c.distill_weight > 0 or c.vision_unfreeze_top or c.unfreeze_top or c.interaction_file or c.question_conditioning):
+        raise ValueError("text_only / mixed_input train LoRA and the decision head only: no local views / reader / region / grounding / "
+                         "number / distillation / interaction loss, no vision or encoder unfreezing, no new conditioning")
     teacher = None
     if c.distill_weight > 0:
         if not c.distill_teacher or not distill_blocks:
             raise ValueError("distill_weight > 0 needs distill_teacher and distill_blocks")
         # loaded before the seeds below, so the batch order, LoRA init and RLCD noise are those of a run without it
         teacher = Decider.load(c.distill_teacher, device="cpu").model.to(device).eval().requires_grad_(False)
+    if c.region_file and not c.question_conditioning:
+        raise ValueError("region_file supervises the question conditioning attention: it needs question_conditioning")
+    qweights: Dict[Tuple[str, str], float] = {}
+    if c.question_weight_file:
+        if c.objective != "ce":
+            raise ValueError("question_weight_file weights the gold CE: it needs objective ce")
+        qweights = question_weights(c.question_weight_file, samples)
+    if c.number_file and not c.number_reader:
+        raise ValueError("number_file supervises the number reader: it needs number_reader")
+    if c.number_reader:   # exp52: before the seeds below; its own seed, so every arm starts from the same tensors
+        if c.grounding_weight > 0 or c.aux_weight > 0 or c.distill_weight > 0:
+            raise ValueError("number_reader does not combine with the grounding / MLM number / distillation losses")
+        if decider.model.reader is None:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(c.seed + 52)
+                decider.model.add_number_reader()
+            decider.cfg.number_reader = True
+    if c.local_views:   # exp50: before the seeds below, so the LoRA init, batch order and noise are unchanged
+        if not c.question_conditioning or c.region_file or c.grounding_weight > 0 or c.vision_unfreeze_top \
+                or c.distill_weight > 0 or c.aux_weight > 0:
+            raise ValueError("local_views needs question_conditioning, a frozen vision tower and none of the region / "
+                             "grounding / distillation / number losses")
+        if c.local_source not in ("T", "C") or not 0 <= c.local_overlap < 1:
+            raise ValueError("local_source must be T or C and local_overlap in [0, 1)")
+        cfg = decider.cfg
+        if cfg.local_views and (cfg.local_views, cfg.local_overlap, cfg.local_source) != (c.local_views, c.local_overlap, c.local_source):
+            raise ValueError("the checkpoint already reads other local views")
+        if decider.model.condition is None:
+            decider.model.add_question_conditioning()
+            cfg.question_conditioning = True
+        decider.model.enable_local_views(c.local_views)
+        cfg.local_views, cfg.local_overlap, cfg.local_source = c.local_views, c.local_overlap, c.local_source
+    aux, aux_ident, aux_inputs = None, None, {}
+    if c.aux_weight > 0:   # built and loaded before the seeds below: the LoRA init, batch order and noise are unchanged
+        if c.aux_slots < 1:
+            raise ValueError("aux_slots must be >= 1")
+        aux_inputs = aux_table(decider.tok, samples, c.aux_slots)
+        aux, aux_ident = aux_head(text_encoder(decider.model.decision), c.aux_head)
     random.seed(c.seed)
     torch.manual_seed(c.seed)
     model, tok = decider.model, decider.tok
@@ -515,6 +890,18 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if c.question_conditioning and model.condition is None:   # S2: new module, zero output layer
         model.add_question_conditioning()
         decider.cfg.question_conditioning = True
+    numbers: Dict[Tuple[str, str], List[int]] = {}
+    if c.number_file:   # exp52: training targets only, never an input
+        numbers = number_table(c.number_file, samples)
+        cast(Any, model.reader).keep_chars = True
+    inter: Dict[Tuple[str, str], Tuple[str, int, int, int, int]] = {}
+    if c.interaction_file:   # exp48: no model change, nothing random
+        inter = interaction_table(c.interaction_file, samples)
+    regions: Dict[str, List[float]] = {}
+    if c.region_file:   # exp45: the attention is kept during training (both arms), never in decide
+        side = decider.cfg.image_size // int(cast(int, model.vision.config.patch_size))
+        regions = region_targets(c.region_file, samples, side, decider.cfg.image_size)
+        cast(Any, model.condition).keep_weights = True
     if c.grounding_weight > 0:   # S1: training-only head, removed before saving
         model.grounding = GroundingHead(text_encoder(model.decision).config.hidden_size)
     peft_encoder = get_peft_model(text_encoder(model.decision), LoraConfig(
@@ -527,6 +914,8 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         p.requires_grad_(True)
     model.to(device).train()
     model.vision.eval()
+    if aux is not None:
+        aux.to(device).eval()
 
     images = _Images(data_root, decider)
     items = _items(decider, samples)
@@ -542,22 +931,34 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             raise ValueError("distill_blocks %s not in the training data (blocks: %s)"
                              % (sorted(distill_blocks - found), sorted(b for b in found if b)))
 
+    if c.text_only or c.mixed_input:    # exp57 / PROTECT: only LoRA and the head train (projector, conditioning, reader, vision frozen)
+        for mod in (model.projector, getattr(model, "condition", None), getattr(model, "reader", None)):
+            if mod is not None:
+                mod.requires_grad_(False)
     groups = [
-        {"params": list(model.projector.parameters()), "lr": c.lr_new},
+        {"params": [] if c.text_only or c.mixed_input else list(model.projector.parameters()), "lr": c.lr_new},
         {"params": [p for n, p in model.decision.named_parameters()
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
         {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},
     ] + ([{"params": unfrozen, "lr": c.lr_encoder}] if unfrozen else []) \
       + ([{"params": vision_params, "lr": c.lr_vision}] if vision_params else [])
-    extra = [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
-             for p in getattr(model, name).parameters()]
+    extra = [] if c.text_only or c.mixed_input else [p for name in ("condition", "grounding") if getattr(model, name, None) is not None
+                                    for p in getattr(model, name).parameters()]
     if extra:
         groups.append({"params": extra, "lr": c.lr_cond})
+    reader_params = list(cast(Any, model.reader).parameters()) if getattr(model, "reader", None) is not None else []
+    if reader_params:
+        groups.append({"params": reader_params, "lr": c.lr_reader})
     group_names = ["projector", "head", "lora"] + (["encoder"] if unfrozen else []) \
-        + (["vision"] if vision_params else []) + (["cond"] if extra else [])
+        + (["vision"] if vision_params else []) + (["cond"] if extra else []) + (["reader"] if reader_params else [])
     optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
-    grouped = any("group" in it for it in train_items)
-    first_plan = plan_batches(train_items, c.micro_batch) if grouped else []
+    if c.mixed_input:
+        bad = sorted({str(it.get("input")) for its in [train_items] + list(sets.values()) for it in its} - {"text", "picture"})
+        if bad:
+            raise ValueError("mixed_input: every training and validation row needs \"input\": \"text\" | \"picture\" (found %s)" % bad)
+    grouped = c.mixed_input or any("group" in it for it in train_items)
+    plan = plan_mixed if c.mixed_input else plan_batches
+    first_plan = plan(train_items, c.micro_batch) if grouped else []
     steps = c.epochs * (len(first_plan) if grouped else max(1, -(-len(train_items) // c.micro_batch)))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: min(1.0, (s + 1) / max(1, c.warmup))
                                                   * 0.5 * (1 + math.cos(math.pi * min(1.0, s / steps))))
@@ -605,7 +1006,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             return evals[-1]
         row: Dict[str, float] = {}
         for name, its in sets.items():
-            logits = _val_logits(model, its, images, tok.pad_token_id, device)
+            logits = _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch, c.text_only, c.mixed_input)
             row.update(_set_metrics(name, logits, its))
             if c.monitor_details and out_dir:
                 _write_records(os.path.join(str(out_dir), "monitor", "step%d" % len(losses),
@@ -633,7 +1034,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     for epoch in range(start_epoch, c.epochs):
         if not (resumed and epoch == start_epoch):
             if grouped:
-                order = first_plan if epoch == 0 and first_plan else plan_batches(train_items, c.micro_batch)
+                order = first_plan if epoch == 0 and first_plan else plan(train_items, c.micro_batch)
             else:   # no groups: the order (and the RNG use) of every run before round 13
                 flat = [i for bt in order for i in bt] or list(range(len(train_items)))
                 random.shuffle(flat)
@@ -643,16 +1044,46 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             chunk = [train_items[i] for i in order[b]]
             batch = collate_items([chunk], tok.pad_token_id)
             assert batch is not None
-            pixels = torch.stack([images(it["image"]) for it in chunk])
+            index = None
+            if c.text_only or (c.mixed_input and chunk[0]["input"] == "text"):      # exp57 / PROTECT text rows: no picture at all
+                pixels = None
+            elif c.local_views:   # exp50: each distinct picture of the micro batch encoded once
+                names = sorted({it["image"] for it in chunk})
+                pixels = torch.stack([images(n) for n in names])
+                index = torch.tensor([names.index(it["image"]) for it in chunk])
+            else:
+                pixels = torch.stack([images(it["image"]) for it in chunk])
             grounded = [i for i, it in enumerate(chunk) if "grid" in it] if c.grounding_weight > 0 else []
             with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
                 if grounded:
                     logits, hidden = _forward(model, batch, pixels, device, return_hidden=True)
                 else:
-                    logits = _forward(model, batch, pixels, device)
+                    logits = _forward(model, batch, pixels, device, index=index)
                 logits = logits.float()
+            qw = torch.tensor([qweights[(it["sample_id"], it["qid"])] for it in chunk], device=device) if qweights else None
             loss, nll = _rlcd_loss(logits, batch["marker_mask"].to(device), batch["target"].to(device),
-                              batch["qtype"].to(device), sigma, c.group_size)
+                              batch["qtype"].to(device), sigma, c.group_size, c.objective, qw)
+            interaction = None
+            if inter:   # the same forward's option logits; joins the loss checked finite below, one backward / step
+                i_loss, i_j = interaction_loss(logits, [inter[(it["sample_id"], it["qid"])] for it in chunk])
+                loss = loss + c.interaction_weight * i_loss
+                interaction = (i_loss.item(), i_j.item())
+            number = None
+            if numbers:   # exp52: the same forward's character head; joins the loss checked finite below
+                n_loss, n_right, n_q = number_loss(cast(Any, model.reader).last_chars,
+                                                   [numbers.get((it["sample_id"], it["qid"])) for it in chunk])
+                if n_loss is not None:
+                    loss = loss + c.number_weight * n_loss
+                    number = (n_loss.item(), n_right)
+            region = None
+            if regions:   # the same forward's attention; checked finite with the loss below, one backward / step
+                att = cast(Any, model.condition).last_weights
+                tgt = torch.tensor([regions[it["sample_id"]] for it in chunk], device=device)
+                rkl = region_kl(att, tgt)
+                loss = loss + c.region_weight * rkl
+                if not math.isfinite(rkl.item()):
+                    raise RuntimeError("step %d: region KL is %r; no update made" % (len(losses), rkl.item()))
+                region = (rkl.item(), (att.float() * (tgt > REGION_SMOOTH / tgt.size(1) + 1e-9)).sum(-1).mean().item())
             ground = None
             if grounded:
                 idx = torch.tensor(grounded, device=device)
@@ -668,6 +1099,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 idx = torch.tensor(kept, device=device)
                 sub = {k: batch[k].to(device)[idx] for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")}
                 with torch.no_grad():
+                    assert pixels is not None    # text_only refuses distill
                     t_logits = _forward(teacher, sub, pixels[kept], device).float()
                 mask = sub["marker_mask"]
                 kl = _distill_kl(logits[idx], t_logits, mask)
@@ -684,6 +1116,16 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                                    "stopping with the last good resume state kept" % (len(losses), loss.item(), nll.item()))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            aux_stats = None
+            if aux is not None:   # second forward / backward on the same, not yet updated weights; one step below
+                ids, tgt = zip(*(aux_inputs[(it["sample_id"], it["qid"])] for it in chunk))
+                with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
+                    a_logits = aux_logits(model, aux, ids, pixels, device, c.aux_slots, tok.pad_token_id)
+                a_loss, a_right = aux_loss(a_logits, torch.tensor(tgt, device=device))
+                if not math.isfinite(a_loss.item()):
+                    raise RuntimeError("step %d: number loss is %r; no update made" % (len(losses), a_loss.item()))
+                (c.aux_weight * a_loss).backward()
+                aux_stats = (a_loss.item(), a_right.item())
             grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
             optimizer.step()
             scheduler.step()
@@ -692,25 +1134,40 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     batch_tokens=float(batch["input_ids"].shape[1]),   # padded length; long batches drive memory
                     grad_norm=grad_norm.item(), sigma=sigma,
                     **({"grounding_kl": ground.item()} if ground is not None else {}),
-                    **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}))
+                    **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}),
+                    **({"number_loss": aux_stats[0], "number_accuracy": aux_stats[1]} if aux_stats is not None else {}),
+                    **({"region_kl": region[0], "region_mass": region[1]} if region is not None else {}),
+                    **({"interaction_loss": interaction[0], "interaction_j": interaction[1]} if interaction is not None else {}),
+                    **({"reader_loss": number[0], "reader_exact": number[1]} if number is not None else {}))
             means = log.flush(len(losses), epoch + 1, {name: g["lr"] for name, g in zip(group_names, optimizer.param_groups)})
             if means:
                 print("epoch %d step %d/%d loss %.4f nll %.4f acc %.3f step_s %.3f%s" % (
                     epoch + 1, len(losses), steps, means["train/loss"], means["train/nll"],
                     means["train/accuracy"], means["perf/step_s"],
                     " distill_kl %.4f teacher_acc %.3f" % (means["train/distill_kl"], means["train/teacher_accuracy"])
-                    if "train/distill_kl" in means else ""), flush=True)
+                    if "train/distill_kl" in means else
+                    " number_loss %.4f number_acc %.3f" % (means["train/number_loss"], means["train/number_accuracy"])
+                    if "train/number_loss" in means else
+                    " region_kl %.4f region_mass %.3f" % (means["train/region_kl"], means["train/region_mass"])
+                    if "train/region_kl" in means else
+                    " interaction_loss %.4f interaction_j %.3f" % (means["train/interaction_loss"], means["train/interaction_j"])
+                    if "train/interaction_loss" in means else "") + (
+                    " reader_loss %.4f reader_exact %.3f" % (means["train/reader_loss"], means["train/reader_exact"])
+                    if "train/reader_loss" in means else ""), flush=True)
             if c.eval_every and len(losses) % c.eval_every == 0:
                 run_eval()
             if resume_path and c.save_every and len(losses) % c.save_every == 0:
                 save_state(epoch, b + 1)
         val_accuracy.append(run_eval()["val/accuracy"])
 
+    if regions:
+        cast(Any, model.condition).keep_weights = False      # the merged pass and the saved model: decide's path
     model.decision.encoder = peft_encoder.merge_and_unload()
     if hasattr(model, "grounding"):   # S1's head is a training device, not part of the model that answers
         del model.grounding
     model.eval()
-    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device) for name, its in sets.items()}
+    set_logits = {name: _val_logits(model, its, images, tok.pad_token_id, device, c.eval_batch, c.text_only, c.mixed_input)
+                  for name, its in sets.items()}
     temperature, by_options = fit_temperatures(set_logits["val"], calib)
     decider.cfg.temperature, decider.cfg.temperature_by_options = temperature, by_options
     print("temperatures (choice, score, noul):", [round(t, 3) for t in temperature])
@@ -744,4 +1201,19 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             "temperature": temperature, "temperature_by_options": by_options,
             "calibration": {"per_type": bucket_metrics(set_logits["val"], calib, temperature),
                             "by_options": bucket_metrics(set_logits["val"], calib, temperature, by_options)},
-            "train_items": len(train_items), "calib_items": len(calib)}
+            "train_items": len(train_items), "calib_items": len(calib), "objective": c.objective,
+            **({"aux": {"weight": c.aux_weight, "slots": c.aux_slots, "head": aux_ident}} if aux is not None else {}),
+            **({"region": {"weight": c.region_weight, "file": c.region_file, "smooth": REGION_SMOOTH,
+                           "file_sha256": __import__("hashlib").sha256(open(c.region_file, "rb").read()).hexdigest()}}
+               if regions else {}),
+            **({"interaction": {"weight": c.interaction_weight, "file": c.interaction_file, "formula": INTERACTION_FORMULA,
+                                "file_sha256": __import__("hashlib").sha256(open(c.interaction_file, "rb").read()).hexdigest()}}
+               if inter else {}),
+            **({"number": {"reader": True, "weight": c.number_weight, "file": c.number_file, "lr_reader": c.lr_reader,
+                           "init_seed": c.seed + 52, "reader_params": sum(p.numel() for p in reader_params),
+                           "file_sha256": __import__("hashlib").sha256(open(c.number_file, "rb").read()).hexdigest()
+                           if c.number_file else None}} if c.number_reader else {}),
+            **({"local": {"views": c.local_views, "overlap": c.local_overlap, "source": c.local_source,
+                          "vision_trainable": sum(p.numel() for p in model.vision.parameters() if p.requires_grad),
+                          "groups": {n: sum(p.numel() for p in g["params"]) for n, g in zip(group_names, groups)}}}
+               if c.local_views else {})}

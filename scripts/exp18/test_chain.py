@@ -51,3 +51,27 @@ def test_the_readout_status_is_the_chain_status(tmp_path):
     assert p.returncode == 2
     assert (stage / "DONE_AT_2000").exists()
     assert "readout" in (tmp_path / "run" / "report.txt").read_text()
+
+
+def test_another_stop_step(tmp_path):
+    """EXP18_STEP (exp25): the run ends once that step's records are complete; step 2000 alone does not end it."""
+    body = """
+mkdir -p $STAGE/monitor/step2000 $STAGE/monitor/step5000
+for s in %s; do touch $STAGE/monitor/step2000/$s.details.jsonl; done
+sleep 1
+for s in %s; do touch $STAGE/monitor/step5000/$s.details.jsonl; done
+sleep 30
+""" % (" ".join(SETS), " ".join(SETS))
+    stage = tmp_path / "run" / "stage2"
+    stage.mkdir(parents=True)
+    train = tmp_path / "train.sh"
+    train.write_text("#!/usr/bin/env bash\nSTAGE=%s\n%s\n" % (stage, textwrap.dedent(body)))
+    report = tmp_path / "report.sh"
+    report.write_text("#!/usr/bin/env bash\nexit 0\n")
+    for f in (train, report):
+        f.chmod(0o755)
+    env = dict(os.environ, EXP18_TRAIN=str(train), EXP18_REPORT=str(report), EXP18_STAGE=str(stage),
+               EXP18_POLL="0.2", EXP18_STEP="5000")
+    p = subprocess.run(["bash", CHAIN], env=env, capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0 and (stage / "DONE_AT_5000").exists() and not (stage / "DONE_AT_2000").exists()
+    assert "reached step 5000" in p.stdout

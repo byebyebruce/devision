@@ -1,0 +1,31 @@
+# exp26 phase B (docs/experiments/2026-10-16-exp26-bind-align-plan.md): exp25 unchanged (same data, two passes,
+# settings, monitors, stop at step 5000) except the init -- the phase-A checkpoint. exp25 is the control.
+name: exp26-read-compare
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp26-align/stage1
+  data: data/exp25/train.jsonl
+  val: data/exp22/fit.jsonl
+  eval:
+    dev16: data/exp22/dev16.jsonl
+    dev: data/exp21/dev_syn.jsonl
+    erased: data/exp21/dev_syn_erased.jsonl
+    text: data/exp21/dev_syn_text.jsonl
+  params:
+    epochs: 2
+    micro_batch: 8
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    warmup: 100
+    eval_every: 1000
+    save_every: 500
+    amp: 'off'
+    seed: 1
+    monitor_details: true
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06

@@ -1,0 +1,26 @@
+# exp36 control arm A: the original random mask (0.5) on every caption (docs/experiments/2026-10-17-exp36-number-mask-plan.md; critic EXP36-PREP-01). Both arms start
+# from exp32's A2 end (sha256 8476145e...e297), the same 16,000 rows (data/exp36/align_mix.jsonl, one pass = 1,000
+# steps) and every other setting of exp32's A2; they differ only in number_mask_sources.
+name: exp36-a
+device: mps
+common:
+  log_every: 50
+stages:
+- name: stage1
+  kind: align
+  init: runs/exp32-align/stage1
+  data: data/exp36/align_mix.jsonl
+  val: data/real_layout/captions_tune.jsonl
+  params:
+    epochs: 1
+    batch: 16
+    lr: 2.0e-05
+    lora_r: 16
+    lora_alpha: 32
+    lr_lora: 1.0e-04
+    warmup: 100
+    mask_prob: 0.5
+    max_caption_tokens: 44
+    eval_every: 500
+    seed: 0
+    track_sources: real-layout-temp,real-layout-force

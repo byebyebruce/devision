@@ -1,0 +1,31 @@
+# exp57 decision-side comparison CE on text (docs/experiments/2026-10-18-decision-cmp-plan.md; critic EXP57-PREP-01..03,
+# DECISION-CMP-PREP-R1-01 / 02). From EXP50-T's frozen end (1a8e5439 / 99c6246e); data/cmp/train.jsonl (b0f389da: 8,000
+# questions, each row's state = its text + its own gold number table in exp55's interface); one pass = 1,000 updates of
+# micro batch 8 (data/cmp/PLAN.json: 4,000 two-view units, each question once). text_only: every question with
+# image=None exactly as ordinary decide scores it -- no picture loaded, vision / projector / conditioning never called
+# and frozen; only LoRA (r 16) and the decision head train, gold CE. val = the training-internal fit slice
+# (data/cmp/fit.jsonl, 100 whole temperature families). Fixed end step, no tuning on tune. Run only by scripts/exp57/run.sh.
+name: exp57
+device: mps
+common:
+  log_every: 25
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp50-t/stage2
+  data: data/cmp/train.jsonl
+  val: data/cmp/fit.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    text_only: true
+    micro_batch: 8
+    eval_batch: 8
+    lora_r: 16
+    lr_lora: 5.0e-05
+    lr_head: 1.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 0
+    amp: 'off'
+    seed: 1

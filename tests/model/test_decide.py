@@ -166,7 +166,7 @@ def test_a_saved_checkpoint_loads_through_the_package_and_answers_the_same(decid
                    questions={"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}})
     decider.save(tmp_path / "ckpt")
 
-    loaded = devision.load(str(tmp_path / "ckpt"))
+    loaded = devision.load(str(tmp_path / "ckpt"), device="cpu")   # the in-memory model is on the CPU: exact equality
 
     assert loaded.predict(**request) == decider.decide(**request)
 
@@ -270,7 +270,7 @@ def test_an_older_checkpoint_with_devision_config_json_loads_the_same(decider, t
                    questions={"dog": {"type": "noul", "instructions": "Is there a dog in the image?"}})
     decider.save(tmp_path / "ckpt")
     os.rename(tmp_path / "ckpt" / "config.json", tmp_path / "ckpt" / "devision_config.json")
-    assert devision.load(str(tmp_path / "ckpt")).predict(**request) == decider.decide(**request)
+    assert devision.load(str(tmp_path / "ckpt"), device="cpu").predict(**request) == decider.decide(**request)
     decider.save(tmp_path / "ckpt")                              # saving over it leaves one config, config.json
     assert sorted(os.listdir(tmp_path / "ckpt"))[0] == "config.json"
     assert not (tmp_path / "ckpt" / "devision_config.json").exists()
@@ -289,3 +289,37 @@ def test_the_package_exports_decider_invalid_request_and_its_version():
     assert devision.Decider.__name__ == "Decider"
     assert issubclass(devision.InvalidRequest, Exception)
     assert devision.__version__ != "0+unknown"
+
+
+def test_decide_batch_gives_each_request_what_decide_gives_it(decider):
+    """Requests about different pictures, without a picture and with a text state, in one call."""
+    colours = {"pose": {"type": "choice", "instructions": "Which colour is the " + "big " * 5 + "car?",
+                        "criteria": {"red": None, "blue": "dark blue", "green": None}}}
+    requests = [
+        {"state": [{"type": "image", "base64": image_b64()}],
+         "questions": {"dog": {"type": "noul", "instructions": "Is there a dog?"}, **colours}},
+        {"state": "a photo of a street", "questions": colours},
+        {"state": [{"type": "image", "base64": image_b64((30, 70), (10, 200, 90))}, "the car is parked"],
+         "questions": {"cat": {"type": "noul", "instructions": "Is there a cat sitting on the mat?"}}},
+        {"state": "", "image": image_b64((50, 50), (0, 0, 255)), "questions": colours},
+    ]
+    diagnostics: list = []
+    batched = decider.decide_batch(requests, diagnostics=diagnostics)
+    assert len(batched) == len(diagnostics) == len(requests)
+    for req, got, diag in zip(requests, batched, diagnostics):
+        alone_diag: dict = {}
+        alone = decider.decide(req["state"], req["questions"], image=req.get("image"), diagnostics=alone_diag)
+        assert diag == alone_diag
+        assert got["usage"] == alone["usage"] and list(got["answers"]) == list(alone["answers"])
+        for qid, a in alone["answers"].items():
+            b = got["answers"][qid]
+            assert a.keys() == b.keys() and a.get("choice") == b.get("choice")
+            pa = a["probabilities"] if a["type"] == "choice" else {"true": a["noul"]}
+            pb = b["probabilities"] if b["type"] == "choice" else {"true": b["noul"]}
+            assert pa == pytest.approx(pb, abs=1e-5)
+
+
+def test_decide_batch_refuses_the_whole_batch_for_one_bad_request(decider):
+    good = {"state": "x", "questions": {"q": {"type": "noul", "instructions": "Is it?"}}}
+    with pytest.raises(InvalidRequest):
+        decider.decide_batch([good, {"state": "x", "questions": {"q": {"type": "score", "instructions": "?"}}}])

@@ -1,0 +1,40 @@
+# exp52 arm Z (docs/experiments/2026-10-18-exp52-number-reader-plan.md; critic EXP52-PREP-01): from EXP50-T's frozen end
+# (1a8e5439 / 99c6246e: question conditioning, 12 local views from the original picture, SigLIP frozen), exp42's 576
+# updates of two whole quads, gold CE + interaction weight 1.0 (EXP48 / 50 recipe), plus the number reader (its content
+# tokens join ModernBERT's input in every forward; seeded from seed + 52, identical in both arms). N and Z differ only
+# in name and number_weight (1.0 / 0.0); both compute the reader's character loss on data/exp52/numbers.jsonl.
+name: exp52-z
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp50-t/stage2
+  data: data/exp42/train.jsonl
+  val: data/exp50/val_quarter.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    question_conditioning: true
+    lr_cond: 1.0e-04
+    interaction_file: data/exp48/quads.jsonl
+    interaction_weight: 1.0
+    local_views: 12
+    local_overlap: 0.25
+    local_source: T
+    number_reader: true
+    number_file: data/exp52/numbers.jsonl
+    number_weight: 0.0
+    lr_reader: 5.0e-04
+    micro_batch: 8
+    eval_batch: 8
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 500
+    amp: 'off'
+    seed: 1
+    monitor_details: true

@@ -1,0 +1,33 @@
+# deVision v0.4 = runs/r21-soft/train (v0.3 -> r19-n2 -> r20-science -> r21-soft; docs/training-log.md). Owner decision
+# 2026-10-22 ("发布这一版"): published although the frozen rule 4 (calibration) is not met -- see adoption.md.
+version: v0.4
+git_tag: model-v0.4
+model_name: devision-v0.4
+round: runs/r21-soft
+stage: train
+hub_repo: lukbit/devision
+license: apache-2.0
+base_model:
+- convaiinnovations/laya
+- google/siglip2-base-patch16-256
+datasets:
+- HuggingFaceM4/VQAv2
+- lmms-lab/GQA
+- HuggingFaceM4/A-OKVQA
+- derek-thomas/ScienceQA
+- HuggingFaceM4/the_cauldron
+- cambridgeltl/vsr_random
+- jxu124/objects365
+- J1mb0o/e-SNLI-VE
+- Vision-Flan/vision-flan_191-task_1k
+- ryokamoi/VisOnlyQA_Train
+- RyanWW/Super-CLEVR
+- allenai/pixmo-count
+cpu_latency: release/v0.4/cpu_latency.json
+modelscope_repo: baibaibai000/devision
+evidence:
+  accept_vs_v0.3.json: release/v0.4/accept_vs_v0.3.json
+  accept_vs_v0.3.md: release/v0.4/accept_vs_v0.3.md
+  adoption.md: release/v0.4/adoption.md
+  cpu_latency.json: release/v0.4/cpu_latency.json
+  training.yaml: release/v0.4/training.yaml

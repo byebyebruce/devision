@@ -1,0 +1,45 @@
+# EXP76 -- the ordinary-decision diagnostic of EXP75's R end point (PANEL-DECISION-PREP-01;
+# docs/experiments/2026-10-20-panel-decision-plan.md). Not a round, no release candidate. EXP74's accepted D2 recipe
+# (configs/exp74-panel-d2.yaml) with only the name and the start changed: init = R (b7f471fc..., the only valid EXP75 arm,
+# which met the pre-written reading investment lines); the same data, monitors, one pass of 1,054 updates, mixed_input CE
+# (LoRA + decision head; projector, conditioning, SigLIP and every reading component frozen), seed 1, and the exist /
+# science probes. EXP74's own D2 and its 0.30 guard are not used, changed or bypassed.
+name: exp76-panel-decision
+device: mps
+common:
+  log_every: 25
+stages:
+  - name: d2
+    kind: train
+    init: runs/exp75-panel-r/r
+    data: data/panel_learn/train.jsonl
+    val: data/panel_learn/fit.jsonl
+    eval:
+      dev16: data/panel_learn/dev16.jsonl
+      erased: data/panel_learn/erased.jsonl
+      k_text: data/protect_p/slice_K_text.jsonl
+      rs_temp: data/panel_learn/read_states_sqa_temp.jsonl
+      rs_force: data/panel_learn/read_states_sqa_force.jsonl
+      rs_temp_mism: data/panel_learn/read_states_sqa_temp_mism.jsonl
+      rs_force_mism: data/panel_learn/read_states_sqa_force_mism.jsonl
+    params:
+      epochs: 1
+      mixed_input: true
+      objective: ce
+      micro_batch: 8
+      eval_batch: 8
+      lora_r: 16
+      lr_lora: 5.0e-5
+      lr_head: 1.0e-5
+      warmup: 100
+      eval_every: 0
+      save_every: 0
+      amp: "off"
+      seed: 1
+      monitor_details: true
+evaluate:
+  checkpoint: d2
+  controls: false
+  sets:
+    exist: {path: data/r13b/panel_exist.jsonl, role: monitoring}
+    science: {path: data/r13b/panel_science.jsonl, role: monitoring}

@@ -1,0 +1,34 @@
+# exp45 arm G (docs/experiments/2026-10-18-exp45-region-plan.md; critic EXP45-PREP-01): exp42-C's settings (gold CE, from
+# exp40-M's frozen end, data/exp42/train.jsonl, 576 updates) with the zero-initialised question conditioning module
+# (lr_cond 1e-4) whose attention is kept in training; region KL weight 0.5 (data/exp45/regions.jsonl). S and G differ only
+# in name and region_weight.
+name: exp45-g
+device: mps
+common:
+  log_every: 100
+stages:
+- name: stage2
+  kind: train
+  init: runs/exp40-m/stage2
+  data: data/exp42/train.jsonl
+  val: data/exp42/val_sub.jsonl
+  params:
+    epochs: 1
+    objective: ce
+    question_conditioning: true
+    lr_cond: 1.0e-04
+    region_file: data/exp45/regions.jsonl
+    region_weight: 0.5
+    micro_batch: 8
+    eval_batch: 8
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    warmup: 100
+    eval_every: 0
+    save_every: 500
+    amp: 'off'
+    seed: 1
+    monitor_details: true
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06

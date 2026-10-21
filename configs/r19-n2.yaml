@@ -1,0 +1,57 @@
+# Round 19 -- v0.3 trained on data-n2 (docs/experiments/2026-10-21-v04-plan.md; owner 2026-10-21: fill the weak
+# abilities with good training data, no teacher). Starts from v0.3 (runs/v03/model), one pass over
+# data/n2/train_mix.jsonl: data-n1 with VQAv2 / GQA cut to 200,000 each, r17's existence questions, Visual7W telling in
+# full, caption-choice spatial relations from scene graphs, COCO counting 0..10, IconQA / TallyQA / MapQA / CLEVR, with
+# counting options always 0..10, held-out pictures dropped by id and dHash, and choices answerable without the picture
+# dropped (scripts/data/n2/). r16's settings (bf16, top 4 SigLIP layers unfrozen). Monitored every 10,000 steps on
+# the new blocks' dev sets and the ScienceQA test split (dev_sqa). Evaluated on every set of configs/v03-baseline.yaml
+# and configs/v03-n2bench.yaml, so each pairs question by question with runs/v03/eval/.
+#   scripts/data/n2/mix.py builds the data
+#   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 nohup uv run devision-pipeline configs/r19-n2.yaml > runs/r19-n2.out 2>&1 &
+name: r19-n2
+device: cuda
+common:
+  log_every: 100
+
+stages:
+  - name: train
+    kind: train
+    init: runs/v03/model
+    data: data/n2/train_mix.jsonl
+    val: data/n1/dev_mix.jsonl
+    eval: {sqa: data/n2/dev_sqa.jsonl, v7w: data/n2/dev_v7w.jsonl, spatial: data/n2/dev_spatial.jsonl,
+           count: data/n2/dev_count.jsonl, iconqa: data/n2/dev_iconqa.jsonl, tallyqa: data/n2/dev_tallyqa.jsonl,
+           sqa_synth: data/n2/dev_sqa_synth.jsonl, clevr: data/n2/dev_clevr.jsonl}
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 10000,
+             vision_unfreeze_top: 4, lr_vision: 5.0e-6, seed: 0}
+
+evaluate:
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_cogent_b: {path: data/r13/bench/cogent_b.jsonl, role: heldout}
+    test_count_coco: {path: data/n2/test_count_coco.jsonl, role: heldout}
+    bench_mmbench: {path: data/n2/bench/mmbench.jsonl, role: heldout}
+    bench_cvbench: {path: data/n2/bench/cvbench.jsonl, role: heldout}
+    bench_mme: {path: data/n2/bench/mme.jsonl, role: heldout}
+    bench_naturalbench: {path: data/n2/bench/naturalbench.jsonl, role: heldout}
+    dev_sqa: data/n2/dev_sqa.jsonl

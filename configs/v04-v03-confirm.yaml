@@ -1,0 +1,13 @@
+# v0.3's results on the new frozen confirmation items only (critic V04-REL-R3, V04-CONF-02): no regular sets --
+# v0.3's 29-set results are historical (check_eval.py check --legacy configs/r15-vision.yaml); the confirmation
+# items are listed in configs/v04-confirm-extras.yaml and go through freeze / run-extras / seal / check on v0.3's
+# weights, written to runs/r15-vision/eval/extra_<name>.json. Run once, in the validation window after the
+# candidate is locked, never before.
+#   bash -c 'C=configs/v04-v03-confirm.yaml; X=configs/v04-confirm-extras.yaml
+#     for s in freeze run-extras seal check; do uv run python scripts/release/check_eval.py $s --extras $X $C || exit 1; done'
+name: v04-confirm
+stages: []
+
+evaluate:
+  checkpoint: runs/r15-vision/stage2
+  sets: {}

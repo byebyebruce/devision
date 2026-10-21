@@ -76,15 +76,15 @@ def mentions(captions: Iterable[str], pattern: re.Pattern) -> bool:
 
 def build(images: List[dict], anns_by_image: Dict[int, List[dict]], names: Dict[int, str],
           captions: Dict[int, List[str]], split: str, per_category: int, held_out: Set[str],
-          rng: random.Random) -> List[dict]:
+          rng: random.Random, min_pos_area: float = MIN_POS_AREA) -> List[dict]:
     pats = mention_patterns()
     area = {im["id"]: im["width"] * im["height"] for im in images}
     present = {}       # image -> categories with any box (crowd included)
-    big = {}           # image -> categories whose largest box is >= MIN_POS_AREA
+    big = {}           # image -> categories whose largest box is >= min_pos_area
     for im in images:
         anns = anns_by_image.get(im["id"], [])
         present[im["id"]] = {a["category_id"] for a in anns}
-        big[im["id"]] = {a["category_id"] for a in anns if not a["iscrowd"] and a["area"] / area[im["id"]] >= MIN_POS_AREA}
+        big[im["id"]] = {a["category_id"] for a in anns if not a["iscrowd"] and a["area"] / area[im["id"]] >= min_pos_area}
     cooccur: Dict[int, Counter] = defaultdict(Counter)
     for cats in present.values():
         for c in cats:

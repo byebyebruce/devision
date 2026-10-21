@@ -128,14 +128,19 @@ def eval_main(argv=None) -> None:
     """Evaluate a checkpoint on a JSONL of samples through decide(): a summary JSON (--out) and one record
     per question (--details, default <out without .json>.details.jsonl), from which every number of the
     summary can be recomputed. Questions about the same picture and text state go into one decide()
-    request (at most --max-questions), so each picture is encoded once; --no-group asks one question per
-    request (single-question latency)."""
+    request (at most --max-questions), so each picture is encoded once; consecutive requests go through one
+    batched decide_batch() call (at most --batch-questions questions); --no-group asks one question per
+    request in a call of its own (single-question latency), --no-batch keeps one request per call. The checkpoint loads through `devision.load`: with a reading/ bundle the
+    reading combination is evaluated (--reading auto / on), --reading off evaluates the plain Decider as a control."""
     _need_train_extra()
-    from ..infer import Decider
-    from .evaluate import CONTROLS, MAX_QUESTIONS, evaluate
+    from .. import READING_MODES, load
+    from .evaluate import BATCH_QUESTIONS, CONTROLS, MAX_QUESTIONS, evaluate, runtime_code
 
     p = argparse.ArgumentParser(description=eval_main.__doc__)
     p.add_argument("--checkpoint", required=True)
+    p.add_argument("--revision", help="hub commit, tag or branch when --checkpoint is a repo id")
+    p.add_argument("--reading", choices=READING_MODES, default="auto",
+                   help="auto (default): the reading combination if the checkpoint has reading/; on: require it; off: plain Decider")
     p.add_argument("--data", required=True)
     p.add_argument("--data-root", default="data")
     p.add_argument("--out")
@@ -147,7 +152,11 @@ def eval_main(argv=None) -> None:
     p.add_argument("--max-questions", type=int, default=MAX_QUESTIONS,
                    help="most questions per decide() request when grouping by picture")
     p.add_argument("--no-group", action="store_true",
-                   help="one question per decide() request (to measure single-question latency; slower)")
+                   help="one question per decide() request (to measure single-question latency; slower); implies --no-batch")
+    p.add_argument("--batch-questions", type=int, default=BATCH_QUESTIONS,
+                   help="most questions per batched decide_batch() call (several requests in one forward pass)")
+    p.add_argument("--no-batch", action="store_true",
+                   help="each request in a decide() call of its own (per-request latency; slower)")
     p.add_argument("--no-temperature", action="store_true",
                    help="evaluate the raw probabilities (all temperatures 1), to compare before / after calibration")
     p.add_argument("--device", default="auto", help="cpu, cuda, mps, or auto (the fastest available; default)")
@@ -158,17 +167,21 @@ def eval_main(argv=None) -> None:
     control = "mismatched" if a.shuffle_images else a.control
     if a.max_questions < 1:
         p.error("--max-questions must be >= 1")
+    if a.batch_questions < 1:
+        p.error("--batch-questions must be >= 1")
 
     records: list = []
-    decider = Decider.load(a.checkpoint, device=a.device)
+    decider = load(a.checkpoint, device=a.device, revision=a.revision, reading=a.reading)
     if a.no_temperature:
-        decider.cfg.temperature, decider.cfg.temperature_by_options = [1.0, 1.0, 1.0], {}
+        decider.use_raw_temperatures()
     result = evaluate(decider, read_decision_jsonl(a.data), a.data_root, control=control, seed=a.seed, records_out=records,
-                      max_questions=None if a.no_group else a.max_questions)
+                      max_questions=None if a.no_group else a.max_questions,
+                      batch_questions=None if a.no_group or a.no_batch else a.batch_questions)
     result["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data), "role": a.role,
                      "device": str(next(decider.model.parameters()).device),
                      "temperature": "none (raw)" if a.no_temperature else "fitted",
-                     "control": control, "seed": a.seed, "code": _code_version()}
+                     "control": control, "seed": a.seed, "code": _code_version(), "reading": result["reading"],
+                     "code_identity": runtime_code()}
     text = json.dumps(result, indent=2)
     print(text)
     if a.out:
@@ -212,7 +225,12 @@ def calibrate_main(argv=None) -> None:
     if a.out and os.path.exists(a.out):
         raise SystemExit("%s already exists" % a.out)
 
-    decider = Decider.load(a.checkpoint, device=a.device)
+    from ..infer import resolve_checkpoint
+    src_dir = resolve_checkpoint(a.checkpoint)
+    if os.path.exists(os.path.join(src_dir, "reading")):
+        raise SystemExit("%s has a reading/ bundle bound to its config.json: calibrate the decision checkpoint first, "
+                         "then bind the bundle again (docs/experiments/2026-10-19-v04-reader-evidence-prep03.md 5.2)" % a.checkpoint)
+    decider = Decider.load(src_dir, device=a.device)
     device = str(next(decider.model.parameters()).device)
     report = calibrate(decider, read_decision_jsonl(a.data), a.data_root, device=device, min_bucket=a.min_bucket)
     report["run"] = {"checkpoint": a.checkpoint, "data": a.data, "data_sha256": _sha256(a.data),

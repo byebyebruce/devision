@@ -21,7 +21,82 @@
 | r14-count | 2026-10-13 | `configs/r14-count.yaml` | 从 v12 接着训一遍：配平 0–10 计数 12,000 + PixMo 存在性 / 窄候选计数 12,000 + 回放 57,876（71%，扩展每源 2,400），81,876 题、10,235 步，结构不变 | 未取代 v12（CountBench +14.5，但镜像关系 −1.4 已证明退化、4 个集合未证明守住、What'sUp 概率警戒；待负责人决定） |
 | r14b-mirror | 2026-10-13 | `configs/r14b-mirror.yaml` | r14 配方中扩展回放每源 2,400 → 2,100，换成 v6 左右镜像对 2,000 + VSR 1,000（其余逐题相同） | 第 2,000 步止损（原格式计数面板 −3.3 [−6.3, −0.7]），未训完 |
 | r15-vision | 2026-10-14 | `configs/r15-vision.yaml` | r14b 数据 + 解冻 SigLIP 最上面 4 层（5e-6），种子 1，从 exp19 第 2,000 步接着训满 10,235 步 | **当前采用，发布为 v0.3**（负责人接受取舍；原始 candidate=false 保留） |
+| v04-k（草稿） | 2026-10-19 | `configs/v04-full-eval.yaml`（冻结 `runs/v04-k/eval/IDENTITY.json` c14863e2…） | 读数组合：PROTECT-K 决策权重（exp30–protect-k 链）+ EXP71 读数组件 + 确定性 K 规则 + 分题型 / 选项数 / 读数域温度 | 全评文件完整（两份执行证据待补），**未取得发布资格**（dev16 保留门槛未达，RELEASE-GAP-01）；待定 |
 | r13-binding | 2026-10-11 | `configs/r13-binding.yaml`（分支 `r13-binding`；全量评测 `configs/r13-binding-eval.yaml`） | 从 v12 接着训一遍：第 13 轮绑定数据 207,109 道（反事实合成 40,040 照片背景 75%、GQA 绑定、VisMin、CoGenT A、PixMo 两类计数、CounterCurate、TallyQA 复杂、VAW + 回放 40,000），加问题条件视觉 token（S2，零初始化） | 未取代 v12（主要条件通过，POPE 已证明退化、概率质量警戒触发；负责人 2026-10-11 决定不采用、不作下一轮起点） |
+| r16-n1 | 2026-10-21 | `configs/r16-n1.yaml`（基线 `configs/v03-baseline.yaml`） | 本机 CUDA（RTX 5070）。从 v0.3 接着训一遍新构造的 data-n1：VQAv2 train 全量 313,595（标注者答案作软 gold）+ GQA balanced train 全部 21 个分片 299,398（含开放式查询题）+ v0.3 其他能力回放 125,701；bf16；解冻 SigLIP 顶部 4 层；92,337 步 | 准确率 11 个集合显著提升、无显著退步；POPE / 存在 / 大小的 NLL 变差（过度自信），待修；待负责人决定 |
+| r17-exist | 2026-10-21 | `configs/r17-exist.yaml` | 从 r16 接着训一遍：不限物体大小的 COCO 存在题 62,846（`n1_exist.py`，yes = no，四分之一的 yes 是 < 1% 画面的物体）+ r16 混合随机回放 120,000 | 对 v0.3 13 个集合显著提升；POPE 准确率 +1.4 显著、NLL 0.97 → 0.68（仍差于 v0.3 的 0.37）；ScienceQA −1.8 [−3.2, −0.3] 显著退步；未取代 |
+| r18-smooth | 2026-10-21 | `configs/r18-smooth.yaml` | 从 v0.3 一遍：data-n1 + r17 的存在题，one-hot gold 做 label smoothing 0.1，ScienceQA / AI2D / TQA 回放 ×2 | 训练中 |
+| r19-n2 | 2026-10-21 | `configs/r19-n2.yaml` | 从 v0.3 一遍 data-n2（742k：VQAv2 / GQA 各降到约 20 万，Visual7W 全量、场景图空间描述选择、COCO / TallyQA 计数 0–10、CLEVR、IconQA、合成磁铁 / 溶液示意图，答案能靠文字猜的选择题已去掉）；第一次运行带 MapQA，第 22,000 步止损（`runs/archive/r19-n2-stop-mapqa`） | 验收规则 1、2 通过，3、4 未通过；数据 bug 丢了 46% 的 ScienceQA |
+| r20-science | 2026-10-21 | `configs/r20-science.yaml` | 从 r19 短程一遍（123k）：修正后的数据里全部 ScienceQA / AI2D / TQA ×3、IconQA、合成磁铁题、4 万回放 | **v0.4 候选**：验收规则 1–3 通过，规则 4（校准）卡在 POPE / size / MMBench / MME；待负责人决定插值或 r21 |
+| r21-soft | 2026-10-22 | `configs/r21-soft.yaml` | 从 r20 短程一遍（104k）：存在题 4 万 + 大小题 4,331 的 gold 软化成 0.9 / 0.1，6 万回放；温度在均衡开发集上拟合 | **v0.4 候选之一**：规则 1–3 通过；POPE 校准修好，规则 4 卡在 size / MME / 存在（欠自信为主）；待负责人取舍 |
+
+## r21-soft（r20 + 存在 / 大小题标签软化；准确率最好，校准换了几处地方没过）
+
+从 r20 一遍 `data/n2/soft_mix.jsonl`（`scripts/data/n2/soft_mix.py`：存在题 40,000 + 大小题 4,331 的 gold 由 0/1 改成 0.9 / 0.1，另 60,000 原样回放），13,042 步；温度在 `data/v5/dev_mix.jsonl`（各来源均衡）上拟合：choice 2.36、noul 1.09、choice:2 3.56。判定 `runs/r21-soft/eval/compare/accept_v04.md`。
+
+- **对 v0.3**：22 / 23 个判定集合点估计提升，无显著退步。新增显著的：POPE +1.7 [+0.9, +2.6]、CoGenT B +4.0；ScienceQA +3.1、VSR +7.0、V7W +7.2、What'sUp +18.0、CountBench +14.5、MMBench +2.3；A-OKVQA +2.1、size +1.3（区间含 0）；MME −0.6（区间含 0）。规则 1–3 通过。
+- **规则 4 未通过**：POPE 修好（NLL −0.009，与 v0.3 持平）；但 size +0.156、MME +0.037、存在 +0.026 超门槛。原因不同：size 和存在题现在是**欠自信**（size 平均置信 0.64、准确率 0.87；存在 0.88 对 0.955）——软化后这两类输出封顶在 0.9 附近，choice:2 温度又在均衡开发集上拟合得偏高；MME 是过度自信（0.76 对 0.65）。一个题型 / 选项数一个温度，不能同时适合这些题。
+- **对 laya-vision**：VQAv2 是非 +3.9 [+2.4, +5.3]、A-OKVQA +3.5 [+0.3, +6.6]、ScienceQA −0.3 [−2.2, +1.7]；POPE 三档 89.9 / 87.3 / 82.4。
+
+## v0.4 插值步骤（v0.3 ↔ r20；`docs/experiments/2026-10-22-v04-interp-plan.md`）
+
+α ∈ {1.0, 0.8, 0.6, 0.4}，温度都在 `data/v5/dev_mix.jsonl` 上重拟合；按事先写下的规则（存在题开发集 NLL ≤ v0.3 + 0.02 的最大 α）选中 α = 1.0（即 r20 权重 + 重拟合温度：choice 3.79、noul 4.03），全量评测一次（`runs/v04-interp/a1.0/compare/accept_v04.md`）。准确率同 r20；校准比 r20 好（MMBench、MME 恢复），规则 4 只剩 POPE（NLL 0.372 → 0.454）和 size（0.350 → 0.440）未过，两者都是过度自信。这条选择规则用的存在题开发集（COCO train 图）没有反映 POPE 的问题，规则偏松。
+
+## r20-science（r19 + 科学题短程补训；规则 1–3 通过，校准未过）
+
+方案 `docs/experiments/2026-10-21-v04-plan.md`，冻结规则 `docs/experiments/2026-10-21-v04-eval-freeze.md`，判定 `runs/r20-science/eval/compare/accept_v04.md`（`scripts/v04/accept.py`）。从 r19 一遍 `data/n2/science_mix.jsonl`（`scripts/data/n2/science_mix.py`，123,084 题），15,386 步；拟合温度 choice 2.91、noul 2.78。
+
+- **对 v0.3（26 个集合，同题配对）**：21 / 23 个判定集合点估计提升，无显著退步。镜像关系 +21.1、What'sUp +19.0、关系 +16.7、CountBench +14.1、镜像位置 +10.5、V7W +6.7、GQA +6.0、VSR +5.4、位置 +5.1、COCO 计数 +4.1、VQAv2 是非 +3.8、ScienceQA **+2.8 [+1.3, +4.4]**、MMBench +2.5、CoGenT B +2.3、存在 +2.1；A-OKVQA +1.7、POPE +0.9、CV-Bench +0.5、NaturalBench +0.2（区间含 0）；size −0.7、MME −0.7（区间含 0）。dev_sqa（ScienceQA test 划分）+4.0。
+- **验收**：规则 1（无显著退步）、2（≥ 15 个提升）、3（弱项 4 / 5：ScienceQA、VSR、计数、V7W；A-OKVQA 未达）通过；**规则 4 未通过**：NLL 升高 > 0.02 且下界 > 0 的有 POPE +0.23、size +0.09、MMBench +0.05、MME +0.03。
+- **对 r19**：ScienceQA +4.5、POPE NLL −0.17；VSR −1.7（区间含 0）。
+- **校准分析**（逐题明细离线重算）：是非题温度在各来源均衡的开发集上重拟合（2.78 → 3.75），POPE NLL 0.60 → 0.48，仍高于 v0.3 的 0.37；POPE 单独最优温度约 7。只调温度不能通过规则 4。原因与 r16 / r17 相同：大量 0/1 硬标签存在题使存在类输出过尖，一个是非题温度不能同时适合 VQAv2 类和存在类。
+- **对 laya-vision**（`eval/compare/laya_vision.md`）：VQAv2 是非 +3.7 [+2.2, +5.2]、A-OKVQA +3.1 [+0.3, +6.1]、ScienceQA −0.7 [−2.7, +1.2]（v0.3 −3.5；首次区间含 0）；POPE 三档 89.3 / 86.5 / 81.2，都高于对方公开分。
+- **结论**：准确率是这条线上最全面的一次提升；校准未过，按规则不发布，交负责人在「与 v0.3 权重插值」和「r21：存在题标签软化短程续训」之间决定。
+
+## r19-n2（v0.3 + data-n2；准确率全面提升，ScienceQA 受数据 bug 拖累）
+
+从 v0.3 一遍 `data/n2/train_mix.jsonl`（`scripts/data/n2/`，742,238 题），92,780 步，r16 的设置；拟合温度 choice 1.62、noul 1.78。
+
+- **第一次运行止损**：混合里有 MapQA 15,000 题；第 22,000 步快照（`scripts/v04/snapshot.py`）在 dev_sqa 上十三殖民地 0.93 → 0.34、大洋洲国家 0.94 → 0.59，按方案止损，去掉 MapQA 重训（`runs/archive/r19-n2-stop-mapqa`）。
+- **数据 bug**：留出规则对示意图也用 dHash，同一底图只是高亮区域不同的地图哈希相同；新加的 ScienceQA test 开发集和 MMBench 因此把 4,948 道 ScienceQA 训练题中的 2,291 道误删（州首府、殖民地、大洋大洲、磁铁）。之后改为示意图只按像素完全相同留出（`scripts/data/n2/held.py`），r20 用修正后的数据。
+- **对 v0.3**：What'sUp +18.3、CountBench +15.3、镜像关系 +21.4、VSR +7.1、COCO 计数 +4.3、CoGenT B +3.5、MMBench +1.7 等，21 / 23 提升；ScienceQA −1.7 [−3.3, 0.0]；POPE NLL +0.40、存在 +0.08、ScienceQA +0.06。规则 1、2 通过，3、4 未通过。
+- **对 laya-vision**：ScienceQA −5.2，其余与 r20 相近。
+
+## r17-exist（r16 + 全尺寸存在题；POPE 准确率修好、校准只修好一半，ScienceQA 显著退步；未取代）
+
+从 r16 接着训一遍 183,000 题（存在题 62,846 + r16 混合随机 120,000），r16 的设置。拟合温度 choice 1.81、noul 2.15。逐题配对在 `runs/r17-exist/eval/compare/`（`vs_v03.*`、`vs_r16.*`）。
+
+- **对 v0.3：13 个集合显著提升**——relation_flip +22.4、relation +17.4、position_flip +12.0、GQA +8.2、position +6.0、VQAv2 是非 +5.9、VSR +4.8、VQAv2 选择 +4.2、V7W +4.2、lv VQAv2 +3.5、存在 +1.7、POPE +1.4 [+0.6, +2.3]、dev_mix +3.7；A-OKVQA +1.8、size +0.8（含 0）。**ScienceQA −1.8 [−3.2, −0.3]，显著退步**（r16 时 −1.0 含 0）。
+- **对 r16**：POPE +2.2 [+1.4, +3.0]，其余都含 0（GQA +1.0、VSR −1.3、ScienceQA −0.8）。
+- **校准**：POPE NLL 0.967 → 0.678（v0.3 0.372），答错的 1,237 题里 605 题 p > 0.99（v0.3 为 0）。离线把 POPE 的温度从 2.15 放大到约 6.5，NLL 降到 0.361（低于 v0.3），说明排序没问题、只是输出尺度过尖：0/1 硬标签的是非题（GQA、存在）把 logit 推到极端，一个题型温度对 VQAv2 类（约 2）和存在类（约 6.5）不能同时合适。size NLL 0.35 → 0.49 也是同类问题。
+- **结论**：不取代。修正放进 r18：从 v0.3 一遍，one-hot gold 做 label smoothing 0.1，ScienceQA / AI2D / TQA 回放 ×2。
+
+## r16-n1（v0.3 + data-n1；准确率全面提升，存在类校准变差；待定）
+
+第一次在本机 CUDA 上训练（负责人 2026-10-20：不按原实验重建，自己构造新训练集，突破 v0.3）。从 v0.3（HF `lukbit/devision` af353dc…，`runs/v03/model`）出发，一遍 data-n1（`scripts/data/n1_vqav2.py`、`n1_gqa.py`、`n1_mix.py`，方案 `docs/experiments/2026-10-20-r16-cuda-plan.md`）：738,694 题，bf16（EXP77），2e-5 / 1e-5 / 5e-5，解冻 SigLIP 顶部 4 层（5e-6），92,337 步约 4.5 小时（含监测）。拟合温度 choice 1.64、noul 2.20（choice:2 3.73）。
+
+所有比较都是本机数字：v0.3 在同一批重建的集合上评测（`runs/v03/eval/`），逐题配对（`runs/r16-n1/eval/compare/vs_v03.*.txt`，按图片重采样 95% 区间）。重建的 `test_*` 与旧机器的同名集合题目不完全相同，旧封存数字不能直接相减（laya-vision 四个集合按对方题目重建，v0.3 的数字与发布时一致）。
+
+- **显著提升（区间整体 > 0）**：relation_flip +22.8 [+20.5, +25.1]、relation +16.9 [+15.1, +18.8]、position_flip +10.9 [+8.4, +13.8]、GQA +7.2 [+4.9, +9.6]、VSR +6.1 [+3.1, +9.2]、position +5.5 [+3.8, +7.3]、VQAv2 是非 +4.9 [+2.5, +7.4]、VQAv2 选择 +4.3 [+2.7, +5.9]、V7W +4.2 [+1.9, +6.5]、bench_lv_vqav2_yesno +4.1 [+2.9, +5.3]、存在 +1.3 [+0.1, +2.6]。这些集合的 NLL 也都下降（存在除外）。
+- **区间含 0**：A-OKVQA +2.1 [−0.2, +4.3]、size +0.2、ScienceQA −1.0 [−2.4, +0.5]、POPE −0.8 [−1.7, +0.1]。
+- **校准退步**：POPE NLL 0.372 → 0.967、ECE 0.039 → 0.134；存在 NLL 0.170 → 0.245；size 0.350 → 0.437。POPE 答错的题 67% 置信度 > 0.99（v0.3 答错时中位数 0.82），主要是漏报（召回 0.758）：809 道高置信漏报里 648 道 v0.3 也答错（远处的人、瓶子、勺子、遥控器等小物体）。推断原因：COCO 存在题（≥0.5% 面积）和 GQA（≥1.5%）只对足够大的物体出 yes 题，加上大量 0/1 硬标签，模型对小物体很自信地答"没有"。
+- **对 laya-vision**（`runs/r16-n1/eval/compare/laya_vision.md`）：VQAv2 是非 +4.8 [+3.3, +6.2]（v0.3 +0.8）、A-OKVQA +3.5 [+0.5, +6.9]（v0.3 +1.4，区间含 0）、ScienceQA −4.5 [−6.5, −2.4]（v0.3 −3.5）；必须看图的自然科学 44.9% 对 70.0%。POPE 三档 86.7 / 84.5 / 80.9，都高于对方公开的 83.6 / 81.9 / 77.7。
+- **用途标注**：`bench_lv_vqav2_yesno` 判为 monitoring：r16 的温度拟合集（n1 dev_mix 里的 data-v5 dev 部分）与它共享 38 张 val2014 图；与训练数据没有共享图片或题目（逐个核对为 0）。
+- **结论**：准确率全面超过 v0.3，是这条线上最大的一次提升（关系、镜像、GQA）；但存在类问题的过度自信是发布前必须修的。下一步（r17）：加入覆盖各种大小物体的存在题（含小物体，yes = no），从 r16 短程续训，再看 POPE 校准；ScienceQA 看图题仍是长期弱项。
+
+## v04-k（读数组合；全评文件完整，两份执行证据待补，未取得发布资格；草稿）
+
+不是一次新训练，而是一个组合：PROTECT-K 的决策权重（从 r15 经 exp30–protect-k 链得到）+ EXP71 的读数组件（selector / 字符头 / corrector）+ 确定性 K 规则（温度题 K = 质量 × 速度²）+ 普通校准温度和两个读数域温度。冻结身份 c14863e2…；全评 2026-10-19 13:33–22:51，94 份候选输出和 v0.3 新增 6 项都已封存、check 0 问题（V04-K-FULL-ACCEPT-01）。**勘误（2026-10-20）**：check 0 只说明文件完整、哈希一致，不说明执行没有出错；test_gqa.mismatched 和 test_bind_gqa（真图）运行时日志里有 MPS GPU 错误，执行证据待补，见 `docs/experiments/2026-10-20-v04-gpu-evidence-errata.md`。统计来自 `runs/v04-k/posteval/`（只读已封存明细，V04-K-REPORT-RUN-01）。
+
+- **主交付（exp21 transfer：ScienceQA 温度 41 + 磁力 120 道开发题，monitoring）**：准确率对 v0.3 +29.4 [+21.1, +37.7]，看图收益 +32.7 [+23.7, +41.2]；温度 41 题 +53.7（41/41），磁力 120 题 +15.0 [+5, +25]。这两组题在开发中反复使用，不是盲测；LIVE-K 筛查标签因报告里没有权重身份记为 unverifiable，原 candidate_eligible=false 保留。
+- **dev16 交付要求（原规则）：未达到**。当前分支从未具备这项能力（谱系见 `docs/experiments/2026-10-19-panel-learn-plan.md` 第 1 节：EXP26 分支证明可学，当前初始化链没有继承它），不是遗忘。读数 0.3675 [0.334, 0.401]、比较 0.415 [0.385, 0.445]，都判为 fail（通过要求点估计 ≥ 0.80 且下界 ≥ 0.75）；擦除对照有效（0.303 / 0.430）。dev16 题不在读数组合覆盖范围内（routed 0 / read 0），走普通路径。
+- **七个保护面板：0 项成本**（成本 = ≤ −3 点且上界 < 0）。count_narrow −2.7 [−6.0, +0.7]、flip −1.7 [−3.3, 0.0]、vsr −1.8、ext 宏平均 −1.0，其余持平。
+- **29 集配对（对 v0.3）**：区间整体在 0 以下的有 test_bind_gqa −2.2（heldout；执行证据待补，暂不引用，见上方勘误）、test_position −2.0、test_size −1.6、test_vqa_choice −1.5、dev_mix −1.3；整体在 0 以上的有 What'sUp +4.9 [+2.3, +7.4]（heldout）；CountBench +3.5 [−0.2, +7.3]，区间含 0，证据不足。这些是逐项区间，没有做多重比较校正。多个配错图对照下降（如 test_count_fresh 配错图 −5.3）。
+- **冻结确认项**：property 75 题，候选 85.3%，对 v0.3 +4.0 [−4, +12]，看图收益 42.7%（v0.3 45.3%）。ChartQA 80 题，候选 31.3%，对 v0.3 +6.3 [−5, +17.5]，**看图收益 −5.0 [−12.5, +2.5]**（v0.3 0），低于预写的最大值基线 49/80；倒序改变率 37.5%。没有图表 / OCR 改善的证据。
+- **合成确认**（新画法温度 / 磁力 120 张图）：通过预写门槛，比较题对 v0.3 +13.3 [+4.2, +23.3]；但比较题只答对 46.7%，原始读数温度 1/240。
+- **校准**：校准集 NLL 0.873 → 0.747、ECE 0.117 → 0.016（样本内）；ScienceQA NLL 0.726 → 0.487、ECE 0.110 → 0.035（monitoring）。准确率不变。
+- **对 laya-vision**：VQAv2 是非 +0.3、A-OKVQA +1.7（区间都含 0），ScienceQA −3.4 [−5.4, −1.4]（v0.3 −3.5）；必须看图的自然科学 59.8% 对 70.0%，v0.3 是 49.5%（+10.3），但 ScienceQA 整体只 +0.1，其余切片抵消。POPE 三档 87.9 / 86.2 / 79.7，都高于对方公开分。
+- **结论（草稿）**：目标图形的开发收益大，七个面板没有触发原代价规则，同时有几项小幅退步（逐项区间在 0 以下）；按原规则 dev16 交付要求未达到，所以没有发布资格。下一步按评审裁决定一个最小的能力修复路线，不直接重训或改门槛。
 
 ## r15-vision（训满，未通过原规则；负责人取舍采用，发布为 v0.3）
 
