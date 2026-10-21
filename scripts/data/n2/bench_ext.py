@@ -193,18 +193,40 @@ def naturalbench_choice(rid: str, image: str, question: str, answer: str) -> Opt
     return choice_row(rid, "naturalbench", "choice", image, parts[0], [o for _, o in opts], letters.index(a))
 
 
+def fits(rows: List[dict], checkpoint: str) -> Tuple[List[dict], int]:
+    """Rows whose options all fit the model's input and stay distinct once cut (decide() refuses the others),
+    checked with the checkpoint's own tokenizer and sequence builder; and how many were dropped."""
+    from transformers import AutoTokenizer
+    from devision.infer import ModelConfig, _option_count, config_path, question_item
+    with open(config_path(checkpoint)) as f:
+        cfg = ModelConfig.from_dict(json.load(f))
+    tok = AutoTokenizer.from_pretrained(os.path.join(checkpoint, "tokenizer"))
+    keep = []
+    for r in rows:
+        q = r["questions"]["q"]
+        it = question_item(tok, cfg, r.get("state_text"), q)
+        if len(it["markers"]) == _option_count(q) and it["options_distinct"] == len(it["markers"]):
+            keep.append(r)
+    return keep, len(rows) - len(keep)
+
+
 BUILDERS = {"mmbench": mmbench, "cvbench": cvbench, "mme": mme, "naturalbench": naturalbench}
 
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--root", default="data")
+    p.add_argument("--checkpoint", default="runs/v03/model",
+                   help="drop questions this model's input cannot hold (same tokenizer / budget for every round)")
     p.add_argument("names", nargs="*", default=list(BUILDERS))
     a = p.parse_args(argv)
     out_dir = os.path.join(a.root, "n2", "bench")
     os.makedirs(out_dir, exist_ok=True)
     for name in a.names:
         rows, drop = BUILDERS[name](a.root)
+        rows, n_long = fits(rows, a.checkpoint)
+        if n_long:
+            drop["options do not fit the model input"] = n_long
         with open(os.path.join(out_dir, name + ".jsonl"), "w") as f:
             for r in rows:
                 f.write(json.dumps(r) + "\n")

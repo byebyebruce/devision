@@ -40,3 +40,23 @@ def test_options_never_depend_on_the_gold():
 
 def test_names_without_a_clean_plural_are_not_asked():
     assert plural("person") == "people" and plural("skis") is None
+
+
+def test_mix_gives_counting_questions_the_full_options():
+    from mix import full_count_options, is_count
+    r = {"id": "t", "source": "tallyqa", "kind": "count", "image_id": "x", "image": "x.jpg",
+         "questions": {"q": {"type": "choice", "instructions": "How many chairs?",
+                             "criteria": {"2": None, "0": None, "4": None, "5": None}}},
+         "gold": {"q": {"probabilities": {"2": 1.0, "0": 0.0, "4": 0.0, "5": 0.0}}}, "answer_key": "2"}
+    assert is_count(r)
+    r2 = full_count_options(r, random.Random(0))
+    assert sorted(r2["questions"]["q"]["criteria"], key=int) == OPTIONS
+    assert r2["gold"]["q"]["probabilities"]["2"] == 1.0 and sum(r2["gold"]["q"]["probabilities"].values()) == 1.0
+    big = json_copy(r)
+    big["gold"]["q"]["probabilities"] = {"2": 0.0, "0": 0.0, "4": 0.0, "12": 1.0}
+    assert full_count_options(big, random.Random(0)) is None
+
+
+def json_copy(r):
+    import json
+    return json.loads(json.dumps(r))

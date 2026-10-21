@@ -29,3 +29,12 @@ def test_naturalbench_options_are_read_from_the_question():
     assert r["questions"]["q"]["instructions"] == "What colour is the car?"
     assert r["answer_key"] == "blue"
     assert naturalbench_choice("n", "i.png", "No options here?", "A") is None
+
+
+def test_blind_gate_drops_choices_the_wrong_picture_still_answers():
+    from blind import blind_ids
+    d = lambda sid, p, kind="v7w", opts=("a", "b", "c", "d"): {  # noqa: E731
+        "sample_id": sid, "source": "v7w", "kind": kind, "type": "choice", "options": list(opts),
+        "gold": {o: float(o == "a") for o in opts}, "probabilities": {o: (p if o == "a" else (1 - p) / 3) for o in opts}}
+    ids, seen = blind_ids([d("x", 0.95), d("y", 0.5), d("z", 0.99, kind="count"), d("w", 0.99, opts=("a", "b"))], 0.9)
+    assert ids == ["x"] and seen["v7w"] == 2

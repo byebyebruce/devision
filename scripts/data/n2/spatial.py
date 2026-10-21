@@ -49,6 +49,11 @@ SETS = {"vertical": ["on", "under", "to the left of", "to the right of"],
         "depth": ["in front of", "behind", "to the left of", "to the right of"]}
 MIN_GAP = 0.05
 PER_PICTURE = 3
+# background / people names v2_vg_relation leaves out that make clear spatial captions ("a dog on the grass", "a man
+# behind a car"); body parts, clothing and generic words stay out
+ALLOWED = {"table", "counter", "floor", "ground", "grass", "road", "street", "sand", "snow", "water", "field",
+           "sidewalk", "man", "woman", "person", "boy", "girl", "child", "kid", "guy", "player", "lady", "building",
+           "tree", "fence", "pole", "board", "rock", "bush", "plant", "roof", "window", "wall"}
 WORDING = ["Which caption describes the image?", "Which sentence matches the picture?",
            "Which description of the image is correct?", "Which of these is true in the photo?"]
 
@@ -164,7 +169,8 @@ def main(argv=None) -> None:
         else:
             usable[k] = sc
     seen = Counter(n for s in usable.values() for n in {o["name"] for o in s["objects"].values()})
-    names = {n for n, c in seen.items() if c >= MIN_NAME_PICTURES and n not in STUFF and not plural(n)}
+    names = {n for n, c in seen.items()
+             if c >= MIN_NAME_PICTURES and (n not in STUFF or n in ALLOWED) and not plural(n)}
     cands = defaultdict(list)   # (set, gold) -> [(vg_id, s, o)]
     for k, sc in usable.items():
         W, H = float(sc["width"]), float(sc["height"])
