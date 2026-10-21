@@ -26,11 +26,20 @@ PREFIX_DIRS = ("", "v2", "v3", "v4", "v5", "v6", "v10", "v11", "ext", "n1", "n2"
 WHOLE_DIRS = ("lv_bench", "n2/bench", "r13/bench")
 
 
+# data-n2's own monitoring splits (written by n2/mix.py from the training blocks): their pictures are already kept
+# out of training by the mix's dev rule; holding them out here too would empty them on the next mix
+N2_OWN_DEV = ("dev_v7w", "dev_spatial", "dev_count", "dev_sqa_synth", "dev_iconqa", "dev_tallyqa", "dev_mapqa",
+              "dev_clevr", "dev_spatialsense")
+
+
 def eval_files(root: str) -> List[str]:
     out = []
     for d in PREFIX_DIRS:
         for f in sorted(glob.glob(os.path.join(root, d, "*.jsonl"))):
-            if os.path.basename(f).startswith(HELD_PREFIXES):
+            name = os.path.basename(f)
+            if d == "n2" and name[:-len(".jsonl")] in N2_OWN_DEV:
+                continue
+            if name.startswith(HELD_PREFIXES):
                 out.append(f)
     for d in WHOLE_DIRS:
         out += sorted(f for f in glob.glob(os.path.join(root, d, "*.jsonl")) if not f.endswith(".details.jsonl"))

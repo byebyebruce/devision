@@ -38,3 +38,12 @@ def test_blind_gate_drops_choices_the_wrong_picture_still_answers():
         "gold": {o: float(o == "a") for o in opts}, "probabilities": {o: (p if o == "a" else (1 - p) / 3) for o in opts}}
     ids, seen = blind_ids([d("x", 0.95), d("y", 0.5), d("z", 0.99, kind="count"), d("w", 0.99, opts=("a", "b"))], 0.9)
     assert ids == ["x"] and seen["v7w"] == 2
+
+
+def test_n2_own_dev_splits_are_not_held_out(tmp_path):
+    import held
+    (tmp_path / "n2").mkdir()
+    for name in ("dev_v7w", "dev_sqa", "test_count_coco"):
+        (tmp_path / "n2" / (name + ".jsonl")).write_text("")
+    names = {os.path.basename(f) for f in held.eval_files(str(tmp_path))}
+    assert names == {"dev_sqa.jsonl", "test_count_coco.jsonl"}

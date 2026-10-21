@@ -116,6 +116,7 @@ def main(argv=None) -> None:
     p.add_argument("--drop", default="", help="JSON list (or {ids: [...]}) of ids to leave out")
     p.add_argument("--out", default="n2/train_mix.jsonl")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--dev-only", action="store_true", help="rewrite only the dev_*.jsonl files, not the training mix")
     a = p.parse_args(argv)
     rng = random.Random(a.seed)
     root = a.root
@@ -195,6 +196,15 @@ def main(argv=None) -> None:
             parts[name] = parts[name][:caps[name]]
     for name in list(dev):
         dev[name] = [r for r in dev[name] if keep("dev-" + name, r)]
+
+    if a.dev_only:
+        for name, rows in dev.items():
+            if rows:
+                with open(os.path.join(root, "n2", "dev_%s.jsonl" % name.replace("ext-", "")), "w") as f:
+                    for r in rows:
+                        f.write(json.dumps(r) + "\n")
+        print(json.dumps({n: len(v) for n, v in dev.items()}))
+        return
 
     # counting golds capped over all sources
     per_gold: Counter = Counter()
