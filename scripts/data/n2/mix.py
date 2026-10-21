@@ -10,7 +10,10 @@ Parts (each optional file is used when it exists; the MANIFEST lists what was re
 - data-n2 blocks: n2/v7w.jsonl (Visual7W telling, all), n2/spatial.jsonl (caption choice on / under / in front of /
   behind / left / right), n2/count_train.jsonl (COCO train2014 counts 0..10), n2/sqa_synth*.jsonl (programmatic
   science diagrams, when built).
-- extension sources rebuilt here (data/ext/<name>/train.jsonl): iconqa, tallyqa, mapqa, clevr, spatialsense.
+- extension sources rebuilt here (data/ext/<name>/train.jsonl): iconqa, tallyqa, clevr, spatialsense. MapQA is read
+  but capped at 0: in the first r19 run (stopped at step 22,000, runs/archive/r19-n2-stop-mapqa) ScienceQA's
+  "which region is highlighted" map questions fell (Thirteen Colonies 0.93 -> 0.34 on dev_sqa) with MapQA's
+  choropleth maps in the mix.
 
 Rules applied to every row:
 - held out (n2/held.py: ids, all of COCO val2014, dHash of every evaluation picture) -> dropped;
@@ -108,7 +111,7 @@ def main(argv=None) -> None:
     p.add_argument("--gqa", type=int, default=200000)
     p.add_argument("--count-cap", type=int, default=12000)
     p.add_argument("--repeat", action="append", default=["scienceqa=2", "ai2d=2", "tqa=2"])
-    p.add_argument("--cap", action="append", default=["ext-clevr=30000", "ext-mapqa=15000"],
+    p.add_argument("--cap", action="append", default=["ext-clevr=30000", "ext-mapqa=0"],
                    help="part=N: at most N training rows from that part (random)")
     p.add_argument("--drop", default="", help="JSON list (or {ids: [...]}) of ids to leave out")
     p.add_argument("--out", default="n2/train_mix.jsonl")
