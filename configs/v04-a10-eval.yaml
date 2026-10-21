@@ -1,0 +1,38 @@
+# v0.4 interpolation step (docs/experiments/2026-10-22-v04-interp-plan.md): the alpha chosen on the dev sets -- 1.0, i.e.
+# r20-science's weights with temperatures refitted on data/v5/dev_mix.jsonl -- evaluated once on the frozen sets.
+# Evaluation only (not a round); results in runs/v04-interp/a1.0/.
+#   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 uv run devision-pipeline configs/v04-a10-eval.yaml
+name: v04-a10-eval
+device: cuda
+stages: []
+evaluate:
+  checkpoint: runs/v04-interp/a1.0
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    dev_mix: data/v5/dev_mix.jsonl
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_cogent_b: {path: data/r13/bench/cogent_b.jsonl, role: heldout}
+    test_count_coco: {path: data/n2/test_count_coco.jsonl, role: heldout}
+    bench_mmbench: {path: data/n2/bench/mmbench.jsonl, role: heldout}
+    bench_cvbench: {path: data/n2/bench/cvbench.jsonl, role: heldout}
+    bench_mme: {path: data/n2/bench/mme.jsonl, role: heldout}
+    bench_naturalbench: {path: data/n2/bench/naturalbench.jsonl, role: heldout}
+    dev_sqa: data/n2/dev_sqa.jsonl
