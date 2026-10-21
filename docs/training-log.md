@@ -28,6 +28,19 @@
 | r18-smooth | 2026-10-21 | `configs/r18-smooth.yaml` | 从 v0.3 一遍：data-n1 + r17 的存在题，one-hot gold 做 label smoothing 0.1，ScienceQA / AI2D / TQA 回放 ×2 | 训练中 |
 | r19-n2 | 2026-10-21 | `configs/r19-n2.yaml` | 从 v0.3 一遍 data-n2（742k：VQAv2 / GQA 各降到约 20 万，Visual7W 全量、场景图空间描述选择、COCO / TallyQA 计数 0–10、CLEVR、IconQA、合成磁铁 / 溶液示意图，答案能靠文字猜的选择题已去掉）；第一次运行带 MapQA，第 22,000 步止损（`runs/archive/r19-n2-stop-mapqa`） | 验收规则 1、2 通过，3、4 未通过；数据 bug 丢了 46% 的 ScienceQA |
 | r20-science | 2026-10-21 | `configs/r20-science.yaml` | 从 r19 短程一遍（123k）：修正后的数据里全部 ScienceQA / AI2D / TQA ×3、IconQA、合成磁铁题、4 万回放 | **v0.4 候选**：验收规则 1–3 通过，规则 4（校准）卡在 POPE / size / MMBench / MME；待负责人决定插值或 r21 |
+| r21-soft | 2026-10-22 | `configs/r21-soft.yaml` | 从 r20 短程一遍（104k）：存在题 4 万 + 大小题 4,331 的 gold 软化成 0.9 / 0.1，6 万回放；温度在均衡开发集上拟合 | **v0.4 候选之一**：规则 1–3 通过；POPE 校准修好，规则 4 卡在 size / MME / 存在（欠自信为主）；待负责人取舍 |
+
+## r21-soft（r20 + 存在 / 大小题标签软化；准确率最好，校准换了几处地方没过）
+
+从 r20 一遍 `data/n2/soft_mix.jsonl`（`scripts/data/n2/soft_mix.py`：存在题 40,000 + 大小题 4,331 的 gold 由 0/1 改成 0.9 / 0.1，另 60,000 原样回放），13,042 步；温度在 `data/v5/dev_mix.jsonl`（各来源均衡）上拟合：choice 2.36、noul 1.09、choice:2 3.56。判定 `runs/r21-soft/eval/compare/accept_v04.md`。
+
+- **对 v0.3**：22 / 23 个判定集合点估计提升，无显著退步。新增显著的：POPE +1.7 [+0.9, +2.6]、CoGenT B +4.0；ScienceQA +3.1、VSR +7.0、V7W +7.2、What'sUp +18.0、CountBench +14.5、MMBench +2.3；A-OKVQA +2.1、size +1.3（区间含 0）；MME −0.6（区间含 0）。规则 1–3 通过。
+- **规则 4 未通过**：POPE 修好（NLL −0.009，与 v0.3 持平）；但 size +0.156、MME +0.037、存在 +0.026 超门槛。原因不同：size 和存在题现在是**欠自信**（size 平均置信 0.64、准确率 0.87；存在 0.88 对 0.955）——软化后这两类输出封顶在 0.9 附近，choice:2 温度又在均衡开发集上拟合得偏高；MME 是过度自信（0.76 对 0.65）。一个题型 / 选项数一个温度，不能同时适合这些题。
+- **对 laya-vision**：VQAv2 是非 +3.9 [+2.4, +5.3]、A-OKVQA +3.5 [+0.3, +6.6]、ScienceQA −0.3 [−2.2, +1.7]；POPE 三档 89.9 / 87.3 / 82.4。
+
+## v0.4 插值步骤（v0.3 ↔ r20；`docs/experiments/2026-10-22-v04-interp-plan.md`）
+
+α ∈ {1.0, 0.8, 0.6, 0.4}，温度都在 `data/v5/dev_mix.jsonl` 上重拟合；按事先写下的规则（存在题开发集 NLL ≤ v0.3 + 0.02 的最大 α）选中 α = 1.0（即 r20 权重 + 重拟合温度：choice 3.79、noul 4.03），全量评测一次（`runs/v04-interp/a1.0/compare/accept_v04.md`）。准确率同 r20；校准比 r20 好（MMBench、MME 恢复），规则 4 只剩 POPE（NLL 0.372 → 0.454）和 size（0.350 → 0.440）未过，两者都是过度自信。这条选择规则用的存在题开发集（COCO train 图）没有反映 POPE 的问题，规则偏松。
 
 ## r20-science（r19 + 科学题短程补训；规则 1–3 通过，校准未过）
 
