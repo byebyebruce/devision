@@ -20,7 +20,8 @@ stages:
     data: data/n2/train_mix.jsonl
     val: data/n1/dev_mix.jsonl
     eval: {sqa: data/n2/dev_sqa.jsonl, v7w: data/n2/dev_v7w.jsonl, spatial: data/n2/dev_spatial.jsonl,
-           count: data/n2/dev_count.jsonl, iconqa: data/n2/dev_iconqa.jsonl, tallyqa: data/n2/dev_tallyqa.jsonl}
+           count: data/n2/dev_count.jsonl, iconqa: data/n2/dev_iconqa.jsonl, tallyqa: data/n2/dev_tallyqa.jsonl,
+           sqa_synth: data/n2/dev_sqa_synth.jsonl, clevr: data/n2/dev_clevr.jsonl}
     params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 10000,
              vision_unfreeze_top: 4, lr_vision: 5.0e-6, seed: 0}
 

@@ -203,7 +203,8 @@ def main(argv=None) -> None:
             steps[n]["duplicate id"] += 1
             continue
         if is_count(r) and set(r["questions"]["q"]["criteria"]) == set(COUNT_OPTIONS):
-            g = r["answer_key"]
+            probs = r["gold"]["q"]["probabilities"]
+            g = max(probs, key=lambda o: probs[o])
             if per_gold[g] >= a.count_cap:
                 steps[n]["count gold over the cap"] += 1
                 continue
