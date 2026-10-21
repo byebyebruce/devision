@@ -5,7 +5,10 @@ A training picture is held out when
    evaluation / dev / benchmark file (`eval_files`), or
 2. it is a COCO val2014 picture (all of val2014 is held out: test sets, POPE and test_count_coco sit on it), or
 3. its 64-bit dHash equals the dHash of any picture of those files (benchmarks without traceable ids: MMBench,
-   CV-Bench, MME, NaturalBench, CountBench, ...; also catches re-encoded copies).
+   CV-Bench, MME, NaturalBench, CountBench, ...; also catches re-encoded copies) -- for photos. Drawn diagrams
+   (`DRAWN` sources: ScienceQA, AI2D, TQA, IconQA, ...) match only by identical pixels: a dHash cannot tell one map
+   with a region highlighted from the same map with another region highlighted (data-v3 learned this), and the
+   first data-n2 mix lost 2,291 of 4,948 ScienceQA questions (state capitals, colonies, oceans) that way.
 
     import held
     h = held.load("data")            # builds <root>/n2/held.json once (rebuilt when the eval files change)
@@ -56,9 +59,24 @@ def dhash_file(path: str) -> Optional[int]:
         return None
 
 
+DRAWN = {"scienceqa", "ai2d", "tqa", "iconqa", "sqa-synth", "clevr", "mapqa"}
+
+
+def pixel_hash_file(path: str) -> Optional[str]:
+    from PIL import Image
+    try:
+        with Image.open(path) as im:
+            rgb = im.convert("RGB")
+            return hashlib.sha1(("%dx%d:" % rgb.size).encode() + rgb.tobytes()).hexdigest()
+    except OSError:
+        return None
+
+
 class Held:
-    def __init__(self, root: str, ids: Set[str], hashes: Set[int], vg2coco: Dict[str, str]):
+    def __init__(self, root: str, ids: Set[str], hashes: Set[int], vg2coco: Dict[str, str],
+                 pixels: Optional[Set[str]] = None):
         self.root, self.ids, self.hashes, self.vg2coco = root, ids, hashes, vg2coco
+        self.pixels = pixels or set()
 
     def id_held(self, image_id: str, image_path: str = "") -> bool:
         if image_id in self.ids or self.vg2coco.get(image_id, image_id) in self.ids:
@@ -89,8 +107,8 @@ def load(root: str = "data") -> Held:
     vg2coco = vg_to_coco(root)
     if os.path.exists(cache):
         c = json.load(open(cache))
-        if c.get("signature") == sig:
-            return Held(root, set(c["ids"]), set(c["hashes"]), vg2coco)
+        if c.get("signature") == sig and "pixels" in c:
+            return Held(root, set(c["ids"]), set(c["hashes"]), vg2coco, set(c["pixels"]))
     ids, pics = set(), set()
     for f in files:
         for line in open(f):
@@ -100,8 +118,9 @@ def load(root: str = "data") -> Held:
                 pics.add(r["image"])
     ids = same_images(ids, vg2coco)
     hashes = {h for h in (dhash_file(os.path.join(root, p)) for p in sorted(pics)) if h is not None}
+    pixels = {h for h in (pixel_hash_file(os.path.join(root, p)) for p in sorted(pics)) if h is not None}
     os.makedirs(os.path.dirname(cache), exist_ok=True)
     with open(cache, "w") as fh:
         json.dump({"signature": sig, "files": [os.path.relpath(f, root) for f in files], "ids": sorted(ids),
-                   "hashes": sorted(hashes)}, fh)
-    return Held(root, ids, hashes, vg2coco)
+                   "hashes": sorted(hashes), "pixels": sorted(pixels)}, fh)
+    return Held(root, ids, hashes, vg2coco, pixels)

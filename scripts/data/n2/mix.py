@@ -180,7 +180,12 @@ def main(argv=None) -> None:
         if h.id_held(r["image_id"], r["image"]):
             steps[name]["held out (id / val2014)"] += 1
             return False
-        if hashes.get(r["image"]) in h.hashes:
+        if r["source"] in held_mod.DRAWN:
+            px = held_mod.pixel_hash_file(os.path.join(root, r["image"]))
+            if px in h.pixels:
+                steps[name]["held out (identical pixels)"] += 1
+                return False
+        elif hashes.get(r["image"]) in h.hashes:
             steps[name]["held out (dHash)"] += 1
             return False
         if hashes.get(r["image"]) is None:

@@ -47,3 +47,15 @@ def test_n2_own_dev_splits_are_not_held_out(tmp_path):
         (tmp_path / "n2" / (name + ".jsonl")).write_text("")
     names = {os.path.basename(f) for f in held.eval_files(str(tmp_path))}
     assert names == {"dev_sqa.jsonl", "test_count_coco.jsonl"}
+
+
+def test_drawn_pictures_are_held_out_only_by_identical_pixels(tmp_path):
+    from PIL import Image
+    import held
+    a, b = tmp_path / "a.png", tmp_path / "b.png"
+    im = Image.new("RGB", (64, 64), "white")
+    im.save(a)
+    im.putpixel((5, 5), (250, 250, 250))   # almost the same picture: same dHash, different pixels
+    im.save(b)
+    assert held.dhash_file(str(a)) == held.dhash_file(str(b))
+    assert held.pixel_hash_file(str(a)) != held.pixel_hash_file(str(b))
