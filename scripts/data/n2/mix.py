@@ -58,22 +58,26 @@ def is_count(r: dict) -> bool:
 
 
 def full_count_options(r: dict, rng: random.Random) -> Optional[dict]:
-    """The row with options "0".."10" (gold moved over), or None when the gold is not 0..10."""
+    """The row with options "0".."10" (gold mass moved over, soft golds kept), or None when any gold mass sits on
+    a count above 10. Rows that already have exactly these options are returned unchanged."""
     probs = r["gold"]["q"]["probabilities"]
-    gold = max(probs, key=lambda o: probs[o])
-    if not gold.strip().isdigit() or int(gold) > 10 or probs[gold] < 1.0:
+    if set(probs) == set(COUNT_OPTIONS):
+        return r
+    mass = {str(int(o)): p for o, p in probs.items() if p > 0}
+    if any(int(o) > 10 for o in mass):
         return None
     opts = COUNT_OPTIONS[:]
     rng.shuffle(opts)
     r = json.loads(json.dumps(r))
     r["questions"]["q"]["criteria"] = {o: None for o in opts}
-    r["gold"]["q"]["probabilities"] = {o: float(o == str(int(gold))) for o in opts}
-    r["answer_key"] = str(int(gold))
+    r["gold"]["q"]["probabilities"] = {o: float(mass.get(o, 0.0)) for o in opts}
+    r["answer_key"] = max(mass, key=lambda o: mass[o])
     return r
 
 
 def in_dev(key: str, share: float = 0.02) -> bool:
-    return int(hashlib.sha1(key.encode()).hexdigest()[:8], 16) < share * 0x100000000
+    """Salted, so it does not pick the pictures data-n1's dev rule (sha1 of the bare id) already holds out."""
+    return int(hashlib.sha1(("n2:" + key).encode()).hexdigest()[:8], 16) < share * 0x100000000
 
 
 def _hash_one(args):
@@ -104,6 +108,8 @@ def main(argv=None) -> None:
     p.add_argument("--gqa", type=int, default=200000)
     p.add_argument("--count-cap", type=int, default=12000)
     p.add_argument("--repeat", action="append", default=["scienceqa=2", "ai2d=2", "tqa=2"])
+    p.add_argument("--cap", action="append", default=["ext-clevr=30000", "ext-mapqa=15000"],
+                   help="part=N: at most N training rows from that part (random)")
     p.add_argument("--drop", default="", help="JSON list (or {ids: [...]}) of ids to leave out")
     p.add_argument("--out", default="n2/train_mix.jsonl")
     p.add_argument("--seed", type=int, default=0)
@@ -138,6 +144,7 @@ def main(argv=None) -> None:
         read_files.append(rel)
         rows = read(path)
         parts[name] = [r for r in rows if not in_dev(r["image_id"])]
+        rng.shuffle(parts[name])
         dev[name] = [r for r in rows if in_dev(r["image_id"])]
 
     drop = set()
@@ -177,8 +184,12 @@ def main(argv=None) -> None:
             return False
         return True
 
+    caps = {k: int(v) for k, v in (x.split("=") for x in a.cap)}
     for name in list(parts):
         parts[name] = [r for r in parts[name] if keep(name, r)]
+        if name in caps and len(parts[name]) > caps[name]:
+            steps[name]["over the part cap"] += len(parts[name]) - caps[name]
+            parts[name] = parts[name][:caps[name]]
     for name in list(dev):
         dev[name] = [r for r in dev[name] if keep("dev-" + name, r)]
 
@@ -191,7 +202,7 @@ def main(argv=None) -> None:
         if r["id"] in seen:
             steps[n]["duplicate id"] += 1
             continue
-        if is_count(r) and r["questions"]["q"]["criteria"].keys() == set(COUNT_OPTIONS):
+        if is_count(r) and set(r["questions"]["q"]["criteria"]) == set(COUNT_OPTIONS):
             g = r["answer_key"]
             if per_gold[g] >= a.count_cap:
                 steps[n]["count gold over the cap"] += 1

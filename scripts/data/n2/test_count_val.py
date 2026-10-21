@@ -60,3 +60,16 @@ def test_mix_gives_counting_questions_the_full_options():
 def json_copy(r):
     import json
     return json.loads(json.dumps(r))
+
+
+def test_soft_count_golds_are_kept():
+    from mix import COUNT_OPTIONS, full_count_options
+    soft = {"id": "s", "source": "tallyqa", "kind": "count", "image_id": "x", "image": "x.jpg",
+            "questions": {"q": {"type": "choice", "instructions": "How many cats?",
+                                "criteria": {"1": None, "2": None, "3": None}}},
+            "gold": {"q": {"probabilities": {"1": 0.0, "2": 0.7, "3": 0.3}}}, "answer_key": "2"}
+    r = full_count_options(soft, random.Random(0))
+    assert r["gold"]["q"]["probabilities"]["2"] == 0.7 and r["gold"]["q"]["probabilities"]["3"] == 0.3
+    full = json_copy(r)
+    assert full_count_options(full, random.Random(0)) is full
+    assert sorted(r["questions"]["q"]["criteria"], key=int) == COUNT_OPTIONS
