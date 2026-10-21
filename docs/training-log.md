@@ -2,7 +2,7 @@
 
 每一轮训练一节（轮次 = YAML 的 `name`，目录 `runs/<name>/`），写清改了什么、结果、和上一轮比涨了多少。过程细节和失败的尝试在 `experiments/2026-09-30-rlcd-plateau.md`。
 
-**当前采用：`r15-vision`**（`runs/r15-vision/stage2`，模型 v0.3）。2026-10-14 负责人决定作为取舍取代 v12（v0.2）。相对 v12：CountBench +16.7、关系 +4.4、镜像关系 +2.9、ScienceQA +2.3 个百分点；旧能力保护四项未满足，原始 `candidate=false` 保留。接受的代价包括 VSR 正类召回 −5.3、A-OKVQA −1.3、计数对选项顺序更敏感、What'sUp 概率质量变差；测试集已多轮适应性使用。细节见下节及 `release/v0.3/adoption.md`。
+**当前采用：`r21-soft`**（`runs/r21-soft/train`，模型 v0.4，2026-10-22 发布到 Hugging Face / ModelScope）。负责人 2026-10-22 决定发布（"发布这一版"）。相对 v0.3：23 个判定集合 22 个提升、无显著退步（镜像关系 +21.2、What'sUp +18.0、CountBench +14.5、V7W +7.2、VSR +7.0、ScienceQA +3.1、POPE +1.7）；事先写下的校准规则 4 未通过（size / MME / 存在 NLL 超门槛，主要是欠自信）。细节见 r21-soft 一节及 `release/v0.4/adoption.md`。
 
 | 轮次 | 日期 | 配置 | 相对上一轮改了什么 | 状态 |
 |---|---|---|---|---|
@@ -20,7 +20,7 @@
 | v12-ext | 2026-10-07 | `configs/v12-ext.yaml`（全量评测 `configs/v12-ext-eval.yaml`） | 从 v11 接着训一遍：扩展数据包 353,830 道（13 个新来源 315,342 + 回放 38,488，`data/ext/MIX.json`），架构不变 | 被 r15 取代（曾由负责人作为取舍采用；发布为 v0.2） |
 | r14-count | 2026-10-13 | `configs/r14-count.yaml` | 从 v12 接着训一遍：配平 0–10 计数 12,000 + PixMo 存在性 / 窄候选计数 12,000 + 回放 57,876（71%，扩展每源 2,400），81,876 题、10,235 步，结构不变 | 未取代 v12（CountBench +14.5，但镜像关系 −1.4 已证明退化、4 个集合未证明守住、What'sUp 概率警戒；待负责人决定） |
 | r14b-mirror | 2026-10-13 | `configs/r14b-mirror.yaml` | r14 配方中扩展回放每源 2,400 → 2,100，换成 v6 左右镜像对 2,000 + VSR 1,000（其余逐题相同） | 第 2,000 步止损（原格式计数面板 −3.3 [−6.3, −0.7]），未训完 |
-| r15-vision | 2026-10-14 | `configs/r15-vision.yaml` | r14b 数据 + 解冻 SigLIP 最上面 4 层（5e-6），种子 1，从 exp19 第 2,000 步接着训满 10,235 步 | **当前采用，发布为 v0.3**（负责人接受取舍；原始 candidate=false 保留） |
+| r15-vision | 2026-10-14 | `configs/r15-vision.yaml` | r14b 数据 + 解冻 SigLIP 最上面 4 层（5e-6），种子 1，从 exp19 第 2,000 步接着训满 10,235 步 | 被 r21 取代（曾发布为 v0.3；负责人接受取舍；原始 candidate=false 保留） |
 | v04-k（草稿） | 2026-10-19 | `configs/v04-full-eval.yaml`（冻结 `runs/v04-k/eval/IDENTITY.json` c14863e2…） | 读数组合：PROTECT-K 决策权重（exp30–protect-k 链）+ EXP71 读数组件 + 确定性 K 规则 + 分题型 / 选项数 / 读数域温度 | 全评文件完整（两份执行证据待补），**未取得发布资格**（dev16 保留门槛未达，RELEASE-GAP-01）；待定 |
 | r13-binding | 2026-10-11 | `configs/r13-binding.yaml`（分支 `r13-binding`；全量评测 `configs/r13-binding-eval.yaml`） | 从 v12 接着训一遍：第 13 轮绑定数据 207,109 道（反事实合成 40,040 照片背景 75%、GQA 绑定、VisMin、CoGenT A、PixMo 两类计数、CounterCurate、TallyQA 复杂、VAW + 回放 40,000），加问题条件视觉 token（S2，零初始化） | 未取代 v12（主要条件通过，POPE 已证明退化、概率质量警戒触发；负责人 2026-10-11 决定不采用、不作下一轮起点） |
 | r16-n1 | 2026-10-21 | `configs/r16-n1.yaml`（基线 `configs/v03-baseline.yaml`） | 本机 CUDA（RTX 5070）。从 v0.3 接着训一遍新构造的 data-n1：VQAv2 train 全量 313,595（标注者答案作软 gold）+ GQA balanced train 全部 21 个分片 299,398（含开放式查询题）+ v0.3 其他能力回放 125,701；bf16；解冻 SigLIP 顶部 4 层；92,337 步 | 准确率 11 个集合显著提升、无显著退步；POPE / 存在 / 大小的 NLL 变差（过度自信），待修；待负责人决定 |
@@ -28,7 +28,7 @@
 | r18-smooth | 2026-10-21 | `configs/r18-smooth.yaml` | 从 v0.3 一遍：data-n1 + r17 的存在题，one-hot gold 做 label smoothing 0.1，ScienceQA / AI2D / TQA 回放 ×2 | 训练中 |
 | r19-n2 | 2026-10-21 | `configs/r19-n2.yaml` | 从 v0.3 一遍 data-n2（742k：VQAv2 / GQA 各降到约 20 万，Visual7W 全量、场景图空间描述选择、COCO / TallyQA 计数 0–10、CLEVR、IconQA、合成磁铁 / 溶液示意图，答案能靠文字猜的选择题已去掉）；第一次运行带 MapQA，第 22,000 步止损（`runs/archive/r19-n2-stop-mapqa`） | 验收规则 1、2 通过，3、4 未通过；数据 bug 丢了 46% 的 ScienceQA |
 | r20-science | 2026-10-21 | `configs/r20-science.yaml` | 从 r19 短程一遍（123k）：修正后的数据里全部 ScienceQA / AI2D / TQA ×3、IconQA、合成磁铁题、4 万回放 | **v0.4 候选**：验收规则 1–3 通过，规则 4（校准）卡在 POPE / size / MMBench / MME；待负责人决定插值或 r21 |
-| r21-soft | 2026-10-22 | `configs/r21-soft.yaml` | 从 r20 短程一遍（104k）：存在题 4 万 + 大小题 4,331 的 gold 软化成 0.9 / 0.1，6 万回放；温度在均衡开发集上拟合 | **v0.4 候选之一**：规则 1–3 通过；POPE 校准修好，规则 4 卡在 size / MME / 存在（欠自信为主）；待负责人取舍 |
+| r21-soft | 2026-10-22 | `configs/r21-soft.yaml` | 从 r20 短程一遍（104k）：存在题 4 万 + 大小题 4,331 的 gold 软化成 0.9 / 0.1，6 万回放；温度在均衡开发集上拟合 | **当前采用，发布为 v0.4**（负责人 2026-10-22 接受取舍；规则 4 未通过） |
 
 ## r21-soft（r20 + 存在 / 大小题标签软化；准确率最好，校准换了几处地方没过）
 
