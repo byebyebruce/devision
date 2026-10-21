@@ -1,0 +1,21 @@
+# v0.4 plan stage 0 (docs/experiments/2026-10-21-v04-plan.md): the evaluation sets added on this machine --
+# What'sUp, CountBench, CLEVR-CoGenT B (scripts/data/r13/sources/), counting on COCO val2014 (scripts/data/n2/count_val.py)
+# and public benchmarks the project never used (MMBench-en dev, CV-Bench, MME; scripts/data/n2/bench_ext.py).
+# Evaluation only (not a round); results in the checkpoint's round eval/.
+#   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 uv run devision-pipeline configs/v03-n2bench.yaml
+name: v03-n2bench
+device: cuda
+stages: []
+evaluate:
+  checkpoint: runs/v03/model
+  controls: true
+  sets:
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_cogent_b: {path: data/r13/bench/cogent_b.jsonl, role: heldout}
+    test_count_coco: {path: data/n2/test_count_coco.jsonl, role: heldout}
+    bench_mmbench: {path: data/n2/bench/mmbench.jsonl, role: heldout}
+    bench_cvbench: {path: data/n2/bench/cvbench.jsonl, role: heldout}
+    bench_mme: {path: data/n2/bench/mme.jsonl, role: heldout}
+    bench_naturalbench: {path: data/n2/bench/naturalbench.jsonl, role: heldout}
+    dev_sqa: data/n2/dev_sqa.jsonl

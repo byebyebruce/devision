@@ -69,10 +69,11 @@ def main(argv=None):
                                              "criteria": {o: None for o in opts}}},
                          "gold": {"q": {"probabilities": {o: float(o == str(r["number"])) for o in opts}}},
                          "answer_key": str(r["number"]), "laion_text": r["text"]})
-    hits = near_training(a.root, rows)
+    hits, history = near_training(a.root, rows)
     for r in rows:
         r["near_training"] = hits.get(r["image"], "")
     finish_bench(a.root, "countbench", rows, {
+        "history_check": history,
         "near_training": sum(1 for r in rows if r["near_training"]),
         "near_training_by": {k: sum(1 for r in rows if r["near_training"] == k) for k in set(hits.values())},
         "candidates": CANDIDATES,
@@ -81,15 +82,22 @@ def main(argv=None):
                 "not the open-ended protocol"})
 
 
-def near_training(root: str, rows) -> dict:
-    """picture -> "project_history" | "<r13 source>" for pictures within 2 bits of a training picture."""
+def near_training(root: str, rows) -> tuple:
+    """(picture -> "project_history" | "<r13 source>" for pictures within 2 bits of a training picture, how the
+    project history was checked). Without data/r13/identity.json (a machine that never rebuilt the old rounds'
+    data) only the round-13 sources and data-n2 built so far are checked, and the MANIFEST says so."""
     import json
     import numpy as np
     import identity  # pyright: ignore[reportMissingImports]
     from v9_mix import hashes  # pyright: ignore[reportMissingImports]
-    ident = identity.load(root)
     mine = hashes(root, [r["image"] for r in rows])
-    out = {rel: "project_history" for rel, h in mine.items() if ident.near_seen(h)}
+    try:
+        ident = identity.load(root)
+    except FileNotFoundError:
+        ident, history = None, "skipped: data/r13/identity.json not built on this machine"
+    else:
+        history = "identity.py near_seen"
+    out = {rel: "project_history" for rel, h in mine.items() if ident is not None and ident.near_seen(h)}
     for f in sorted(glob.glob(os.path.join(root, "r13", "*", "train.jsonl"))):
         src = os.path.basename(os.path.dirname(f))
         rels = {json.loads(l)["image"] for l in open(f) if l.strip()}
@@ -100,7 +108,7 @@ def near_training(root: str, rows) -> dict:
         for rel, h in mine.items():
             if rel not in out and arr.size and int(np.bitwise_count(arr ^ np.uint64(h)).min()) <= 2:
                 out[rel] = src
-    return out
+    return out, history
 
 
 if __name__ == "__main__":
