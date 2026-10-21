@@ -73,3 +73,13 @@ def test_soft_count_golds_are_kept():
     full = json_copy(r)
     assert full_count_options(full, random.Random(0)) is full
     assert sorted(r["questions"]["q"]["criteria"], key=int) == COUNT_OPTIONS
+
+
+def test_soften_keeps_the_answer_and_sums_to_one():
+    from soft_mix import soften
+    r = {"gold": {"q": {"probabilities": {"true": 1.0, "false": 0.0}}}}
+    g = soften(r, 0.1)["gold"]["q"]["probabilities"]
+    assert g == {"true": 0.9, "false": 0.1}
+    r3 = {"gold": {"q": {"probabilities": {"a": 0.0, "b": 1.0, "c": 0.0}}}}
+    g3 = soften(r3, 0.1)["gold"]["q"]["probabilities"]
+    assert abs(sum(g3.values()) - 1.0) < 1e-9 and g3["b"] == 0.9
