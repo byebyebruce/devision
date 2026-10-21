@@ -4,7 +4,7 @@
 
 **deVision = Decision + Vision**：看图做决策。输入一张图片和若干英文问题，输出 Jev 格式的答案（`noul` 是非题 / `choice` 选择题）和校准过的概率。SigLIP2 看图，Laya 的 ModernBERT 决策头打分，不生成文字；没有 GPU 也能跑。
 
-模型在 Hugging Face：[`lukbit/devision`](https://huggingface.co/lukbit/devision)（当前模型 **v0.3**）；ModelScope：[`baibaibai000/devision`](https://modelscope.cn/models/baibaibai000/devision)。
+模型在 Hugging Face：[`lukbit/devision`](https://huggingface.co/lukbit/devision)（当前模型 **v0.4**）；ModelScope：[`baibaibai000/devision`](https://modelscope.cn/models/baibaibai000/devision)。
 
 ## 安装
 
@@ -65,7 +65,7 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 
 ```json
 {
-  "model": "devision-v0.3",
+  "model": "devision-v0.4",
   "answers": {
     "has_fork": {"type": "noul", "noul": 0.03},
     "room": {"type": "choice", "choice": "kitchen",
@@ -88,16 +88,16 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 
 ## 效果
 
-v0.3 与 laya-vision 201M 在同一批题上逐题比较（差值 95% 区间按图片重采样；POPE 仅比较公开汇总分，没有配对区间）：
+v0.4 与 laya-vision 201M 在同一批题上逐题比较（差值 95% 区间按图片重采样；POPE 仅比较公开汇总分，没有配对区间）：
 
-| 评测集 | 题数 | laya-vision | deVision v0.3 | 差值 |
+| 评测集 | 题数 | laya-vision | deVision v0.4 | 差值 |
 |---|---|---|---|---|
-| POPE random / popular / adversarial | 3 × 3,000 | 0.836 / 0.819 / 0.777 | **0.880 / 0.859 / 0.805** | +4.4 / +4.0 / +2.8 |
-| VQAv2 是非题 | 4,887 | 0.717 | **0.725** | +0.8 [−0.7, +2.4] |
-| A-OKVQA | 1,138 | 0.598 | **0.612** | +1.4 [−1.8, +4.7] |
-| ScienceQA（带图题） | 2,097 | **0.824** | 0.789 | −3.5 [−5.6, −1.4] |
+| POPE random / popular / adversarial | 3 × 3,000 | 0.836 / 0.819 / 0.777 | **0.899 / 0.873 / 0.824** | +6.3 / +5.4 / +4.7 |
+| VQAv2 是非题 | 4,887 | 0.717 | **0.756** | +3.9 [+2.4, +5.3] |
+| A-OKVQA | 1,138 | 0.598 | **0.634** | +3.5 [+0.3, +6.6] |
+| ScienceQA（带图题） | 2,097 | **0.824** | 0.821 | −0.3 [−2.2, +1.7] |
 
-相对 v0.2，CountBench +16.7、镜像关系 +2.9、ScienceQA +2.3 个百分点。v0.3 是负责人接受取舍后的采用：四项旧能力保护未通过，VSR 召回下降、A-OKVQA 可能下降，计数对选项顺序更敏感。这些集合已多轮用于实验决策，不是新的独立测试；详见 [采用说明](release/v0.3/adoption.md)。
+相对 v0.3（同一批题配对），23 个判定集合里 22 个提升、没有显著退步：镜像关系 +21.2、What'sUp +18.0、CountBench +14.5、Visual7W +7.2、VSR +7.0、GQA +6.1、CLEVR-CoGenT B +4.0、ScienceQA +3.1、MMBench +2.3、POPE +1.7。v0.4 是负责人接受取舍后的采用：事先写下的校准规则未通过（大小、存在题的概率偏保守，MME 略偏自信）。这些集合已多轮用于实验决策，不是新的独立测试；详见 [采用说明](release/v0.4/adoption.md)。
 
 完整结果和每一轮的训练记录见 [`docs/training-log.md`](https://github.com/byebyebruce/devision/blob/master/docs/training-log.md)，模型结构和设计见 [`docs/spec/vision-decision-mvp.md`](https://github.com/byebyebruce/devision/blob/master/docs/spec/vision-decision-mvp.md)。
 
