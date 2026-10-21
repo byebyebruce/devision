@@ -43,6 +43,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 用 **uv** 管理 Python 与依赖（Python 版本见 `.python-version`）。加依赖用 `uv add <pkg>`（开发依赖 `uv add --dev`），不要用 pip 或手改 `uv.lock`。
 - 所有命令经 `uv run ...` 执行。
+- **下载一律走国内镜像**（负责人 2026-10-21；本机网络差）：uv / Python 包用 `UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple`（或清华 `https://pypi.tuna.tsinghua.edu.cn/simple`），Hugging Face 模型和数据用 `HF_ENDPOINT=https://hf-mirror.com`（模型也可从 ModelScope 取）。依赖已装好时用 `uv run --no-sync`，避免联网同步。镜像不可用时先报告，不自行改成直连。
 - 依赖分层（参照 Laya：一个包，可选功能用 extras）：`pip install devision` 够推理和起服务（fastapi、uvicorn 在核心依赖里，负责人 2026-10-07）；`pip install "devision[train]"` 加上 `devision.train` 的全部命令（训练、评测、校准、比较、流水线；peft、swanlab、pyyaml、psutil），没装时这些命令提示安装。推理模块和 serve 不能 import train 的依赖。没有 `serve` extra。开发依赖组也包含 train extra，所以 `uv run` 下全部可用；新增训练依赖时，`uv add --optional train` 之外再 `uv add --dev` 一次。研究代码（`scripts/`、`configs/`、`release/`）不在 `src/devision/` 下，不进安装包。
 - 对外入口：`devision.load(...)` → `Decider.predict` / `decide`；`import devision` 不加载 torch。
 
