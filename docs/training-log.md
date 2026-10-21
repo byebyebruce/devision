@@ -24,6 +24,17 @@
 | v04-k（草稿） | 2026-10-19 | `configs/v04-full-eval.yaml`（冻结 `runs/v04-k/eval/IDENTITY.json` c14863e2…） | 读数组合：PROTECT-K 决策权重（exp30–protect-k 链）+ EXP71 读数组件 + 确定性 K 规则 + 分题型 / 选项数 / 读数域温度 | 全评文件完整（两份执行证据待补），**未取得发布资格**（dev16 保留门槛未达，RELEASE-GAP-01）；待定 |
 | r13-binding | 2026-10-11 | `configs/r13-binding.yaml`（分支 `r13-binding`；全量评测 `configs/r13-binding-eval.yaml`） | 从 v12 接着训一遍：第 13 轮绑定数据 207,109 道（反事实合成 40,040 照片背景 75%、GQA 绑定、VisMin、CoGenT A、PixMo 两类计数、CounterCurate、TallyQA 复杂、VAW + 回放 40,000），加问题条件视觉 token（S2，零初始化） | 未取代 v12（主要条件通过，POPE 已证明退化、概率质量警戒触发；负责人 2026-10-11 决定不采用、不作下一轮起点） |
 | r16-n1 | 2026-10-21 | `configs/r16-n1.yaml`（基线 `configs/v03-baseline.yaml`） | 本机 CUDA（RTX 5070）。从 v0.3 接着训一遍新构造的 data-n1：VQAv2 train 全量 313,595（标注者答案作软 gold）+ GQA balanced train 全部 21 个分片 299,398（含开放式查询题）+ v0.3 其他能力回放 125,701；bf16；解冻 SigLIP 顶部 4 层；92,337 步 | 准确率 11 个集合显著提升、无显著退步；POPE / 存在 / 大小的 NLL 变差（过度自信），待修；待负责人决定 |
+| r17-exist | 2026-10-21 | `configs/r17-exist.yaml` | 从 r16 接着训一遍：不限物体大小的 COCO 存在题 62,846（`n1_exist.py`，yes = no，四分之一的 yes 是 < 1% 画面的物体）+ r16 混合随机回放 120,000 | 对 v0.3 13 个集合显著提升；POPE 准确率 +1.4 显著、NLL 0.97 → 0.68（仍差于 v0.3 的 0.37）；ScienceQA −1.8 [−3.2, −0.3] 显著退步；未取代 |
+| r18-smooth | 2026-10-21 | `configs/r18-smooth.yaml` | 从 v0.3 一遍：data-n1 + r17 的存在题，one-hot gold 做 label smoothing 0.1，ScienceQA / AI2D / TQA 回放 ×2 | 训练中 |
+
+## r17-exist（r16 + 全尺寸存在题；POPE 准确率修好、校准只修好一半，ScienceQA 显著退步；未取代）
+
+从 r16 接着训一遍 183,000 题（存在题 62,846 + r16 混合随机 120,000），r16 的设置。拟合温度 choice 1.81、noul 2.15。逐题配对在 `runs/r17-exist/eval/compare/`（`vs_v03.*`、`vs_r16.*`）。
+
+- **对 v0.3：13 个集合显著提升**——relation_flip +22.4、relation +17.4、position_flip +12.0、GQA +8.2、position +6.0、VQAv2 是非 +5.9、VSR +4.8、VQAv2 选择 +4.2、V7W +4.2、lv VQAv2 +3.5、存在 +1.7、POPE +1.4 [+0.6, +2.3]、dev_mix +3.7；A-OKVQA +1.8、size +0.8（含 0）。**ScienceQA −1.8 [−3.2, −0.3]，显著退步**（r16 时 −1.0 含 0）。
+- **对 r16**：POPE +2.2 [+1.4, +3.0]，其余都含 0（GQA +1.0、VSR −1.3、ScienceQA −0.8）。
+- **校准**：POPE NLL 0.967 → 0.678（v0.3 0.372），答错的 1,237 题里 605 题 p > 0.99（v0.3 为 0）。离线把 POPE 的温度从 2.15 放大到约 6.5，NLL 降到 0.361（低于 v0.3），说明排序没问题、只是输出尺度过尖：0/1 硬标签的是非题（GQA、存在）把 logit 推到极端，一个题型温度对 VQAv2 类（约 2）和存在类（约 6.5）不能同时合适。size NLL 0.35 → 0.49 也是同类问题。
+- **结论**：不取代。修正放进 r18：从 v0.3 一遍，one-hot gold 做 label smoothing 0.1，ScienceQA / AI2D / TQA 回放 ×2。
 
 ## r16-n1（v0.3 + data-n1；准确率全面提升，存在类校准变差；待定）
 
