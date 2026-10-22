@@ -1,0 +1,27 @@
+# exp79 (docs/experiments/2026-10-22-exp79-tokens-plan.md): v0.4 folded to 256 visual tokens, trained like exp78-res256.
+# Not a round.
+#   UV_NO_SYNC=1 HF_HUB_OFFLINE=1 nohup uv run devision-pipeline configs/exp79-tok256.yaml > runs/exp79-tok256.out 2>&1 &
+name: exp79-tok256
+device: cuda
+common:
+  log_every: 100
+
+stages:
+  - name: train
+    kind: train
+    init: runs/exp79/v04-tok256
+    data: data/exp78/train.jsonl
+    val: data/v5/dev_mix.jsonl
+    params: {epochs: 1, lr_new: 2.0e-5, lr_head: 1.0e-5, lr_lora: 5.0e-5, warmup: 300, eval_every: 0,
+             vision_unfreeze_top: 4, lr_vision: 5.0e-6, seed: 0}
+
+evaluate:
+  controls: false
+  sets:
+    dev_count: {path: data/n2/dev_count.jsonl, role: monitoring}
+    dev_tallyqa: {path: data/n2/dev_tallyqa.jsonl, role: monitoring}
+    dev_sqa: {path: data/n2/dev_sqa.jsonl, role: monitoring}
+    dev_v7w: {path: data/n2/dev_v7w.jsonl, role: monitoring}
+    dev_spatial: {path: data/n2/dev_spatial.jsonl, role: monitoring}
+    dev_coco_exist: {path: data/v2/dev_coco_exist.jsonl, role: monitoring}
+    dev_mix: {path: data/v5/dev_mix.jsonl, role: calibration_fit}
