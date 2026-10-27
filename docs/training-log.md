@@ -13,6 +13,16 @@
 
 
 
+## 2026-10-27 22:20：exp114 / exp115（v0.4 + 图表 + UI ± 科学 ± 计数）结果，exp116（+GUI 操作 + 第一人称）已接续开跑
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp），不是正式轮次。
+
+- **exp114**（exp81 图表 + 科学 16k + ScreenQA UI）：图表 dev 58.6%、UI dev 66.8%（v0.4 54.7%）；ScienceQA +0.57 [−0.48, +1.62] 未达"下界 > 0"；CountBench **−5.70 [−9.57, −1.83]**。未通过。
+- **exp115**（去掉科学、补 3,000 计数）：图表 dev 58.9%（exp81 52.7%，+6.2），UI dev 70.7%（v0.4 +16.0）；CountBench −2.65 [−6.72, +1.22]（不再显著；相对 exp114 +3.05）；MMBench / MME / CV-Bench / NaturalBench / What'sUp / POPE / lv 三集均无显著退步；但 **ScienceQA −1.72 [−2.96, −0.48]、dev_sqa −2.08 [−3.31, −0.88]** 显著退步 → 判据 3 不过。归因对照：exp81 单独 CountBench −6.72 [−10.79, −2.65]，计数退步来自图表数据。详见 [exp115](experiments/2026-10-27-exp115-v4-chart-ui-count.md)。
+- **exp116**（exp115 + GUI 下一步操作 12k〔Mind2Web 6k + AITW 6k〕+ EPIC 第一人称 12k）：已预写判据（GUI / ego 在未见 App·网站 / 未见参与者的 test 上相对 v0.4 下界 > 0、配错图低 ≥ 5pp、GUI 超过只看文字基线 +5pp；EgoThink 和旧能力无显著退步），22:15 由 `scripts/v05/chain_exp116.sh` 自动接续：先冻结数据（`data/v05/exp116/MANIFEST.json`，GUI test 1,540、ego test 5,864、EgoThink 604），评 v0.4 / exp115 基线（含 v0.4 缺的 RealWorld 明细），再训练 + 评测，预计 23:40 前后结束。见 [exp116](experiments/2026-10-27-exp116-v4-gui-ego.md)。
+
+**下一步**：exp116 评完按预写裁决；ScienceQA 退步单独修（exp117 候选：exp116 混合 + exp114 的科学题，检验能否同时守住科学与计数）。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
 ## 2026-10-27：exp112 未通过、exp113 排除分辨率，停止 D3 末层科学适配
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。GPU 实查空闲（0%、412MiB），没有训练进程；exp112 已于 10-25 20:14 跑完，结果此前没写入，本轮补裁决。
