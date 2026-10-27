@@ -1,0 +1,8 @@
+name: exp96-d3-lora
+out: runs/exp96-d3-lora
+cache: runs/exp93-d3-cache-audit-64
+seed: 96
+lr: 0.001
+batch_size: 4
+save_every: 16
+budget_seconds: 1200

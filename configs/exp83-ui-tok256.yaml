@@ -1,0 +1,31 @@
+common:
+  log_every: 100
+device: cuda
+name: exp83-ui-tok256
+stages:
+- data: data/v05/exp82v2/train.jsonl
+  eval:
+    chart: data/v05/exp80v2/chart_dev.jsonl
+    fit: data/v05/exp82v2/fit.jsonl
+    protect: data/v05/exp80v2/protect.jsonl
+    ui: data/v05/exp82v2/ui_dev.jsonl
+  init: runs/exp83/init-tok256
+  kind: train
+  name: train
+  params:
+    amp: cuda
+    epochs: 1
+    eval_batch: 8
+    eval_every: 0
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    lr_new: 2.0e-05
+    lr_vision: 5.0e-06
+    micro_batch: 8
+    monitor_details: true
+    objective: ce
+    save_every: 500
+    seed: 82
+    vision_unfreeze_top: 4
+    warmup: 50
+  val: data/v05/exp82v2/calib.jsonl

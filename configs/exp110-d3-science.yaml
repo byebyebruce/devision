@@ -1,0 +1,12 @@
+name: exp110-d3-science
+out: runs/exp110-d3-science/train
+pool: data/v05/exp110-retry2
+seed: 110
+steps: 256
+batch_size: 8
+lr: 0.0001
+warmup: 16
+rank: 8
+last_layers: 4
+save_every: 64
+budget_seconds: 2400
