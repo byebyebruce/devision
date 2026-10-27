@@ -1,0 +1,57 @@
+# exp119 mix + n2-spatial depth replay 4k + EPIC ego +12k. Plan: docs/experiments/2026-10-28-exp120-v4-depth-ego.md
+name: exp120-v4-depth-ego
+device: cuda
+common:
+  log_every: 100
+stages:
+- name: train
+  kind: train
+  init: runs/r21-soft/train
+  data: data/v05/exp120/train.jsonl
+  val: data/v05/exp81/calib.jsonl
+  eval:
+    chart: data/v05/exp81/chart_dev.jsonl
+    ui: data/v05/exp82v2/ui_dev.jsonl
+    protect: data/v05/exp81/protect.jsonl
+    gui: data/v05/exp116/gui_dev_mon.jsonl
+    gui_state: data/v05/exp118/gui_dev_mon_state.jsonl
+    gui_shop: data/v05/exp119/gui_shop_dev_state.jsonl
+    ego: data/v05/exp116/ego_dev_mon.jsonl
+  params:
+    epochs: 1
+    micro_batch: 8
+    eval_batch: 8
+    seed: 120
+    warmup: 300
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06
+    amp: cuda
+    objective: ce
+    monitor_details: true
+    eval_every: 0
+    save_every: 500
+evaluate:
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    test_gui_state: {path: data/v05/exp118/gui_test_state.jsonl, role: heldout}
+    test_gui_shop_state: {path: data/v05/exp119/gui_shop_test_state.jsonl, role: heldout}
+    test_gui: {path: data/v05/exp116/gui_test.jsonl, role: heldout}
+    test_ego: {path: data/v05/exp116/ego_test.jsonl, role: heldout}
+    bench_egothink: {path: data/v05/exp116/egothink.jsonl, role: heldout}
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    dev_sqa: data/n2/dev_sqa.jsonl
+    bench_realworld: {path: data/v05/external/realworld_native.jsonl, role: heldout}
+    bench_mmbench: {path: data/n2/bench/mmbench.jsonl, role: heldout}
+    bench_mme: {path: data/n2/bench/mme.jsonl, role: heldout}
+    bench_cvbench: {path: data/n2/bench/cvbench.jsonl, role: heldout}
+    bench_naturalbench: {path: data/n2/bench/naturalbench.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+    bench_pope: data/v2/bench_pope.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
