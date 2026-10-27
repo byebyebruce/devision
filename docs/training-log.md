@@ -13,6 +13,16 @@
 
 
 
+## 2026-10-28 04:05：exp119（手机 GUI 扩量 + 科学回放）判据全过，成为 r22 候选；exp120 训练中，exp121（GUI 再扩 24k）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp119**（104,889 题）：未见网站的手机购物操作 `test_gui_shop_state` **59.8**（配错图 31.1；v0.4 21.4、exp117 36.4、exp118 49.6），相对上一实验 exp118 **+10.21 [+6.72, +13.70]**；`test_gui_state` AITW 58.9 vs 配错图 32.3；Mind2Web 原题型对 exp117 +0.00（判据 2 过）。旧能力：对 exp117 无显著退步，CV-Bench +1.71 [+0.45, +2.92]（3D-depth +3.83），**对 v0.4 15 个旧集合全部区间含 0**（ScienceQA −0.14、dev_sqa −0.05、CV-Bench +0.34、CountBench −1.02、What'sUp −1.22）；新用途对 v0.4：test_ego +29.86、test_gui +35.39、shop +38.37。→ 判据 1–3 全过，**exp119 配方为 `r22-*` 候选**。详见 [exp119](experiments/2026-10-28-exp119-v4-gui-phone-science.md)。
+- **exp120**（+深度回放 4k + ego 12k）04:00 训练 5,300/15,112 步，loss 0.73–0.86，正常，预计 05:15 前后评完。
+- **exp121 预写并挂接**：exp120 训练文件 + AITW-general 改写 10k + AITW-shopping 改写 14k（未用 episode，GUI 占比 23%→33%，144,889 题）；判据：GUI 对 exp120 下界 > 0、Mind2Web 不退 > −3pp、旧能力对 exp120 与 v0.4 无显著退步。`scripts/v05/chain_exp121.sh` 在 exp120 退出后自动开跑，预计 06:50 评完。见 [exp121](experiments/2026-10-28-exp121-v4-gui-scale.md)。
+
+**下一步**：exp120 判深度 / ego 扩量，exp121 判 GUI 再扩量，合并后定 `r22-*` 正式轮次（与 v0.4 全面逐题配对、lv_report、独立校准）。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据；网页（Mind2Web）在 256 输入下不可读，需切块 / 分辨率实验。
+
 ## 2026-10-28 03:05：exp118 补完判据 3（CV-Bench 仍退）；exp119 训完评测中；exp120（深度回放 + ego 扩量）已挂接
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
