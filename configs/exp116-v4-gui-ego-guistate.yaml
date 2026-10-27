@@ -1,0 +1,9 @@
+# Eval-only: baseline for exp118 on the screen-state GUI test (docs/experiments/2026-10-28-exp118-gui-screen-state.md)
+name: guistate
+device: cuda
+stages: []
+evaluate:
+  checkpoint: runs/exp116-v4-gui-ego/train
+  controls: true
+  sets:
+    test_gui_state: {path: data/v05/exp118/gui_test_state.jsonl, role: heldout}
