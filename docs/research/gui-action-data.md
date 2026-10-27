@@ -1,6 +1,6 @@
 # 真实手机 / 网页 GUI「下一步操作」选择题数据
 
-日期：2026-10-27。作者：Claude Code。状态：**已生成数据，未训练**（GPU 上有别的任务，没有占用 GPU）。
+日期：2026-10-27。作者：Claude Code。状态：**已生成数据，未训练**（GPU 上有别的任务，没有占用 GPU）。全部数据已下载并转换完，没有在后台继续的任务。
 
 题目形式：截图 + 用户目标（`instructions`）+ 已做过的操作（`state_text`，最多列最近 4 步）→ 从 4–6 个英文操作短语中选出演示者实际做的下一步，例如 `tap "Settings"`、`type "pizza" into "Search"`、`scroll down`、`go back`。干扰项优先取**同一屏上真实存在的其他元素**（AITW 用 OCR / 图标检测框，Mind2Web 用 HTML 候选元素），再补通用操作，这样只看文字没法排除。代码在 `scripts/data/v05_gui_fetch.py`（下载）和 `scripts/data/v05_gui_action.py`（转换，规则写在文件头），测试在 `scripts/data/test_v05_gui_action.py`（`uv run --no-sync pytest scripts/data -q -k gui`）。
 
@@ -47,9 +47,48 @@
   - 限制：AITW 不同 goal 之间仍会出现同一个 app 的界面（主屏、Chrome、Google 搜索页），只能做到「目标没见过」，做不到「app 没见过」。
 - **与现有 UI 评测集的隔离**：每张输出图都和 `data/v05/exp82v2/ui_dev.jsonl`、`data/v05/exp85/ui_dev*.jsonl` 的图比较 dHash + pHash（与 v04_confirm 相同，≤ 6 bit 视为近重复）。这两个评测集是 RICO 图，和 AITW / Mind2Web 不同源，预期没有重复；结果见 MANIFEST。
 
-## 4. 结果
+## 4. 生成结果（`data/v05/gui/MANIFEST.json`，2026-10-27）
 
-（见下方「生成结果」，数字来自 `data/v05/gui/MANIFEST.json`）
+输出：`data/v05/gui/{train,dev,test}.jsonl`。图片在 `data/v05/gui/images/<来源>/`（JPEG，长边 ≤ 1024，共 18 GB）。`image_id` 按来源加前缀：`aitw:<episode>:<step>`、`mind2web:<action_uid>`。原始下载在 `data/v05/gui/raw/`（75 GB），按来源缓存的题在 `data/v05/gui/work/`。三个文件都通过了 `read_decision_jsonl` 的格式检查。`kind` 均为 `gui-next-action`。
+
+| 来源 | 步数 | 生成题数 | train | dev | test | 留出但未用 | 组数 train / dev / test |
+|---|---|---|---|---|---|---|---|
+| aitw-general | 85,413 | 42,381 | 35,275 | 387 | 722 | 5,997 | 461 / 12 / 21（按 goal 分组） |
+| aitw-shopping | 365,253 | 217,325 | 198,507 | 456 | 774 | 17,588 | 26 / 3 / 5（dev：ikea、homedepot、aliexpress；test：nike、etsy、lowes、goodreads、article、crateandbarrel） |
+| mind2web | 14,193 | 9,737 | 6,209 | 428 | 818 | 2,282 | 73 / 14 / 27（按网站分组） |
+| **合计** | | | **239,991** | **1,271** | **2,314** | | |
+
+- **丢弃原因**：
+  - AITW general：没有元素包含落点 15,676，状态步骤 9,476，超出滑动上限 6,277，标签不可读 5,019，同屏同名 4,553，空输入 970，命中多个元素 955，同屏干扰项不足 90，点在导航栏 13，和评测集图片近重复 3。
+  - AITW shopping：没有元素包含落点 72,766，状态步骤 28,067，同屏同名 18,594，标签不可读 16,017，超出滑动上限 7,100，空输入 2,538，命中多个元素 2,513，同屏干扰项不足 329，点在导航栏 4。
+  - Mind2Web：同屏同名 1,948，gold 标签为空 1,603，没有目标 774，同屏干扰项不足 96，目标在截图外 25，没有截图 10。
+- **隔离**：
+  - train 和 dev / test 之间：共享图片 0，共享 episode 0。规范化后的 goal 文本跨来源也没有一条同时出现在 train 和 dev / test 里（另做的只读检查）。
+  - 和 UI 评测集（382 张 RICO 图）：近重复 3 张，都是 AITW general 的图，已删除。
+- **答案位置**：每个集合里 gold 在 5 个位置上大致均匀，例如 train aitw-shopping 各位置 39.6k–39.8k；dev / test 各位置 70–177 题，按题数在 13%–24% 之间。
+- **gold 动作分布**：
+  - train aitw-general：tap 41%，type 21%，scroll 20%，go back / home 13%，enter 5%。
+  - train aitw-shopping：tap 49%，scroll 20%，type 18%，go 7%，enter 5%。
+  - mind2web：click 85%，type 10%，select 5%。
+- **只看文字的基线**（随机为 0.20；dev / test 是各集合的数）：
+
+| 集合 | 第一个选项 | 最长选项 | 最短选项 | 与 goal + 历史词重叠最多 |
+|---|---|---|---|---|
+| train aitw-general / shopping / mind2web | 0.20 / 0.20 / 0.20 | 0.32 / 0.24 / 0.24 | 0.14 / 0.15 / 0.06 | 0.49 / 0.48 / 0.45 |
+| dev aitw-general / shopping / mind2web | 0.19 / 0.20 / 0.24 | 0.34 / 0.28 / 0.18 | 0.12 / 0.17 / 0.07 | 0.51 / 0.45 / 0.50 |
+| test aitw-general / shopping / mind2web | 0.17 / 0.21 / 0.20 | 0.29 / 0.29 / 0.23 | 0.15 / 0.13 / 0.05 | 0.48 / 0.51 / 0.45 |
+
+  词重叠这种启发式就能到 0.45–0.51：goal 里常直接出现要点的词或要输入的文字，这对「下一步」任务本来就是合理的线索。真正要看图才能分辨的，是「现在这一屏处在流程的哪一步」，例如还没打开搜索框时就不该 `type`。所以训练评测时**必须同时报告配错图对照**，看图的增益以「真图 − 错图」计，而不是只看和 0.2 的差距。AITW general 的「最长选项」到 0.32，偏差来自 `type "<整句 goal>"`，混合训练时要留意。
+
+## 怎么重建 / 续做
+
+```bash
+uv run --no-sync python scripts/data/v05_gui_fetch.py --root data            # 约 80 GB，可断点续传，日志 data/v05/gui/raw/fetch.log
+uv run --no-sync python scripts/data/v05_gui_action.py --root data           # 全量构建约 1.5 小时（CPU），日志 data/v05/gui/build.log
+uv run --no-sync python scripts/data/v05_gui_action.py --root data --reuse   # 只改切分 / 上限时：从 work/ 缓存重切，几十秒
+```
+
+混合建议（未验证）：shopping 有 19.9 万题，但模板化目标（加购物车、搜索商品）的屏幕高度重复。不要全量混入，先按 episode 抽 2–4 万题，和 general、mind2web 一起，与回放数据按 1:1 混合。
 
 ## 5. 已知问题
 

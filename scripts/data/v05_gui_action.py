@@ -70,6 +70,7 @@ EVAL_SETS = ("v05/exp82v2/ui_dev.jsonl", "v05/exp85/ui_dev.jsonl", "v05/exp85/ui
 NEAR_BITS = 6
 SCROLL_MAX = 0.2
 PER_GROUP = 30
+PER_SITE = {"aitw-shopping": 150}   # its held-out groups are a few whole websites
 STD_MIN = 8.0
 LAYER_ROLE = re.compile(r"^(menu|menuitem|menubar|listbox|option|dialog|tooltip|tabpanel|alertdialog)$")
 LAYER_CLASS = re.compile(r"dropdown|drop-down|flyout|submenu|sub-menu|megamenu|mega-menu|popover|popup|modal|"
@@ -767,8 +768,9 @@ def main(argv=None):
         by_part = defaultdict(list)
         for r in rows:
             by_part[r.pop("part", None) or aitw_part(source, r["group"])].append(r)
-        dev, unused_dev = cap_groups(by_part["dev"], DEV_CAP.get(source, 400))
-        test, unused_test = cap_groups(by_part["test"], TEST_CAP.get(source, 800))
+        per = PER_SITE.get(source, PER_GROUP)
+        dev, unused_dev = cap_groups(by_part["dev"], DEV_CAP.get(source, 400), per)
+        test, unused_test = cap_groups(by_part["test"], TEST_CAP.get(source, 800), per)
         for part, rs in (("train", by_part["train"]), ("dev", dev), ("test", test)):
             parts[part] += rs
         groups = {p: len({r["group"] for r in rs}) for p, rs in (("train", by_part["train"]), ("dev", dev),
