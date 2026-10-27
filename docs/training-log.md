@@ -13,6 +13,15 @@
 
 
 
+## 2026-10-28 05:05：exp120（深度回放 + ego 扩量）部分结果：CV-Bench 3D 修复、ego +3.6，MMBench 小幅退；exp121 已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp120**（exp119 + n2-spatial 深度 4k + EPIC ego 12k，120,889 题），18 集已评 12 集。相对上一实验 exp119：**CV-Bench +2.31 [+1.02, +3.56]**（3D-depth +3.17、3D-distance +4.83；对 v0.4 +2.65 [+1.29, +4.02]，exp117/118 以来的 3D 退步修复）；**test_ego 64.6→68.1，+3.56 [+2.56, +4.52]**（对 v0.4 +33.4），EgoThink +0.00；GUI 三集均含 0（shop 58.5 −1.29、state 47.1 +0.13、原题型 −1.36）；ScienceQA +0.91、dev_sqa +0.59、MME +1.01、NaturalBench +0.07、RealWorld −1.02 均不显著退步；**MMBench −0.95 [−1.77, −0.12]**（对 v0.4 −0.72 含 0）。→ 判据 1、2 过，判据 3 有 MMBench 一项小幅不过；剩余 CountBench / What'sUp / POPE / lv 三集评测中。详见 [exp120](experiments/2026-10-28-exp120-v4-depth-ego.md)。
+- **exp121**（exp120 + 手机 GUI 改写 24k）由 `scripts/v05/chain_exp121.sh` 在 exp120 评测结束后自动开跑（dry-run 通过，数据 `data/v05/exp121/` 就绪），预计 07:00 前后评完。
+
+**下一步**：补齐 exp120 剩余 6 集；exp121 判 GUI 再扩量后定 `r22-*` 正式配方（含深度回放与 ego 扩量，MMBench 对 v0.4 继续盯）；Mind2Web 走切块 / 高分辨率小实验。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
 ## 2026-10-28 04:05：exp119（手机 GUI 扩量 + 科学回放）判据全过，成为 r22 候选；exp120 训练中，exp121（GUI 再扩 24k）已挂接
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
