@@ -1,0 +1,11 @@
+# Eval-only: baseline for exp116 on the GUI / ego sets (docs/experiments/2026-10-27-exp116-v4-gui-ego.md)
+name: guiego
+device: cuda
+stages: []
+evaluate:
+  checkpoint: runs/r21-soft/train
+  controls: true
+  sets:
+    test_gui: {path: data/v05/exp116/gui_test.jsonl, role: heldout}
+    test_ego: {path: data/v05/exp116/ego_test.jsonl, role: heldout}
+    bench_egothink: {path: data/v05/exp116/egothink.jsonl, role: heldout}
