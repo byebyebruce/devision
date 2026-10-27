@@ -13,6 +13,17 @@
 
 
 
+## 2026-10-28 06:00：exp120 补齐：What'sUp 左右关系崩溃（−12.9），判据 3 不过；exp122（关系词配平）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp120 剩余 6 集**（对上一实验 exp119 / 对 v0.4）：**What'sUp 32.6，−12.93 [−17.07, −8.78] / −14.15 [−18.05, −10.12]**——left_of / right_of 从约 50% 掉到 1.5%（in-front_of 32→78、behind 28→59）；CountBench +3.05 / +2.04（含 0）；POPE −0.56 [−1.13, −0.01] / −0.29（含 0）；lv VQAv2 是非 +0.33、A-OKVQA −0.09（含 0）。
+- **归因**：新增 4,000 道 n2-spatial 深度题的选项是 left / right / front / behind 四选一，gold 只会是 front / behind，混合里以 left / right 为 gold 的只有 213 题 → 模型学到"不选 left / right"的选项先验。CV-Bench 3D 的提升（选项是物体名）仍成立。**exp120 判据 3 不过**，05:05 节"判据 3 只差 MMBench 一项小幅"的结论作废；exp121 以 exp120 为底，预计继承此退步。详见 [exp120](experiments/2026-10-28-exp120-v4-depth-ego.md)。
+- **exp121** 06:00 训完 18,112 步（末段 loss 0.63–0.70，acc ≈ 0.74），评测中，预计 07:00 前后结束。
+- **exp122 预写并挂接**：exp121 训练文件 + n2-spatial 剩余全部 10,151 题（混合内各关系类别比例与源文件一致），155,040 题；判据：What'sUp 对 exp121 下界 > 0 且对 v0.4 不显著退步、左右子项各 ≥ 40%，CV-Bench 不退，其余对 exp121 不退。`scripts/v05/chain_exp122.sh` 在 exp121 退出后自动开跑，预计 08:45 前后评完。见 [exp122](experiments/2026-10-28-exp122-v4-spatial-balance.md)。
+
+**下一步**：exp121 判 GUI 扩量（What'sUp 预计同样崩溃，与 GUI 判据分开看）；exp122 判关系词配平，过则 exp122 配方定 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
 ## 2026-10-28 05:05：exp120（深度回放 + ego 扩量）部分结果：CV-Bench 3D 修复、ego +3.6，MMBench 小幅退；exp121 已挂接
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
