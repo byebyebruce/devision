@@ -73,7 +73,14 @@ def test_scroll_type_and_navigation_golds():
 
 
 def test_groups_and_split_keep_held_out_groups_out_of_train():
+    from v05_gui_action import aitw_part
     assert aitw_group("aitw-shopping", "Go to ebay.com, search for a usb hub") == "site:ebay"
+    assert aitw_group("aitw-shopping", "Look up the best rated coffee maker on Lowe's.") == "site:lowes"
+    assert aitw_group("aitw-shopping", "Show me the best rated power washer on Home Depot.") == "site:homedepot"
+    assert aitw_group("aitw-shopping", "Search for the new Nintendo switch on Walmart.") == "site:walmart"
+    assert aitw_group("aitw-shopping", "Search for the best movies of 2019 ").startswith("goal:")
+    assert aitw_part("aitw-shopping", "site:walmart") == "train" and aitw_part("aitw-shopping", "site:nike") == "test"
+    assert aitw_part("aitw-shopping", "goal:search for the best movies of 2019") == "train"
     assert aitw_group("aitw-general", "What's the weather?") == aitw_group("aitw-general", "what's the  weather")
     rows = [{"group": "g%d" % (i % 50), "id": "r%d" % i} for i in range(500)]
     parts = {}
@@ -212,3 +219,11 @@ def test_held_out_cap_spreads_over_groups_with_whole_episodes():
     assert len({r["group"] for r in kept}) >= 2 and unused == 500 - len(kept)
     eps = {r["episode"] for r in kept}
     assert len(kept) == sum(1 for r in rows if r["episode"] in eps)   # episodes are never cut
+
+
+def test_goal_whitespace_is_collapsed():
+    from v05_gui_action import tidy
+    r = sample("q", "s", "x", "x", 'Add Bio: "x"\n.', [], ['tap "A"', 'tap "B"'], 'tap "A"', {})
+    assert "\n." not in r["questions"]["q"]["instructions"]
+    r["questions"]["q"]["instructions"] = r["questions"]["q"]["instructions"].replace("Bio:", "Bio:\n\n")
+    assert tidy(r)["questions"]["q"]["instructions"].startswith('Goal: Add Bio: "x" .\nWhich')

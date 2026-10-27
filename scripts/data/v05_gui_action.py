@@ -36,7 +36,8 @@ are distinct case-insensitively. Order: random.Random(sha256(id)) shuffle.
 
 Scroll golds are capped at SCROLL_MAX of each source (lowest sha256(id) kept, the rest counted as "scroll_cap").
 Splits (by group, so dev / test goals or websites are never seen in train): AITW general by normalised goal text;
-AITW web_shopping by the website named in the goal; Mind2Web: the official test_website / test_domain websites
+AITW web_shopping by the website named in the goal (SITES; the 7 big sites and goals naming no site are train,
+the small sites in SHOP_HELD are dev / test); Mind2Web: the official test_website / test_domain websites
 (unseen in the official train) are dev / test by a hash of the website, train = official train + test_task.
 Dev / test are capped (DEV_CAP / TEST_CAP per source; groups in hash order, at most ~PER_GROUP questions = whole
 episodes per group); held-out rows past the caps are not used anywhere. Every image is checked against the existing UI eval sets (EVAL_SETS) by perceptual hash.
@@ -63,7 +64,7 @@ MIN_SCREEN = 2
 CROP_W, CROP_H = 1280, 1000
 SAVE_MAX = 1024
 DEV_FRAC, TEST_FRAC = 0.05, 0.10
-DEV_CAP = {"aitw-general": 350, "aitw-shopping": 350, "mind2web": 400}
+DEV_CAP = {"aitw-general": 350, "aitw-shopping": 350, "mind2web": 400}   # whole groups -> a bit above
 TEST_CAP = {"aitw-general": 700, "aitw-shopping": 700, "mind2web": 800}
 EVAL_SETS = ("v05/exp82v2/ui_dev.jsonl", "v05/exp85/ui_dev.jsonl", "v05/exp85/ui_dev_rotated.jsonl")
 NEAR_BITS = 6
@@ -150,6 +151,17 @@ def make_options(qid: str, gold: str, screen: Sequence[str], generic: Sequence[s
     return options, n_screen
 
 
+ASK = "Which action should be done next on this screen?"
+
+
+def tidy(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Collapse whitespace in the goal of a (possibly cached) row: "Goal: <goal>\n<ASK>"."""
+    q = row["questions"]["q"]
+    goal = q["instructions"][len("Goal: "):-len("\n" + ASK)]
+    q["instructions"] = "Goal: %s\n%s" % (" ".join(goal.split()), ASK)
+    return row
+
+
 def sample(qid: str, source: str, image: str, image_id: str, goal: str, history: Sequence[str], options: List[str],
            gold: str, extra: Dict[str, Any]) -> Dict[str, Any]:
     prev = "; ".join(history[-4:]) if history else "none"
@@ -158,7 +170,7 @@ def sample(qid: str, source: str, image: str, image_id: str, goal: str, history:
     row = {"id": qid, "source": source, "kind": "gui-next-action", "image": image, "image_id": image_id,
            "state_text": "Previous actions: %s." % prev,
            "questions": {"q": {"type": "choice",
-                               "instructions": "Goal: %s\nWhich action should be done next on this screen?" % goal,
+                               "instructions": "Goal: %s\n%s" % (" ".join(goal.split()), ASK),
                                "criteria": {o: None for o in options}}},
            "gold": {"q": {"probabilities": {o: 1.0 if o == gold else 0.0 for o in options}}}}
     row.update(extra)
@@ -266,14 +278,35 @@ def aitw_question(qid: str, goal: str, action: Dict[str, Any], elements: List[Di
     return (gold, made[0], made[1]), ""
 
 
-WEBSITE = re.compile(r"\b([a-z0-9-]+)\.(?:com|net|org|co\.uk|ca)\b")
+SITES = {"amazon": r"amazon", "walmart": r"walmart", "target": r"\btarget\b", "bestbuy": r"best ?buy",
+         "ebay": r"\bebay\b", "newegg": r"newegg", "costco": r"costco", "nike": r"\bnike\b", "etsy": r"\betsy\b",
+         "goodreads": r"goodreads", "ikea": r"\bikea\b", "lowes": r"\blowe'?s\b", "homedepot": r"home ?depot",
+         "aliexpress": r"ali ?express", "article": r"\barticle(?:\.com)?\s*[.,]?\s*$|on article\b",
+         "crateandbarrel": r"crate ?(?:and|&)? ?barrel|\bon crate\b"}
+# web_shopping split by website: the 7 big sites (and goals naming none) train; small sites held out
+SHOP_HELD = {"ikea": "dev", "homedepot": "dev", "aliexpress": "dev",
+             "nike": "test", "etsy": "test", "lowes": "test", "goodreads": "test", "article": "test",
+             "crateandbarrel": "test"}
+
+
+def site_of(goal: str) -> Optional[str]:
+    """The shopping website a goal names (the one named last when several are), or None."""
+    g = goal.casefold()
+    hits = [(m.start(), k) for k, pat in SITES.items() for m in re.finditer(pat, g)]
+    return max(hits)[1] if hits else None
 
 
 def aitw_group(source: str, goal: str) -> str:
     if source == "aitw-shopping":
-        m = WEBSITE.search(goal.casefold())
-        return "site:" + (m.group(1) if m else "unknown")
+        site = site_of(goal)
+        return "site:" + site if site else "goal:" + norm(goal)
     return "goal:" + norm(goal)
+
+
+def aitw_part(source: str, group: str) -> str:
+    if source == "aitw-shopping":
+        return SHOP_HELD.get(group[len("site:"):], "train") if group.startswith("site:") else "train"
+    return held_part(group)
 
 
 # ----------------------------------------------------------------------------- Mind2Web
@@ -733,7 +766,7 @@ def main(argv=None):
         rows = cap_scroll(rows, drops)
         by_part = defaultdict(list)
         for r in rows:
-            by_part[r.pop("part", None) or held_part(r["group"])].append(r)
+            by_part[r.pop("part", None) or aitw_part(source, r["group"])].append(r)
         dev, unused_dev = cap_groups(by_part["dev"], DEV_CAP.get(source, 400))
         test, unused_test = cap_groups(by_part["test"], TEST_CAP.get(source, 800))
         for part, rs in (("train", by_part["train"]), ("dev", dev), ("test", test)):
@@ -751,6 +784,8 @@ def main(argv=None):
         log("%s: %s" % (source, json.dumps(manifest["sources"][source]["drops"])))
     for part, rs in parts.items():
         rs.sort(key=lambda r: r["id"])
+        for r in rs:
+            tidy(r)
         with open(os.path.join(out, part + ".jsonl"), "w") as f:
             for r in rs:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
