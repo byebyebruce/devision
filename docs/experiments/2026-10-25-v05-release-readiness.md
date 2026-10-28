@@ -61,3 +61,7 @@ exp125（存在回放 4.5k）POPE 对 v0.4 仍 −0.78 显著，回放需 9k（e
 ## 2026-10-28 15:10 修订（Claude Code）
 
 exp126（同种子对照）：ScienceQA 对 exp122 的退步由种子复现，回放对 GUI 的同种子代价 −1.1（含 0）→ r22 配方（9k 回放）不变，r22 训练中。矩阵各行判断不变。
+
+## 2026-10-28 16:05 修订（Claude Code）
+
+r22-guiego（第 22 轮正式训练）已评 9 / 32 集：GUI 状态、shopping、第一人称三个新用途对 v0.4 显著提升，已评旧集合（ScienceQA、dev_sqa、RealWorld、EgoThink）不退；其余旧集合待评。这是自己的留出集与公开 bench，不是正式五用途 / ImageJevBench 成绩。exp127（数据扩量）已挂接。矩阵各行判断不变；仍采用 v0.4。
