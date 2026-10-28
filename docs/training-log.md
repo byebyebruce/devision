@@ -13,6 +13,16 @@
 
 
 
+## 2026-10-28 08:05：exp122（关系词配平）训完，8/18 集已评：GUI 小涨、ScienceQA 对 v0.4 +1.9 显著、test_ego −1.1；exp123 已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp122**（对上一实验 exp121 / 对 v0.4）：未见网站 `test_gui_shop_state` **69.4，+2.20 [−0.26, +4.52]** / +47.9；`test_gui_state` 52.4，+2.34 [+0.45, +4.22]；test_gui 77.3，+1.43（含 0）；**test_ego 68.7，−1.11 [−2.01, −0.21]**；EgoThink +1.32 / +2.48（含 0）；ScienceQA 84.0，+0.67 / **对 v0.4 +1.91 [+0.67, +3.15]**；dev_sqa +0.99 / +0.40；RealWorld +0.51 / −1.19（含 0）。
+- 判据 1（What'sUp 左右恢复）、2（CV-Bench）及 MMBench / MME / CountBench / POPE 等 10 集评测中，预计 08:45 补齐后裁决。见 [exp122](experiments/2026-10-28-exp122-v4-spatial-balance.md)。
+- exp123（exp122 去掉 24k GUI）由 `scripts/v05/chain_exp123.sh` 在 exp122 退出后自动开跑，预计 10:30 前后评完；GPU 到那时都不空。
+
+**下一步**：exp122 补齐并裁决；exp123 与 exp122 配对定 GUI 占比；10:00 那一轮前须预写 `r22-*` 并挂在 exp123 之后。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
 ## 2026-10-28 07:10：exp121（手机 GUI 再扩 24k）：未见网站 GUI +8.7，但 MME / MMBench 小幅显著退，判据 3 不过；exp123（GUI 23% + 配平）已挂接
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。

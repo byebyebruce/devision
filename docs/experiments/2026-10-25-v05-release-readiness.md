@@ -43,3 +43,5 @@ exp120（2026-10-28 05:05，部分）：深度回放修复 CV-Bench（对 v0.4 +
 exp120 补齐（2026-10-28 06:00）：**What'sUp 对 v0.4 −14.2 显著**（深度回放题的 gold 只有 front / behind，模型不再选 left / right），exp120 判据 3 不过、不能直接进 r22；exp122（n2-spatial 关系词全量配平）已挂在 exp121 之后。仍采用 v0.4；五用途、外部综合、正式 ImageJevBench 状态不变。
 
 exp121（2026-10-28 07:10）：手机 GUI 再扩 24k，未见网站 shopping 67.2（配错图 29.3，对 exp120 +8.7 显著）；但 MME 对 exp120 −1.1、MMBench 对 v0.4 −1.2 小幅显著退步，判据 3 不过，GUI 暂回 23%。exp122（配平）训练中，exp123（23% GUI + 配平）已挂接，两者配对定 r22 配方。仍采用 v0.4；五用途、外部综合、正式 ImageJevBench 状态不变。
+
+exp122（2026-10-28 08:05，部分 8/18）：配平后 GUI 三集对 exp121 小涨（shop 69.4），ScienceQA 对 v0.4 +1.9 显著，test_ego 对 exp121 −1.1 小幅显著；What'sUp / CV-Bench / MMBench / MME 待补。仍采用 v0.4；五用途、外部综合、正式 ImageJevBench 状态不变。
