@@ -282,6 +282,8 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     Returns {"losses": per-step masked-token loss, "val": one metrics dict per evaluation}.
     """
     c = config or AlignConfig()
+    if decider.cfg.tiles:
+        raise ValueError("caption alignment does not support native-resolution tiles (spec: 原生分辨率切块)")
     device = _device(c.device)
     rng = random.Random(c.seed)
     torch.manual_seed(c.seed)

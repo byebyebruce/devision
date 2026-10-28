@@ -151,6 +151,12 @@ class TrainConfig:
     number_file: str = ""
     number_weight: float = 0.0
     lr_reader: float = 5e-4
+    # native-resolution tiles (spec "实验性、可选：原生分辨率切块"): tiles = n >= 2 gives the model n x n tiles of every
+    # picture whose shorter side is at least tile_min_side (ModelConfig.tiles / tile_min_side, saved with the
+    # checkpoint); the view position vectors start at zero and train with the projector (lr_new). Enabled before the
+    # seeds below, so the LoRA init, batch order and noise are those of the run without it. 0: off.
+    tiles: int = 0
+    tile_min_side: int = 512
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -777,7 +783,8 @@ _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
                 "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
                 "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
-                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file", "mixed_input")
+                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file", "mixed_input",
+                "tiles", "tile_min_side")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -873,6 +880,17 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             cfg.question_conditioning = True
         decider.model.enable_local_views(c.local_views)
         cfg.local_views, cfg.local_overlap, cfg.local_source = c.local_views, c.local_overlap, c.local_source
+    if c.tiles or decider.cfg.tiles:
+        cfg = decider.cfg
+        if c.local_views or c.question_conditioning or c.number_reader or c.grounding_weight > 0 or c.aux_weight > 0 \
+                or c.distill_weight > 0 or c.region_file:
+            raise ValueError("tiles do not combine with local views, question conditioning, the number reader or the "
+                             "grounding / number / distillation / region losses")
+        if cfg.tiles and (cfg.tiles, cfg.tile_min_side) != (c.tiles, c.tile_min_side):
+            raise ValueError("the checkpoint reads %dx%d tiles from pictures of shorter side >= %d: pass --tiles %d "
+                             "--tile-min-side %d" % (cfg.tiles, cfg.tiles, cfg.tile_min_side, cfg.tiles, cfg.tile_min_side))
+        decider.model.enable_tiles(c.tiles)
+        cfg.tiles, cfg.tile_min_side = c.tiles, c.tile_min_side
     aux, aux_ident, aux_inputs = None, None, {}
     if c.aux_weight > 0:   # built and loaded before the seeds below: the LoRA init, batch order and noise are unchanged
         if c.aux_slots < 1:
@@ -935,8 +953,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         for mod in (model.projector, getattr(model, "condition", None), getattr(model, "reader", None)):
             if mod is not None:
                 mod.requires_grad_(False)
+        if model.tile_pos is not None:
+            model.tile_pos.requires_grad_(False)
     groups = [
-        {"params": [] if c.text_only or c.mixed_input else list(model.projector.parameters()), "lr": c.lr_new},
+        {"params": [] if c.text_only or c.mixed_input else list(model.projector.parameters())
+                   + ([model.tile_pos] if model.tile_pos is not None else []), "lr": c.lr_new},
         {"params": [p for n, p in model.decision.named_parameters()
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
         {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},

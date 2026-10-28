@@ -16,7 +16,7 @@ from PIL import Image
 from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoTokenizer, SiglipVisionConfig
 
-from .image import local_pixels, to_pixel_values
+from .image import local_pixels, tile_pixels, to_pixel_values
 from .model import NUMBER_SLOTS, ModelConfig, VisionDecisionModel, build_model, text_encoder
 
 CONFIG_FILE = "config.json"                       # the model config save() writes (the Hub's standard name)
@@ -232,6 +232,8 @@ def question_item(tok, cfg: ModelConfig, text_state: Any, q: Dict[str, Any]) -> 
 
 
 def image_tensor(img: Image.Image, cfg: ModelConfig) -> torch.Tensor:
+    if cfg.tiles:         # native-resolution tiles: the full picture, its tiles (if large enough) and the flag, packed
+        return tile_pixels(img, cfg.image_size, cfg.tiles, cfg.tile_min_side)
     if cfg.local_views:   # exp50: the full picture, its fixed local views and their rectangles, packed
         return local_pixels(img, cfg.image_size, cfg.local_views, cfg.local_overlap, cfg.local_source)
     return to_pixel_values(img, cfg.image_size)
@@ -353,8 +355,8 @@ class Decider:
             pictures = [img for j in idx if (img := jobs[j][2]) is not None]
             out, nv = self._forward([per_job[j] for j in idx], pictures if with_picture else None)
             start = 0
-            for j in idx:
-                logits[j], n_visual[j] = out[start:start + len(per_job[j])], nv
+            for g, j in enumerate(idx):
+                logits[j], n_visual[j] = out[start:start + len(per_job[j])], nv[g]
                 start += len(per_job[j])
         responses = []
         for (_, questions, _, route_temperature), items, lg, nv in zip(jobs, per_job, logits, n_visual):
@@ -373,15 +375,19 @@ class Decider:
 
     def _forward(self, groups: List[List[Dict[str, Any]]], images: Optional[List[Image.Image]]):
         """Option logits [questions, K] (CPU) of the question items of `groups` in order, group g asked about
-        images[g] (None: text only), and the visual tokens each question carried."""
+        images[g] (None: text only), and the visual tokens each group's questions carried."""
         items = [it for g in groups for it in g]
         batch = collate_items([items], self.tok.pad_token_id)
         assert batch is not None
         dev = next(self.model.parameters()).device
         visual = patches = geom = None
+        n_visual = [0] * len(groups)
         if images is not None:   # each picture is encoded once and shared by its request's questions
             pixels = torch.stack([image_tensor(img, self.cfg) for img in images]).to(dev)
             patches, visual, geom = self.model.visual_inputs(pixels)
+            extra = NUMBER_SLOTS if self.model.reader is not None else 0
+            n_visual = [int(v) + extra for v in (self.model.visual_counts(visual) if self.model.tiles
+                                                  else [visual.size(1)] * len(images))]
             if len(images) == 1:
                 rows = None
                 patches, visual = patches.expand(len(items), -1, -1), visual.expand(len(items), -1, -1)
@@ -393,7 +399,6 @@ class Decider:
         logits = self.model(*(batch[k].to(dev) for k in
                               ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
                             visual=visual, patches=patches, patch_geom=geom).cpu()
-        n_visual = 0 if visual is None else visual.size(1) + (NUMBER_SLOTS if self.model.reader is not None else 0)
         return logits, n_visual
 
     @staticmethod

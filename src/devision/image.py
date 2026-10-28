@@ -115,3 +115,35 @@ def unpack_local(pixels: torch.Tensor, n: int):
         w, h = int(row[0]), int(row[1])
         meta.append((w, h, [tuple(int(v) for v in row[2 + 4 * i:6 + 4 * i]) for i in range(n)]))
     return pixels[:, :3], pixels[:, 3:3 + 3 * n].reshape(b, n, 3, s, s), meta
+
+
+# Native-resolution tiles (spec: "实验性、可选：原生分辨率切块"). A picture whose shorter side is at least `min_side`
+# is also letterboxed to n * size and cut into n x n non-overlapping size x size tiles (row-major), each read by the
+# vision tower at its own size; smaller pictures get the full picture only. Depends only on the picture's size.
+
+def is_tiled(w: int, h: int, n: int, min_side: int) -> bool:
+    return n >= 2 and min(w, h) >= min_side
+
+
+def tile_pixels(img: Image.Image, size: int, n: int, min_side: int) -> torch.Tensor:
+    """[3 + 3 n^2 + 1, size, size]: the full picture's pixel values (to_pixel_values), the n x n tiles' (zeros when the
+    picture is not tiled) and a plane whose first value is 1 when it is tiled -- one tensor per picture, so batching is
+    unchanged. Undone by unpack_tiles."""
+    img = img.convert("RGB")
+    out = torch.zeros(3 + 3 * n * n + 1, size, size)
+    out[:3] = to_pixel_values(img, size)
+    if is_tiled(img.size[0], img.size[1], n, min_side):
+        arr = np.asarray(letterbox(img, n * size), dtype=np.float32) / 255.0
+        big = torch.from_numpy((arr - 0.5) / 0.5).permute(2, 0, 1)
+        tiles = big.reshape(3, n, size, n, size).permute(1, 3, 0, 2, 4).reshape(3 * n * n, size, size)
+        out[3:3 + 3 * n * n] = tiles
+        out[-1, 0, 0] = 1.0
+    return out
+
+
+def unpack_tiles(pixels: torch.Tensor, n: int):
+    """(full [B, 3, S, S], tiles [B, n^2, 3, S, S], tiled [B] bool) of tile_pixels'."""
+    b, c, s, _ = pixels.shape
+    if c != 3 + 3 * n * n + 1:
+        raise ValueError("pixels have %d channels; %dx%d tiles need %d" % (c, n, n, 3 + 3 * n * n + 1))
+    return pixels[:, :3], pixels[:, 3:-1].reshape(b, n * n, 3, s, s), pixels[:, -1, 0, 0] > 0.5

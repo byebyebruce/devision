@@ -54,8 +54,16 @@ class ModelConfig:
     # questions the reading combination actually decides from its read table (route "read"); empty -- every checkpoint
     # before it, and every question not read -- keeps the type / bucket temperature above. Applied once, in decide.
     temperature_by_route: Dict[str, float] = field(default_factory=dict)
+    # Native-resolution tiles (spec "实验性、可选：原生分辨率切块"): tiles = n >= 2 adds, for pictures whose shorter side
+    # is at least tile_min_side, an n x n grid of image_size tiles of the picture letterboxed to n * image_size
+    # (image.tile_pixels), each through the same tower and projector (64 tokens each), with a learned position
+    # vector per view (VisionDecisionModel.tile_pos). 0 for every checkpoint before it: not saved, nothing changes.
+    tiles: int = 0
+    tile_min_side: int = 512
 
     def __post_init__(self):
+        if self.tiles == 1 or self.tiles < 0:
+            raise ValueError("tiles must be 0 (off) or >= 2, got %r" % self.tiles)
         bad = {k: v for k, v in (self.temperature_by_route or {}).items()
                if k not in ROUTE_DOMAINS or not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v <= 0}
         if bad:
@@ -69,6 +77,8 @@ class ModelConfig:
         d = asdict(self)
         if not d["temperature_by_route"]:          # saved configs stay exactly as before unless routed temperatures are set
             del d["temperature_by_route"]
+        if not d["tiles"]:                         # likewise without tiles
+            del d["tiles"], d["tile_min_side"]
         return d
 
     @classmethod
@@ -228,6 +238,10 @@ class VisionDecisionModel(nn.Module):
         self.reader: Optional[NumberReader] = None
         if cfg.number_reader:
             self.add_number_reader()
+        self.tiles = 0
+        self.tile_pos: Optional[nn.Parameter] = None
+        if cfg.tiles:
+            self.enable_tiles(cfg.tiles)
 
     def add_question_conditioning(self) -> None:
         self.condition = QuestionConditioning(self.vision.config.hidden_size,
@@ -248,6 +262,51 @@ class VisionDecisionModel(nn.Module):
         if self.condition.geom is None:
             self.condition.add_geometry()
 
+    def enable_tiles(self, n: int) -> None:
+        """Read n x n native-resolution tiles (pixels packed by image.tile_pixels); the 1 + n^2 view position vectors
+        start at zero, so a model that gains them answers pictures that are not tiled exactly as before."""
+        if n < 2:
+            raise ValueError("tiles must be >= 2, got %d" % n)
+        if self.condition is not None or self.local_views or self.reader is not None or self.interpolate:
+            raise ValueError("tiles do not combine with question conditioning, local views, the number reader or "
+                             "interpolated position embeddings")
+        if self.tile_pos is not None and self.tiles != n:
+            raise ValueError("the model already reads %dx%d tiles" % (self.tiles, self.tiles))
+        if self.tile_pos is None:
+            ref = cast(nn.Linear, self.projector.mlp[-1]).weight
+            self.tile_pos = nn.Parameter(torch.zeros(1 + n * n, ref.size(0), device=ref.device, dtype=ref.dtype))
+        self.tiles = n
+
+    def _tiled_inputs(self, pixel_values: torch.Tensor, grad_vision: bool):
+        """visual_inputs of a model with tiles: [B, (1 + n^2) * T, D] visual tokens, the global picture's T first;
+        a picture that is not tiled has only those (no position vector added) and NaN in the tile slots, which
+        forward drops (visual_counts)."""
+        from .image import unpack_tiles
+        n, s = self.tiles, self.image_size
+        assert self.tile_pos is not None
+        full, tiles, tiled = unpack_tiles(pixel_values, n)
+        with torch.set_grad_enabled(grad_vision and torch.is_grad_enabled()):
+            pf = self.vision_patches(full)
+        g = self.projector(pf)
+        t, pos = g.size(1), self.tile_pos.to(g.dtype)
+        rows = tiled.nonzero().flatten().tolist()
+        vt = None
+        if rows:
+            flat = tiles[rows].reshape(-1, 3, s, s)
+            with torch.set_grad_enabled(grad_vision and torch.is_grad_enabled()):
+                pt = torch.cat([self.vision_patches(flat[i:i + VIEW_CHUNK]) for i in range(0, flat.size(0), VIEW_CHUNK)])
+            vt = (self.projector(pt).reshape(len(rows), n * n, t, -1) + pos[1:, None, :]).flatten(1, 2)
+        gap = g.new_full((n * n * t, g.size(2)), float("nan"))
+        out = torch.stack([torch.cat([g[i] + pos[0], vt[rows.index(i)]]) if vt is not None and i in rows
+                           else torch.cat([g[i], gap]) for i in range(g.size(0))])
+        return pf, out, None
+
+    @staticmethod
+    def visual_counts(visual: torch.Tensor) -> torch.Tensor:
+        """[B] number of real visual tokens per row (they come first; the rest, NaN, belong to tiles a picture does
+        not have)."""
+        return (~visual.isnan().any(-1)).sum(1)
+
     def vision_patches(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """SigLIP patch features [B, N, D_vision]; N = (image_size / 16)^2. The one place every path (decide,
         alignment, decision training) runs the vision tower, so all of them see the same input size and
@@ -263,6 +322,8 @@ class VisionDecisionModel(nn.Module):
         every view's, all of them through the same tower, with each patch's (cx, cy, w, h) in the whole picture; the
         visual tokens come from the full picture only. The tower runs with gradients only if `grad_vision` (and
         gradients are on); the projector follows the caller."""
+        if self.tiles:
+            return self._tiled_inputs(pixel_values, grad_vision)
         n = self.local_views
         if not n:
             with torch.set_grad_enabled(grad_vision and torch.is_grad_enabled()):
@@ -308,6 +369,23 @@ class VisionDecisionModel(nn.Module):
         (the SigLIP patches the visual tokens came from) is needed when the model has question conditioning.
         `return_hidden` also returns the encoder's last-layer states [B, L+V, D] (before the decision head).
         `patch_geom` is the patches' geometry from visual_inputs (models with local views only)."""
+        if self.tiles and visual is not None:
+            counts = self.visual_counts(visual)
+            sizes = sorted(set(counts.tolist()))
+            if len(sizes) > 1:      # tiled and untiled pictures: one pass per visual length, logits back in order
+                if return_hidden:
+                    raise ValueError("return_hidden needs one visual length per batch")
+                out = None
+                for v in sizes:
+                    rows = (counts == v).nonzero().flatten()
+                    sub = cast(torch.Tensor, self.forward(*(x.index_select(0, rows) for x in (input_ids, attention_mask, marker_pos, marker_mask, qtype)),
+                                       visual=visual.index_select(0, rows)[:, :v],
+                                       patches=None if patches is None else patches.index_select(0, rows)))
+                    out = sub.new_zeros(input_ids.size(0), sub.size(1)) if out is None else out
+                    out = out.index_copy(0, rows, sub)
+                assert out is not None
+                return out
+            visual = visual[:, :sizes[0]]
         dm = self.decision
         if (self.condition is not None or self.reader is not None) and visual is not None:
             if patches is None:
