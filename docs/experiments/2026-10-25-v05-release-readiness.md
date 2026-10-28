@@ -65,3 +65,7 @@ exp126（同种子对照）：ScienceQA 对 exp122 的退步由种子复现，�
 ## 2026-10-28 16:05 修订（Claude Code）
 
 r22-guiego（第 22 轮正式训练）已评 9 / 32 集：GUI 状态、shopping、第一人称三个新用途对 v0.4 显著提升，已评旧集合（ScienceQA、dev_sqa、RealWorld、EgoThink）不退；其余旧集合待评。这是自己的留出集与公开 bench，不是正式五用途 / ImageJevBench 成绩。exp127（数据扩量）已挂接。矩阵各行判断不变；仍采用 v0.4。
+
+## 2026-10-28 17:10 修订（Claude Code）
+
+r22-guiego 评完 32 集：三个新用途对 v0.4 显著提升、What'sUp / CV-Bench 小幅显著提升、POPE / MME / MMBench / ScienceQA / RealWorld 等不退，但 **test_size −2.59 显著** → 按预写判据不采用。原因是 v05 混合里尺寸题欠采样（129 / 4,331），exp128（尺寸回放）挂在 exp127 之后。仍采用 v0.4；五用途、外部综合、正式 ImageJevBench 状态不变。
