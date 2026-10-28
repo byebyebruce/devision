@@ -28,10 +28,11 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=124)
     ap.add_argument("--exist", type=int, default=6000)
     ap.add_argument("--vqav2", type=int, default=3000)
+    ap.add_argument("--out", default="v05/exp124", help="output dir under --root (exp125: half replay)")
     a = ap.parse_args()
     root = Path(a.root)
     rng = random.Random(a.seed)
-    out = root / "v05/exp124"
+    out = root / a.out
     out.mkdir(parents=True, exist_ok=True)
 
     base = load(root / "v05/exp122/train.jsonl")

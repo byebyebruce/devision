@@ -13,6 +13,16 @@
 
 
 
+## 2026-10-28 11:05：exp124（存在题回放 9k）评测中 5/18：test_gui_state 对 exp122 −2.5 显著，判据 2 不过；exp125（回放减半）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp124**（对上一实验 exp122）：test_gui_shop_state 69.6，+0.26（含 0）；**test_gui_state 49.9，−2.47 [−4.29, −0.58]**（主要在网页 Mind2Web −3.06；手机 AITW −1.80 含 0）；test_gui 75.3，−1.95 [−3.64, −0.26]；test_ego 68.8，+0.12；EgoThink −0.17。两者种子不同，未排除种子噪声。POPE（判据 1）等 13 集评测中，预计 11:30 前后评完。
+- **裁决（部分）**：判据 2 不过 → 按预写规则回放减半。见 [exp124](experiments/2026-10-28-exp124-v4-exist-replay.md)。
+- **exp125 预写并挂接**：exp122 训练文件 + coco-exist 3k（真假各半）+ VQAv2 是非 1.5k（159,540 题，seed 125）；`scripts/v05/chain_exp125.sh` 在 exp124 退出后自动开跑，预计 13:15 前后评完。见 [exp125](experiments/2026-10-28-exp125-v4-exist-replay-half.md)。
+
+**下一步**：exp124 补齐后判 POPE；exp125 与 exp122 / exp124 配对定回放剂量，过则定 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
 ## 2026-10-28 10:10：exp123（GUI 23% + 配平）评完：去掉 24k GUI 使未见网站 −8.8，MME / MMBench 不变 → r22 用 33% GUI；POPE 仍 −0.8，等 exp124
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
