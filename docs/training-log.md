@@ -19,7 +19,7 @@
 
 - **r22-guiego 对 v0.4**（按图 95%）：test_gui_state **+25.65**、test_gui_shop_state **+47.16**、test_gui **+37.66**、test_ego **+33.32**、What'sUp **+2.93**、CV-Bench **+1.48**（均显著）；**test_size −2.59 [−4.10, −1.18] 显著退步**（84.4 vs 87.0，NLL 0.507 → 0.359、ECE 0.234 → 0.033）；其余 25 集含 0（POPE −0.34、MME −0.55、MMBench −0.58、ScienceQA +1.00、CountBench +0.81、RealWorld −0.51、EgoThink +1.99）。对 exp124 同数据异种子 18 集全部含 0。lv_report：对 laya-vision VQAv2 是非 +3.7、A-OKVQA +3.9 显著，ScienceQA +0.7（上一版 −0.3），POPE 三档均高于其公开分。
 - **裁决**：判据 1、3 过，判据 2 不过 → 不采用（相对上一轮 v0.4 的增长见上；不是正式五用途 / ImageJevBench 成绩）。原因：exp116 起 v05 混合的 coco-size 只剩 129 题（v0.4 4,331；其他 v0.4 来源保留约 35%）。
-- **exp128 预写**：r22 数据 + soft_mix 其余 4,202 道 coco-size（168,242 题，与 test_size 图片重叠 0），seed 22 与 r22 配对，32 集全评 + lv_report；`scripts/v05/chain_exp128.sh` 挂在 exp127 链之后，预计 22:45 评完。exp127 17:00 在 8,500 / 24,083 步（loss 0.74–0.75，显存 8.9 / 12.2 GB），预计 20:10 评完。exp124 / exp126 的 test_size 在 CPU 补评（区分种子）。见 [r22](experiments/2026-10-28-r22-guiego.md)、[exp128](experiments/2026-10-28-exp128-v4-size-replay.md)。
+- **exp128 预写**：r22 数据 + soft_mix 其余 4,202 道 coco-size（168,242 题，与 test_size 图片重叠 0），seed 22 与 r22 配对，32 集全评 + lv_report；`scripts/v05/chain_exp128.sh` 挂在 exp127 链之后，预计 22:45 评完。exp127 17:00 在 8,500 / 24,083 步（loss 0.74–0.75，显存 8.9 / 12.2 GB），预计 20:10 评完。exp124 / exp126 的 test_size CPU 补评因拖慢训练而停止，由 exp128 同种子配对回答。见 [r22](experiments/2026-10-28-r22-guiego.md)、[exp128](experiments/2026-10-28-exp128-v4-size-replay.md)。
 
 **下一步**：exp127 评完按其判据裁决（其判据 3 的旧集合包含 test_size，同样会受欠采样影响，裁决时要和 exp128 分开看）；exp128 过则 r23 = 选定数据 + 尺寸回放。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
 
