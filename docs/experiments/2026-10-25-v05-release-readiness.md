@@ -47,3 +47,5 @@ exp121（2026-10-28 07:10）：手机 GUI 再扩 24k，未见网站 shopping 67.
 exp122（2026-10-28 08:05，部分 8/18）：配平后 GUI 三集对 exp121 小涨（shop 69.4），ScienceQA 对 v0.4 +1.9 显著，test_ego 对 exp121 −1.1 小幅显著；What'sUp / CV-Bench / MMBench / MME 待补。仍采用 v0.4；五用途、外部综合、正式 ImageJevBench 状态不变。
 
 exp122 补齐（2026-10-28 09:05）：配平生效，What'sUp 50.9（对 exp121 +18.4，对 v0.4 +4.2 显著；left 49.8 / right 53.7），CV-Bench 对 v0.4 +1.1（含 0，3D-depth 55.2 ≥ 54.8），MME / MMBench 对 v0.4 区间含 0；但 **POPE 对 v0.4 −0.71 [−1.36, −0.06]**、test_ego 对 exp121 −1.1，判据 3 不全过，不直接定 r22。exp124（exp122 + 存在类是非题回放 9k）挂在 exp123 之后。仍采用 v0.4；五用途、外部综合、正式 ImageJevBench 状态不变。
+
+exp123（2026-10-28 10:10）：与 exp122 配对，去掉 24k GUI 使未见网站 shopping −8.8 显著，MME / MMBench 差值含 0 → r22 采用 33% GUI（exp122 配方）；POPE 对 v0.4 仍 −0.82 显著（与 GUI 量无关），由 exp124（存在题回放，训练中）检验。仍采用 v0.4；五用途、外部综合、正式 ImageJevBench 状态不变。
