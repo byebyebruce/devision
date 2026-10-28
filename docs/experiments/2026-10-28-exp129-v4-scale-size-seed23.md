@@ -53,3 +53,9 @@ exp127 评完判据 3 不过：test_vqa_yesno 对 r22 −3.00、对 v0.4 −2.80
 - 预写的「2 不过」分支（r23 改 exp128 配方）已失效：exp128 自己 POPE −0.76 也显著。POPE 漂移在六次运行里一直存在，与配方和种子无关，所以转向不靠加旧题的两条路：exp130（权重插值，已挂链）和 exp132（离线蒸馏向 v0.4，[exp132](2026-10-29-exp132-v4-offline-distill.md)）。
 - 未拟合发布温度：POPE NLL 0.557 / ECE 0.121（v0.4 0.363 / 0.048），r22、exp128 同样如此；v0.5 候选必须重拟合温度后再按校准判据比较。
 - 其余 14 集（test_vqa_yesno、test_size 等）评完后补表，不改变本裁决。
+
+## 2026-10-29 02:10：32 集评完（补表），裁决不变：判据 2 不过
+
+余下 14 集对 v0.4（按图 95%，`runs/exp129-v4-scale-size-seed23/eval/compare/*.vs-r21-soft.txt`）：**test_v7w −1.70 [−3.10, −0.40] 显著退步**（第二个不过判据 2 的集合）；test_vqa_yesno −1.00 [−2.50, +0.61]、test_vsr −1.00、test_count_coco −0.36、test_exist −0.27、test_position −0.39、test_relation −0.17、test_gqa +0.20、test_vqa_choice +0.21、test_size +0.83 [−0.50, +2.17]、test_position_flip +0.31、test_relation_flip +0.06、dev_mix +0.23、cogent_b −0.70，均含 0。另有 ChartQA 官方 test（exp131）58.4 vs 30.7，**+27.67 [+25.20, +30.17]**。
+
+32 集 ECE 中位数 0.062（v0.4 0.064，未重拟合温度）；POPE ECE 0.121 / MME 0.204 偏高（v0.4 0.048 / 0.111），test_size 0.066 / test_exist 0.037 好于 v0.4。**裁决：判据 1、3 过，2 不过（POPE、test_v7w），不定 r23。**

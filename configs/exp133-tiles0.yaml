@@ -1,0 +1,56 @@
+# exp133 arm tiles=0: v0.4 + the same 53,762-row large-picture mix (data/v05/exp133, scripts/data/v05/exp133_mix.py),
+# same seed / micro batch for both arms, so tiles 0 vs 2 isolates the native-resolution tiles. Plan: docs/experiments/2026-10-29-exp133-tiles.md
+name: exp133-tiles0
+device: cuda
+common:
+  log_every: 100
+stages:
+- name: train
+  kind: train
+  init: runs/r21-soft/train
+  data: data/v05/exp133/train.jsonl
+  val: data/v05/exp81/calib.jsonl
+  eval:
+    chart: data/v05/exp81/chart_dev.jsonl
+    gui_state: data/v05/exp118/gui_dev_mon_state.jsonl
+    protect: data/v05/exp81/protect.jsonl
+  params:
+    epochs: 1
+    micro_batch: 4
+    eval_batch: 8
+    seed: 133
+    warmup: 300
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06
+    amp: cuda
+    objective: ce
+    monitor_details: true
+    eval_every: 0
+    save_every: 500
+    tiles: 0
+    tile_min_side: 512
+evaluate:
+  image_identity: data/v5/image_identity.json
+  controls: false
+  sets:
+    test_chartqa: {path: data/v05/chartqa_test/test_chartqa.jsonl, role: heldout}
+    test_gui_state: {path: data/v05/exp118/gui_test_state.jsonl, role: heldout}
+    test_gui: {path: data/v05/exp116/gui_test.jsonl, role: heldout}
+    test_gui_shop_state: {path: data/v05/exp119/gui_shop_test_state.jsonl, role: heldout}
+    test_ego: {path: data/v05/exp116/ego_test.jsonl, role: heldout}
+    test_funsd: {path: data/v05/funsd/derived/dev.jsonl, role: heldout}
+    bench_realworld: {path: data/v05/external/realworld_native.jsonl, role: heldout}
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    bench_mmbench: {path: data/n2/bench/mmbench.jsonl, role: heldout}
+    bench_mme: {path: data/n2/bench/mme.jsonl, role: heldout}
+    bench_cvbench: {path: data/n2/bench/cvbench.jsonl, role: heldout}
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_egothink: {path: data/v05/exp116/egothink.jsonl, role: heldout}
+    bench_pope: data/v2/bench_pope.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
