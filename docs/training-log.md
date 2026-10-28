@@ -14,6 +14,16 @@
 
 
 
+## 2026-10-29 00:40：exp129 评测 18 / 32：判据 2 不过（POPE 对 v0.4 −0.66 显著，回放没修好）；exp132（离线蒸馏向 v0.4）预写并挂链
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp129–exp132 为实验。
+
+- **exp129 对 v0.4**（按图 95%）：新用途 shopping **+48.7**、test_gui **+38.7**、test_ego **+37.3**、test_gui_state **+26.3**；What'sUp **+4.6**、EgoThink **+3.6**、CV-Bench **+1.8** 显著；MME +0.4、MMBench 0.0、NaturalBench +0.1、RealWorld +0.5、CountBench +0.6、ScienceQA +1.0、lv VQAv2 是非 −0.2、A-OKVQA −0.4 含 0；**POPE −0.66 [−1.21, −0.09] 显著** → 判据 2 不过，不定 r23。对 r22 POPE −0.31（含 0）。yes ratio 不变（0.456 / 0.457），不是是非偏向。
+- POPE 漂移六次运行都在（r22 −0.34 … exp129 −0.66），与回放量、种子无关；预写的「回到 exp128 配方」分支失效（exp128 也 −0.76）。另：未重拟合温度时 POPE NLL 0.557 / ECE 0.121（v0.4 0.363 / 0.048），候选必须重拟合温度再比校准。
+- **exp132（新，预写）**：题目与 seed 同 exp129，只把 13 个旧自然照片来源 60,014 题的目标改成 `0.5·gold + 0.5·v0.4 答案`（离线蒸馏，不加显存），判据：POPE / test_vqa_yesno 对 v0.4 不显著退步且新用途保持。`scripts/v05/chain_exp132.sh` 挂在 exp131 之后（exp129 评完 → exp130 插值 → exp131 ChartQA test → exp132），预计 07:00–08:00 评完。见 [exp132](experiments/2026-10-29-exp132-v4-offline-distill.md)。
+
+**下一步**：exp129 余下 14 集评完补表；exp130 选中 α 后看 POPE 是否回到 v0.4；exp130 / exp132 任一过判据即写 r23。
+
 ## 2026-10-28 23:25：exp129 评测 11 / 32：新用途判据 1、3 已过（test_ego 对 r22 +3.97 显著）；新建图表未见测试集 test_chartqa（exp131，挂在 exp130 之后）
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp129–exp131 为实验。
