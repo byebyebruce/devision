@@ -15,3 +15,12 @@
 - 3 不过 → 扩量收益不稳定，r23 回到 exp128 配方。
 
 **预算**：约 24.6k 步训练约 60 分钟 + 评测约 90 分钟。`scripts/v05/chain_exp129.sh 655362` 18:03 挂在 exp128 链之后（日志 `runs/v05-chain/chain_exp129.log`、`runs/exp129-v4-scale-size-seed23.out`），dry-run 通过；评完自动 `lv_report --prev runs/r21-soft/eval`。预计 exp128 约 22:30 评完，exp129 约次日 01:00 评完。不拟合发布温度。
+
+## 开训前修订（2026-10-28 19:15，exp128 训练中、exp129 未开始）
+
+exp127 评完判据 3 不过：test_vqa_yesno 对 r22 −3.00、对 v0.4 −2.80，POPE 对 v0.4 −0.80（均显著），定位为自然照片是非题被新用途数据稀释（见 [exp127 结果](2026-10-28-exp127-v4-gui-ego-scale.md)）。原计划的 exp129 只加尺寸回放，会带着这两项退步，所以在开训前把数据改为：
+
+- `scripts/data/v05/exp128_mix.py --seed 129 --base v05/exp127/train.jsonl --out v05/exp129r --extra vqav2/yesno=0 --extra coco-exist=3000`（脚本加了 `--extra`，默认行为不变，coco-size 那批与原 exp129 相同）：exp127 训练文件 + coco-size 4,202 + soft_mix 其余全部 vqav2 是非题 5,307 + coco-exist 3,000，共 205,166 题（约 25.6k 步）。新增题与 32 个评测集图片重叠 0（`data/v05/exp129r/MANIFEST.json`）。原 `data/v05/exp129/` 保留不用。
+- YAML 只改 `data` 路径；seed 23、超参、评测集、判据不变。判据 2 的旧集合明确包含 test_vqa_yesno、POPE、test_size。
+- 增加的分支：判据 2 中 test_vqa_yesno / POPE 仍显著退步 → 是非题回放不足以抵消，r23 改用 exp128 配方（r22 数据 + 尺寸回放）或把 EPIC-VISOR 新增量减半。
+- 预算：训练约 65 分钟 + 评测约 90 分钟，exp128 评完（约 21:30）后由 `chain_exp129.sh` 自动启动，约次日 00:30 评完。

@@ -1,4 +1,4 @@
-# exp129: exp127 data (r22 + EPIC-VISOR 19.6k + AITW-general state 9k) + 4,202 v0.4 coco-size replay, NEW seed 23 (r23 candidate + seed reproduction). Plan: docs/experiments/2026-10-28-exp129-v4-scale-size-seed23.md
+# exp129: exp127 data (r22 + EPIC-VISOR 19.6k + AITW-general state 9k) + v0.4 replay (coco-size 4,202 + vqav2 yes/no 5,307 + coco-exist 3,000; amended 19:40 before start after exp127 failed test_vqa_yesno / POPE), NEW seed 23 (r23 candidate). Plan: docs/experiments/2026-10-28-exp129-v4-scale-size-seed23.md
 name: exp129-v4-scale-size-seed23
 device: cuda
 common:
@@ -7,7 +7,7 @@ stages:
 - name: train
   kind: train
   init: runs/r21-soft/train
-  data: data/v05/exp129/train.jsonl
+  data: data/v05/exp129r/train.jsonl
   val: data/v05/exp81/calib.jsonl
   eval:
     chart: data/v05/exp81/chart_dev.jsonl

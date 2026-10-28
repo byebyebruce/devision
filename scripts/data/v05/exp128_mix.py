@@ -28,6 +28,8 @@ def main() -> None:
     ap.add_argument("--base", default="v05/exp124/train.jsonl")
     ap.add_argument("--size", type=int, default=0, help="rows to add (0 = all available)")
     ap.add_argument("--out", default="v05/exp128")
+    ap.add_argument("--extra", action="append", default=[], metavar="SOURCE[/KIND]=N",
+                    help="also replay N soft_mix rows of this source (and kind) not in the base (0 = all); repeatable")
     a = ap.parse_args()
     root = Path(a.root)
     rng = random.Random(a.seed)
@@ -36,10 +38,17 @@ def main() -> None:
 
     base = load(root / a.base)
     seen = {r["id"] for r in base}
-    add = [r for r in load(root / "n2/soft_mix.jsonl") if r["source"] == "coco-size" and r["id"] not in seen]
+    soft = [r for r in load(root / "n2/soft_mix.jsonl") if r["id"] not in seen]
+    add = [r for r in soft if r["source"] == "coco-size"]
     rng.shuffle(add)
     if a.size:
         add = add[: a.size]
+    for spec in a.extra:
+        key, n = spec.rsplit("=", 1)
+        source, _, kind = key.partition("/")
+        pick = [r for r in soft if r["source"] == source and (not kind or r.get("kind") == kind)]
+        rng.shuffle(pick)
+        add += pick[: int(n)] if int(n) else pick
 
     rows = base + add
     rng.shuffle(rows)
@@ -49,6 +58,7 @@ def main() -> None:
     manifest = {"built_by": "scripts/data/v05/exp128_mix.py", "seed": a.seed,
                 "train_from": a.base, "train_from_sha256": sha(root / a.base),
                 "replay_from": "n2/soft_mix.jsonl",
+                "extra": a.extra,
                 "added": dict(Counter(r["source"] for r in add)),
                 "train": {"rows": len(rows), "sha256": sha(out / "train.jsonl"),
                           "sources": dict(Counter(r["source"] for r in rows))}}

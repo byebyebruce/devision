@@ -73,3 +73,6 @@ r22-guiego 评完 32 集：三个新用途对 v0.4 显著提升、What'sUp / CV-
 ## 2026-10-28 18:05 修订（Claude Code）
 
 exp127（r22 + 第一人称 / AITW 状态题扩量）训练完成，已评 5 / 32 集：对 r22 test_ego +3.8、test_gui_state aitw-general 组 +3.5、test_gui +2.7（均显著），其余新用途不退；旧集合待评。exp129（exp127 数据 + 尺寸回放、新种子 23，r23 候选）已挂在 exp128 之后，GPU 排到约次日 01:00。仍采用 v0.4；矩阵各行判断不变（自有留出集，不是正式五用途 / ImageJevBench 成绩）。
+
+
+exp127 评完 32 集（2026-10-28 19:15）：第一人称 / 手机 GUI 扩量对 r22 显著提升（test_ego +3.8、test_gui +2.7），但 test_vqa_yesno −3.0（对 r22 与 v0.4）、POPE 对 v0.4 −0.8 显著 → 判据 3 不过，不定 r23；exp129 开训前加 vqav2 是非 / coco-exist 回放。仍采用 v0.4；矩阵各行判断不变（自有留出集，不是正式五用途 / ImageJevBench 成绩）。
