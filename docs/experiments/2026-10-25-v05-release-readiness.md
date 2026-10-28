@@ -69,3 +69,7 @@ r22-guiego（第 22 轮正式训练）已评 9 / 32 集：GUI 状态、shopping�
 ## 2026-10-28 17:10 修订（Claude Code）
 
 r22-guiego 评完 32 集：三个新用途对 v0.4 显著提升、What'sUp / CV-Bench 小幅显著提升、POPE / MME / MMBench / ScienceQA / RealWorld 等不退，但 **test_size −2.59 显著** → 按预写判据不采用。原因是 v05 混合里尺寸题欠采样（129 / 4,331），exp128（尺寸回放）挂在 exp127 之后。仍采用 v0.4；五用途、外部综合、正式 ImageJevBench 状态不变。
+
+## 2026-10-28 18:05 修订（Claude Code）
+
+exp127（r22 + 第一人称 / AITW 状态题扩量）训练完成，已评 5 / 32 集：对 r22 test_ego +3.8、test_gui_state aitw-general 组 +3.5、test_gui +2.7（均显著），其余新用途不退；旧集合待评。exp129（exp127 数据 + 尺寸回放、新种子 23，r23 候选）已挂在 exp128 之后，GPU 排到约次日 01:00。仍采用 v0.4；矩阵各行判断不变（自有留出集，不是正式五用途 / ImageJevBench 成绩）。
