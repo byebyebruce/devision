@@ -28,3 +28,17 @@
 | bench_lv_scienceqa | 82.9 | −0.14 [−1.14, +0.81] | +0.86 [−0.33, +2.10] |
 
 判据 2 的前半（三个新用途对 v0.4 仍显著提升）已成立；尺寸回放没有挤掉 GUI。判据 1（test_size）在评测队列倒数第 5 个，尚未评。
+
+## 结果与裁决（2026-10-28 21:05，评完 32 集 + lv_report）
+
+逐题配对在 `runs/exp128-v4-size-replay/eval/compare/*.vs-{r21-soft,r22-guiego}.txt`（`devision-compare`，按图 95%）。
+
+**判据 1（修复）过**：test_size 87.9，对 v0.4 **+0.92 [−0.50, +2.35]**（含 0），对 r22 **+3.51 [+2.16, +4.90]**（显著）。尺寸退步确认是 coco-size 欠采样所致，补回 4,202 题即恢复。
+
+**判据 2（不伤别处）不过**：
+- 三个新用途对 v0.4 仍显著提升（test_gui_state +25.9、shopping +46.3、test_gui +37.5、test_ego +34.9；test_ego 对 r22 另 +1.59 显著）。
+- **POPE 对 v0.4 −0.76 [−1.42, −0.11] 显著**（bench_pope 与 bench_lv_pope 同一批题），对 r22 −0.41 含 0。r22（同种子、少尺寸回放）当时是 −0.34 含 0，exp125 −0.78、exp126 −0.98：POPE 对 v0.4 在 −0.3 到 −1.0 之间随种子 / 混合小幅波动，本次落在显著一侧。
+- 其余 29 集对 v0.4 均含 0 或显著提升：CV-Bench **+1.59**、What'sUp **+2.56** 显著；test_vqa_yesno −1.10 [−2.71, +0.40]、COGENT-B −0.75、A-OKVQA −0.44、VQAv2 是非 −0.45、count_coco −0.91 含 0；MME 0.00、MMBench +0.12、ScienceQA +0.86、RealWorld +0.85、EgoThink +1.99。
+- lv_report（`eval/compare/laya_vision.md`）：对 laya-vision VQAv2 是非 +3.4 [+2.0, +4.9]、A-OKVQA +3.1 [−0.1, +6.4]（未见过 +3.5 显著）、ScienceQA +0.5（含 0）；POPE 三档 89.0 / 86.2 / 82.1 均高于其公开分 83.6 / 81.9 / 77.7。
+
+**裁决**：判据 1 过、2 不过（POPE）→ exp128 不直接作为 r23。尺寸回放保留进后续配方。POPE 的小幅退步正是 exp129 加 vqav2 是非 5.3k + coco-exist 3k 回放要处理的问题；exp129 判据 3 的后备分支「回到 exp128 配方」因此也要带上是非 / 存在回放，不能用原 exp128 数据。
