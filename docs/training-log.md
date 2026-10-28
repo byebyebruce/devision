@@ -13,6 +13,17 @@
 
 
 
+## 2026-10-28 12:05：exp124 评完：存在题回放修好 POPE（对 v0.4 −0.4 含 0），旧集合全守住，但 GUI −2 显著；exp126（同种子对照）已挂在 exp125 之后
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp124 其余 13 集**（对上一实验 exp122 / 对 v0.4）：**POPE 86.1，+0.30 / −0.41 [−0.97, +0.16]**（误报 503→440，yes ratio 0.470→0.459）；lv VQAv2 是非 **+0.80 显著** / +0.06；What'sUp 49.8，−1.10 / **+3.05 显著**；CV-Bench +0.53 / **+1.63 显著**；ScienceQA **−1.24 [−2.24, −0.14]** / +0.67；MMBench、MME、CountBench、RealWorld、NaturalBench、A-OKVQA、dev_sqa、EgoThink 均含 0。
+- **裁决**：判据 1（POPE）过、3（旧能力对 v0.4）过、2（GUI 对 exp122 下界 > −2pp）不过（test_gui_state −2.47、test_gui −1.95）。exp124 与 exp122 种子不同，GUI / ScienceQA 的退步可能是种子噪声。见 [exp124](experiments/2026-10-28-exp124-v4-exist-replay.md)。
+- **exp125**（半剂量回放）12:05 在 10,900 / 19,943 步（loss 0.70–0.73），预计 13:15 前后评完。
+- **exp126 预写并挂接**：exp122 数据 + seed 124（= exp124 去掉回放），与 exp124 同种子配对量回放的真实 GUI 代价、与 exp122 同数据配对量种子噪声；不新造数据。`scripts/v05/chain_exp126.sh` 在 exp125 退出后自动开跑，预计 15:10 前后评完。见 [exp126](experiments/2026-10-28-exp126-v4-seed-control.md)。
+
+**下一步**：exp125 判半剂量；exp126 定回放剂量后写 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
 ## 2026-10-28 11:05：exp124（存在题回放 9k）评测中 5/18：test_gui_state 对 exp122 −2.5 显著，判据 2 不过；exp125（回放减半）已挂接
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
