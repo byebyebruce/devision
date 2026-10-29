@@ -40,7 +40,7 @@ from ..model import ModelConfig, option_bucket, pick_temperature, question_mask,
 from ..infer import best_device
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
-MIN_TYPE_ITEMS = 10      # fewer val questions of a type: its temperature is not fitted
+MIN_TYPE_ITEMS = 50      # fewer val questions of a type: its temperature is not fitted (exp137: 11 noul rows fitted 0.5)
 MIN_BUCKET_ITEMS = 50    # fewer val questions in a bucket: no bucket temperature, decide() uses the type's
 
 
