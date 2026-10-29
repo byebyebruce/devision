@@ -1,10 +1,10 @@
-# DRAFT (2026-10-29): deVision v0.5 candidate = runs/r23-v05/train (v0.4 -> r23-v05; docs/experiments/2026-10-29-r23-v05-plan.md).
-# Not adopted yet: r23 is judged by the plan's prewritten criteria after its evaluation; publishing needs the owner's
-# confirmation. Do not run `hf.py publish` from this draft.
+# DRAFT (2026-10-30): deVision v0.5 candidate = runs/r24-v05/train (owner 2026-10-29 17:30: v0.5 waits for r24;
+# verdict in docs/experiments/2026-10-29-r24-v05-plan.md: rules 1-2 met, rule 3 calibration not fully met - NaturalBench NLL).
+# Not adopted yet: publishing needs the owner's confirmation. Do not run `hf.py publish` from this draft.
 version: v0.5
 git_tag: model-v0.5
 model_name: devision-v0.5
-round: runs/r23-v05
+round: runs/r24-v05
 stage: train
 hub_repo: lukbit/devision
 modelscope_repo: baibaibai000/devision
@@ -12,7 +12,7 @@ license: apache-2.0
 base_model:
 - convaiinnovations/laya
 - google/siglip2-base-patch16-256
-datasets:   # v0.4's list plus the v0.5 sources (data/v05/exp129r MANIFEST); TODO confirm every id before build
+datasets:   # v0.4's list plus the v0.5 sources (data/v05/exp129r and data/v05/r24 MANIFESTs, data/v05/board/*/MANIFEST.json)
 - HuggingFaceM4/VQAv2
 - lmms-lab/GQA
 - HuggingFaceM4/A-OKVQA
@@ -28,6 +28,11 @@ datasets:   # v0.4's list plus the v0.5 sources (data/v05/exp129r MANIFEST); TOD
 - russwest/AitW
 - osunlp/Multimodal-Mind2Web
 - qiup0307/EK100-VISOR
+- HuggingFaceM4/ChartQA
+- naver-clova-ix/cord-v2
+- MMInstruction/ArxivQA
+- OpenDriveLab/DriveLM
+- neuralcatcher/hateful_memes
 cpu_latency: release/v0.5/cpu_latency.json
 evidence:
   accept_vs_v0.4.json: release/v0.5/accept_vs_v0.4.json

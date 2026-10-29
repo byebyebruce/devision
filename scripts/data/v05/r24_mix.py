@@ -49,6 +49,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=24)
     ap.add_argument("--avoid", nargs="*", default=[],
                     help="JSONL sets (under --root) whose pictures, matched like board pictures, stay out of the mix")
+    ap.add_argument("--amounts", default="", help="override family row counts, e.g. caption=40000,depth=all (exp140)")
     a = ap.parse_args()
     root, rng = Path(a.root), random.Random(a.seed)
     out = root / a.out
@@ -63,6 +64,10 @@ def main() -> None:
         exclusion["images"].append({**h, "path": "avoid:" + rel})
     index = BoardIndex(exclusion)
     fams = [f for f in a.families.split(",") if f]
+    amounts = dict(AMOUNTS)
+    for kv in filter(None, a.amounts.split(",")):
+        fam, n = kv.split("=")
+        amounts[fam] = (None if n == "all" else int(n), amounts[fam][1])
     unknown = set(fams) - set(AMOUNTS)
     if unknown:
         raise SystemExit("unknown families: %s" % sorted(unknown))
@@ -75,7 +80,7 @@ def main() -> None:
     add = {"aokvqa_replay": replay}
     for fam in fams:
         rows = load(root / a.board / fam / "train.jsonl")
-        n, per = AMOUNTS[fam]
+        n, per = amounts[fam]
         add[fam] = rows if n is None else by_image_sample(rows, n, per, rng)
 
     parts = {"base": base_all, **add}
@@ -127,6 +132,7 @@ def main() -> None:
         "exclusion_sha256": sha(root / a.exclusion),
         "avoid": {"sets": a.avoid, "images": len(avoid_imgs)},  # their pictures count in board_filtered too
         "families": fams,
+        "amounts": {f: amounts[f][0] for f in fams},
         "board_manifests": {f: sha(root / a.board / f / "MANIFEST.json") for f in fams},
         "added": {k: {"rows": len(kept[k]), "images": len({r["image"] for r in kept[k]})} for k in add},
         "aokvqa_pool": {"path": a.aokvqa_pool, "available": len(pool)},

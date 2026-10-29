@@ -1,5 +1,5 @@
-# r23 (formal round 23, v0.5 candidate): exp132 recipe (exp129 data + offline distillation toward v0.4 on old photo sources), new seed; lr_vision picked from exp132 (5e-6) vs exp135 (1e-6) by scripts/v05/pick_r23.py. Plan: docs/experiments/2026-10-29-r23-v05-plan.md
-name: r23-v05
+# r24 (docs/experiments/2026-10-29-r24-v05-plan.md): v0.5 candidate. r23's recipe and seed; data = r23's file + board-gap families that passed criterion 1 in exp137 / exp138 + 4k A-OKVQA replay, all board-filtered (scripts/data/v05/r24_mix.py); temperature fit on data/v05/r24/calib.jsonl (chart + yes/no + general, MIN_TYPE_ITEMS 50).
+name: r24-v05
 device: cuda
 common:
   log_every: 100
@@ -7,8 +7,8 @@ stages:
 - name: train
   kind: train
   init: runs/r21-soft/train
-  data: data/v05/exp132/train.jsonl
-  val: data/v05/exp81/calib.jsonl
+  data: data/v05/r24/train.jsonl
+  val: data/v05/r24/calib.jsonl
   eval:
     chart: data/v05/exp81/chart_dev.jsonl
     ui: data/v05/exp82v2/ui_dev.jsonl
@@ -37,6 +37,14 @@ evaluate:
   image_identity: data/v5/image_identity.json
   controls: true
   sets:
+    dev_board_caption: {path: data/v05/exp137/dev_board_caption.jsonl, role: heldout}
+    dev_board_kie: {path: data/v05/exp137/dev_board_kie.jsonl, role: heldout}
+    dev_board_infographic: {path: data/v05/exp137/dev_board_infographic.jsonl, role: heldout}
+    dev_board_figure: {path: data/v05/exp138/dev_board_figure.jsonl, role: heldout}
+    dev_board_depth: {path: data/v05/exp138/dev_board_depth.jsonl, role: heldout}
+    dev_board_som: {path: data/v05/exp138/dev_board_som.jsonl, role: heldout}
+    dev_board_drive: {path: data/v05/exp138/dev_board_drive.jsonl, role: heldout}
+    dev_board_hateful: {path: data/v05/exp138/dev_board_hateful.jsonl, role: heldout}
     test_gui_state: {path: data/v05/exp118/gui_test_state.jsonl, role: heldout}
     test_chartqa: {path: data/v05/chartqa_test/test_chartqa.jsonl, role: heldout}
     test_gui_shop_state: {path: data/v05/exp119/gui_shop_test_state.jsonl, role: heldout}

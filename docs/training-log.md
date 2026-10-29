@@ -14,6 +14,17 @@
 
 
 
+## 2026-10-30 00:30：r24 裁决——判据 1、2 过，判据 3 只差 NaturalBench NLL → 交负责人决定是否发布 v0.5；Decision Index 15.56；exp140（榜单数据加量）挂在 exp139 之后
+
+**当前采用不变：v0.4（`r21-soft`）**；v0.5 候选 = `runs/r24-v05/train`，`release/v0.5` 已改指 r24，待负责人确认。
+
+- **对 v0.4（按图配对 95%，`release/v0.5/accept_vs_v0.4.md`）**：新用途 shop_state **+47.0**、gui **+39.7**、ego **+37.0**、ChartQA **+28.2**、gui_state **+27.1**；CV-Bench **+5.7**、What'sUp **+5.1** 显著；其余 24 个旧能力集合无显著退步（最差 CoGenT B −1.6 [−3.4, +0.1]）；POPE −0.5 [−1.1, +0.1]。计数（CountBench +1.4、COCO +0.5）、ScienceQA（+0.0）不动。
+- **对 r23**：各 dev_board caption +10.2、KIE +14.9、figure +21.8、depth +5.1、drive +31.3、som +6.3（下界 > 0）；对 v0.4 figure +19.6、KIE +14.1、drive +32.3、caption +8.5、hateful +10.2、depth +5.1。
+- **校准**：27 / 30 集 NLL 不高于 v0.4；NaturalBench NLL **+0.029** 显著（r23 的 CV-Bench / RealWorld 显著变差已消失）；ECE 有 10 集略高（≤ 0.029）。离线只用 dev 集重拟合温度能把 NaturalBench 拉到 0.698–0.705（v0.4 0.693），但 size / 计数变差，不替换（`docs/experiments/2026-10-29-r24-v05-plan.md#裁决2026-10-30-0010`）。
+- **Decision Index**：v0.4 8.71 → r23 9.20 → exp137 14.39 → exp138 12.78 → **r24 15.56**（CV-Bench 14.4 → 28.0、KIE 6.0 → 26.1、InfographicVQA 16.4 → 32.8、RealWorldQA 4.0 → 13.2、Moderation 4.5 → 12.8、CharXiv 13.8 → 19.5；Mind2Web 5.7 → 1.7、R-Bench-M 2.7 → −0.2）。
+- **lv_report**（`runs/r24-v05/eval/compare/laya_vision.md`，对 laya-vision 逐题配对）：VQAv2 是非 +3.2 [+1.7, +4.7]、A-OKVQA +2.9 [−0.3, +6.2]（r23 +4.0）、ScienceQA −0.3 [−2.3, +1.5]（r23 +0.8）；POPE 三档都高于 laya-vision 公开分（89.4 / 86.7 / 82.1 vs 83.6 / 81.9 / 77.7）；ScienceQA 必须看图的切片仍 −7.1 [−12.2, −1.8]（自然科学 −9.9）。
+- **exp139**（r24 + 全量信息图）训练中，约 01:45 评完；**exp140**（[预写](experiments/2026-10-30-exp140-board-scale.md)：caption 40k、figure 30k、depth / drive 全部，单因素对 r24）由 `chain_exp140.sh` 挂在 exp139 链之后，约 04:30 评完。
+
 ## 2026-10-29 22:20：r24 评测中（17 / 41 集）；exp139（r24 + 全量信息图 / 文档 31k）预写并挂在 r24 链之后
 
 **当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。
