@@ -15,6 +15,7 @@ i.e. the same --init); the file is removed when training finishes.
 """
 import copy
 import json
+from concurrent.futures import ThreadPoolExecutor
 import math
 import os
 import random
@@ -165,6 +166,10 @@ class TrainConfig:
     # seeds below, so the LoRA init, batch order and noise are those of the run without it. 0: off.
     tiles: int = 0
     tile_min_side: int = 512
+    # micro batches whose pictures (decode + letterbox) and token tensors are prepared ahead by background threads
+    # while the model trains on the current one; 0: prepared in the loop as before. The order, the RNG use and so the
+    # trained model are the same whatever the value.
+    prefetch: int = 4
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -312,6 +317,24 @@ class _Images:
             return image_tensor(img, self.decider.cfg)
 
 
+def _prepared(order: Sequence[Any], start: int, prepare, ahead: int):
+    """(b, prepare(order[b])) for b = start.. in order; with `ahead` > 0 the next `ahead` micro batches are prepared by
+    as many background threads while the caller works on the current one (`prepare` must not use any RNG)."""
+    if ahead <= 0:
+        for b in range(start, len(order)):
+            yield b, prepare(order[b])
+        return
+    pool = ThreadPoolExecutor(max_workers=ahead, thread_name_prefix="devision-prefetch")
+    try:
+        pending = [pool.submit(prepare, order[b]) for b in range(start, min(start + ahead, len(order)))]
+        for b in range(start, len(order)):
+            if b + ahead < len(order):
+                pending.append(pool.submit(prepare, order[b + ahead]))
+            yield b, pending.pop(0).result()
+    finally:    # also when the loop stops early (an exception, or the generator closed): drop what is not started
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _vision_params(vision, top: int) -> List[nn.Parameter]:
     """The original weights of the SigLIP tower's top `top` encoder layers and its final layer norm."""
     n = int(vision.config.num_hidden_layers)
@@ -328,7 +351,7 @@ def _forward(model, batch, pixels, device, return_hidden: bool = False, index: O
         return model(*(batch[k].to(device) for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
                      return_hidden=return_hidden)
     trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
-    patches, visual, geom = model.visual_inputs(pixels.to(device), grad_vision=trains_vision)
+    patches, visual, geom = model.visual_inputs(pixels.to(device, non_blocking=True), grad_vision=trains_vision)
     if index is not None:
         index = index.to(device)
         patches, visual = patches.index_select(0, index), visual.index_select(0, index)
@@ -1073,6 +1096,27 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             with open(os.path.join(str(out_dir), "start_check.json"), "w") as f:
                 json.dump(dict(check, baseline=c.start_check), f, indent=1)
             print("step 0 matches %s (largest difference %.2g)" % (c.start_check, check["largest"]), flush=True)
+    pin = device.type == "cuda"
+
+    def prepare(indices: List[int]):
+        """A micro batch's items, collated tokens, pictures (and exp50's picture index): no RNG, so it may run ahead
+        in a background thread (TrainConfig.prefetch). On CUDA the pictures are pinned for an asynchronous copy."""
+        chunk = [train_items[i] for i in indices]
+        batch = collate_items([chunk], tok.pad_token_id)
+        assert batch is not None
+        index = None
+        if c.text_only or (c.mixed_input and chunk[0]["input"] == "text"):      # exp57 / PROTECT text rows: no picture at all
+            pixels = None
+        elif c.local_views:   # exp50: each distinct picture of the micro batch encoded once
+            names = sorted({it["image"] for it in chunk})
+            pixels = torch.stack([images(n) for n in names])
+            index = torch.tensor([names.index(it["image"]) for it in chunk])
+        else:
+            pixels = torch.stack([images(it["image"]) for it in chunk])
+        if pin and pixels is not None:
+            pixels = pixels.pin_memory()
+        return chunk, batch, pixels, index
+
     log = TrainLog(tracker, device, steps, c.log_every)
     for epoch in range(start_epoch, c.epochs):
         if not (resumed and epoch == start_epoch):
@@ -1082,20 +1126,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 flat = [i for bt in order for i in bt] or list(range(len(train_items)))
                 random.shuffle(flat)
                 order = [flat[j:j + c.micro_batch] for j in range(0, len(flat), c.micro_batch)]
-        for b in range(start_b if resumed and epoch == start_epoch else 0, len(order)):
+        start = start_b if resumed and epoch == start_epoch else 0
+        for b, (chunk, batch, pixels, index) in _prepared(order, start, prepare, c.prefetch):
             sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * len(losses) / max(1, steps - 1)
-            chunk = [train_items[i] for i in order[b]]
-            batch = collate_items([chunk], tok.pad_token_id)
-            assert batch is not None
-            index = None
-            if c.text_only or (c.mixed_input and chunk[0]["input"] == "text"):      # exp57 / PROTECT text rows: no picture at all
-                pixels = None
-            elif c.local_views:   # exp50: each distinct picture of the micro batch encoded once
-                names = sorted({it["image"] for it in chunk})
-                pixels = torch.stack([images(n) for n in names])
-                index = torch.tensor([names.index(it["image"]) for it in chunk])
-            else:
-                pixels = torch.stack([images(it["image"]) for it in chunk])
             grounded = [i for i, it in enumerate(chunk) if "grid" in it] if c.grounding_weight > 0 else []
             with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
                 if grounded:

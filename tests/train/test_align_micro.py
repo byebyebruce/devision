@@ -153,3 +153,12 @@ def test_eval_batch_does_not_change_evaluation_logits(tmp_path):
     b = _val_logits(d.model, items, images, d.tok.pad_token_id, torch.device("cpu"), 3)
     assert len(a) == len(b) == len(items)
     assert all(abs(x - y) < 1e-5 for ra, rb in zip(a, b) for x, y in zip(ra, rb))
+
+
+def test_preparing_pictures_ahead_aligns_the_same_model(tmp_path, data):
+    """AlignConfig.prefetch only moves picture decoding to background threads: the same checkpoint, bit for bit."""
+    root, caps, val = data
+    off, w_off, _ = run(tmp_path, root, caps, val, "off", 0, prefetch=0)
+    on, w_on, _ = run(tmp_path, root, caps, val, "on", 0, prefetch=3)
+    assert on["losses"] == off["losses"]
+    assert all(torch.equal(w_on[k], w_off[k]) for k in w_off)

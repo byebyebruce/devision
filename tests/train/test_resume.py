@@ -120,3 +120,19 @@ def test_an_invalid_loss_stops_training_and_keeps_the_last_good_resume_state(tmp
     import torch
     state = torch.load(tmp_path / "bad" / rlcd.RESUME, weights_only=False)
     assert len(state["losses"]) == 4 and all(x > 0 for x in state["losses"])
+
+
+def weights(path):
+    from safetensors.torch import load_file
+    return load_file(str(path / "model.safetensors"))
+
+
+def test_preparing_batches_ahead_trains_the_same_model(tmp_path, samples):
+    """--prefetch only moves picture decoding to background threads: the saved checkpoint is bit-identical."""
+    import torch
+    off, r_off = run(tmp_path, "off", samples, prefetch=0)
+    on, r_on = run(tmp_path, "on", samples, prefetch=3)
+    assert r_on["losses"] == r_off["losses"]
+    w_off, w_on = weights(tmp_path / "off"), weights(tmp_path / "on")
+    assert w_on.keys() == w_off.keys() and all(torch.equal(w_on[k], w_off[k]) for k in w_off)
+    assert answers(on) == answers(off)
