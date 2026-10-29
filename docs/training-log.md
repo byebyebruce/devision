@@ -14,6 +14,13 @@
 
 
 
+## 2026-10-29 22:20：r24 评测中（17 / 41 集）；exp139（r24 + 全量信息图 / 文档 31k）预写并挂在 r24 链之后
+
+**当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。
+
+- **r24-v05**：20:05–21:42 训完，21:43 起评 41 集 + 对照，之后自动 lv_report、对 v0.4 / r23 / exp137 / exp138 配对、验收表、Decision Index；预计 23:15 前后整条链结束，下一次检查按 [r24 计划](experiments/2026-10-29-r24-v05-plan.md) 裁决。
+- **exp139-infographic**（[预写](experiments/2026-10-29-exp139-infographic.md)）：单因素对 r24，加 InfographicVQA train + DocVQA 30,849 行（按榜单规则过滤，并按哈希排开两个 infographic dev 的图——exp137 的 dev 图在完整版 train 里换了文件名，去掉 525 行）；温度拟合集沿用 r24 的。主判据：新 dev（1,758 题）对 r24 下界 > 0 且榜单 InfographicVQA 上升、旧能力不退。`scripts/v05/chain_exp139.sh 834364` 等 r24 链结束后自动开始，预计次日 02:30 前后评完。
+
 ## 2026-10-29 20:15：exp138 裁决——figure / depth / drive / hateful 进 r24，som 不进；Decision Index 12.78；r24 已于 20:05 自动开训
 
 **当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。

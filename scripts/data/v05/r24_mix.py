@@ -21,7 +21,10 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from concurrent.futures import ProcessPoolExecutor  # noqa: E402
+
 from exp138_mix import board_filter, by_image_sample, load, sha  # noqa: E402
+from v05_board_exclusion import hash_file  # noqa: E402
 from v05_board_common import BoardIndex  # noqa: E402
 
 # family -> (rows, at most per picture); None = all rows. The amounts exp137 / exp138 tested.
@@ -44,11 +47,21 @@ def main() -> None:
     ap.add_argument("--config", default="configs/r24-v05.yaml", help="its test_* / bench_* pictures stay out of calib")
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--seed", type=int, default=24)
+    ap.add_argument("--avoid", nargs="*", default=[],
+                    help="JSONL sets (under --root) whose pictures, matched like board pictures, stay out of the mix")
     a = ap.parse_args()
     root, rng = Path(a.root), random.Random(a.seed)
     out = root / a.out
     out.mkdir(parents=True, exist_ok=True)
-    index = BoardIndex.load(str(root / a.exclusion))
+    exclusion = json.load(open(root / a.exclusion))
+    avoid_imgs = sorted({r["image"] for p in a.avoid for r in load(root / p)})
+    with ProcessPoolExecutor(a.workers) as ex:
+        avoid_h = list(ex.map(hash_file, [str(root / p) for p in avoid_imgs], chunksize=64))
+    for rel, h in zip(avoid_imgs, avoid_h):
+        if "error" in h:
+            raise SystemExit("cannot hash %s: %s" % (rel, h["error"]))
+        exclusion["images"].append({**h, "path": "avoid:" + rel})
+    index = BoardIndex(exclusion)
     fams = [f for f in a.families.split(",") if f]
     unknown = set(fams) - set(AMOUNTS)
     if unknown:
@@ -112,6 +125,7 @@ def main() -> None:
         "base": {"path": a.base, "rows": len(base_all), "sha256": sha(root / a.base)},
         "board_filtered": filtered,
         "exclusion_sha256": sha(root / a.exclusion),
+        "avoid": {"sets": a.avoid, "images": len(avoid_imgs)},  # their pictures count in board_filtered too
         "families": fams,
         "board_manifests": {f: sha(root / a.board / f / "MANIFEST.json") for f in fams},
         "added": {k: {"rows": len(kept[k]), "images": len({r["image"] for r in kept[k]})} for k in add},

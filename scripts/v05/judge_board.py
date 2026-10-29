@@ -15,6 +15,7 @@ BOARD = {
     "caption": ("all", ["Winoground"]),
     "kie": ("all", ["KIE (CORD+FUNSD)"]),
     "infographic": ("all", ["InfographicVQA"]),
+    "infographic_full": ("all", ["InfographicVQA"]),  # exp139: dev = the full family's own held-out pictures
     "figure": ("all", ["CharXiv"]),
     "depth": ("all", ["CV-Bench", "BLINK"]),  # BLINK by accuracy: its skill is clipped at 0 for r23
     "som": ("all", ["Mind2Web"]),
