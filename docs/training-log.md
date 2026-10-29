@@ -14,6 +14,16 @@
 
 
 
+## 2026-10-29 18:45：exp137 裁决——caption、KIE 进入 r24；infographic dev 不显著、A-OKVQA 显著 −1.8 → r24 加回放；Decision Index 9.20 → 14.39；r24 预写并挂在 exp138 之后
+
+**当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。
+
+- **exp137 对 r23 / 对 v0.4（按图配对 95%，36 集评完）**：caption dev **+10.2** / +8.5、KIE dev **+13.4** / +12.6、infographic dev +4.9 [−0.4, +10.1] / +8.8；EgoThink +2.8 / +5.3、test_gui +1.9 / +39.9、test_ego +1.3 / +37.9、MMBench +0.8 / +0.6；**A-OKVQA −1.8 [−3.3, −0.2]** / −1.3（不显著），其余无显著退步。
+- **判据**（`scripts/v05/judge_board.py`）：1 caption、KIE 过，infographic 不过（榜单 +11.5 但 dev 下界 < 0，不放宽）；2 不过（A-OKVQA）；3 按原 checkpoint 不过（是非温度 0.5；CountBench ECE +0.039）。
+- **Decision Index**：v0.4 8.71 → r23 9.20 → exp137 **14.39**（KIE 1.0 → 21.5、InfographicVQA 25.1 → 36.6、CharXiv 13.5 → 20.1、Winoground 16.0 → 20.2、RealWorldQA 8.7 → 12.6；Mind2Web 3.7 → 2.7、MMMU-Pro 0.2 → −0.9）。
+- **r24 预写**（[计划](experiments/2026-10-29-r24-v05-plan.md)）：r23 配方 + caption 20k + KIE 7.4k + exp138 自动判定过的类 + A-OKVQA 回放 4k，全部按 board_exclusion 过滤；温度拟合集改为图表 512 + 是非 / 存在 450 + 通用 choice 400（是非 461 题）。`scripts/v05/chain_r24.sh` 挂在 exp138 链之后。
+- exp138 训练中（18:05 时 18.7k / 30.5k 步），预计 21:00 前后评完，r24 约 21:15 开训、次日 01:30 前后评完。
+
 ## 2026-10-29 17:30：负责人决定 v0.5 等 r24（不用 r23 发布）
 
 - r24 = r23 配方 + exp137 / exp138 判定有效的榜单短板数据（训练混合先按 `data/v05/board_exclusion.json` 过滤）+ 修好的温度拟合下限；exp138 评完即预写并挂接，按 r23 同一套判据裁决，过则 `release/v0.5` 改指 r24。
