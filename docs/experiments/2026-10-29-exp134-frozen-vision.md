@@ -35,3 +35,7 @@
 其余已评集合对 v0.4：What'sUp **+3.90**、CV-Bench **+1.59** 显著；MME / MMBench / NaturalBench / CountBench / ScienceQA / A-OKVQA / RealWorld / EgoThink / dev_mix / dev_sqa / v7w / vsr / vqa_choice 都含 0。
 
 **判据 1 过**（POPE / VQA 是非对 v0.4 不再显著退步，exp132 的 VQA 是非 −1.60 由视觉漂移造成），**判据 2 不过**（ChartQA / shop / gui_state / ego 对 exp132 都低于 −2.0）。按预写 → 视觉漂移是旧能力退步的来源，但新用途需要视觉适配；接 exp135（lr_vision 1e-6）。判据 3 待剩余 9 集。
+
+## 最终裁决（2026-10-29 10:15，33 集全部评完）
+
+剩余 9 集对 v0.4（按图 95%）：test_gqa +1.01 [−0.10, +2.14]、test_exist +0.18、test_position −0.08、test_position_flip +0.62、test_relation +0.25、test_relation_flip +0.11、test_size +0.00、bench_cogent_b −0.05、test_count_coco +0.00，都含 0。**判据 3 过：33 集对 v0.4 没有一个显著退步**——这是从 v0.4 续训以来第一个做到的配置（显著提升：5 个新用途 +16 到 +42、What'sUp +3.90、CV-Bench +1.59）。判据 2 仍不过（对 exp132 回吐新用途），按预写进入 exp135；同时 exp134 作为「零退步」的保底候选配方保留（exp135 预写分支：r23 候选可用冻结配方 + 加量新用途数据）。计数（CountBench +1.43、count_coco 0.00）与科学（ScienceQA +0.48）没有提升。

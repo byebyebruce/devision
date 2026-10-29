@@ -14,6 +14,15 @@
 
 
 
+## 2026-10-29 12:15：r23 训练收尾（24,700 / 25,646 步）；exp137（榜单短板数据混入 r23 配方）预写并挂在 r23 链之后
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
+
+- **r23-v05**：训练约 96%，随后由 `chain_r23.sh` 自动评 33 集 + 对照、lv_report、对 v0.4 / exp132 / exp135 逐题配对；预计 15:00 前后评完，按 [r23 计划](experiments/2026-10-29-r23-v05-plan.md) 裁决。后台 board 数据构建（深度伪标注 6 线程）占 CPU，训练步长从 0.17 s 涨到 0.4–0.7 s。
+- **exp137（新，预写）**：r23 配方与种子不变，数据 = r23 的文件 + Winoground 式 caption 难负例 20,000、KIE（CORD+FUNSD）7,402、InfographicVQA 5,733（`data/v05/exp137/`，238,301 行）。判据：各类自己的 dev 对 r23 下界 > 0 且 Decision Index 对应基准上升；33 集对 r23 无 > 1 点显著退步。见 [exp137](experiments/2026-10-29-exp137-board-mix.md)。
+- **接续**：`scripts/v05/chain_exp137.sh 773215`（等 r23 链）：r23 的 Decision Index 全量（新脚本 `scripts/v05/board_run.sh`，GPU 服务，冒烟 8 行通过）→ v0.4 / r23 的 board dev 基线 → exp137 训练评测 → exp137 榜单，预计 20:30 前后结束。
+- **发布准备（不占 GPU）**：`release/v0.5/` 草稿（release.yaml 指向 r23、notes.md 训练 / 限制节，数字待裁决后填）、`scripts/v05/cpu_latency.sh`（与 v0.4 同 200 题同口径，等机器空闲时测）。
+
 ## 2026-10-29 11:05：r23-v05 已开训（lr_vision 5e-6）；与之撞车的 exp136 已停
 
 - 10:40 exp135 评完，按预写规则选 lr_vision：exp135 对 exp132 在 test_gui_shop_state **−6.46**（最差一项 < −2）→ r23 用 **5e-6**（exp132 原值）。

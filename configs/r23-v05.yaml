@@ -32,7 +32,7 @@ stages:
     eval_every: 0
     save_every: 500
     vision_unfreeze_top: 4
-    lr_vision: 1.0e-06
+    lr_vision: 5.0e-06
 evaluate:
   image_identity: data/v5/image_identity.json
   controls: true

@@ -13,6 +13,7 @@ scheduler, step, epoch order, RNG, metrics so far) is written to <out>/resume.pt
 one. Training the same out directory again picks up from there (the model must be built the same way,
 i.e. the same --init); the file is removed when training finishes.
 """
+import copy
 import json
 import math
 import os
@@ -92,6 +93,13 @@ class TrainConfig:
     # tower's top N encoder layers and its final layer norm, at lr_vision; 0: the tower stays frozen
     vision_unfreeze_top: int = 0
     lr_vision: float = 5e-6
+    # exp136 (docs/experiments/2026-10-29-exp136-vision-anchor.md): vision_anchor_weight > 0 adds, for the questions
+    # whose sample "source" is in vision_anchor_sources (comma-separated), vision_anchor_weight x the relative squared
+    # distance ||f(x) - f0(x)||^2 / ||f0(x)||^2 between the unfrozen tower's SigLIP patches and those of a frozen copy of
+    # the tower as loaded (the init checkpoint); the sum over those questions is divided by the micro batch size.
+    # Needs vision_unfreeze_top; the questions and their gold are unchanged.
+    vision_anchor_weight: float = 0.0
+    vision_anchor_sources: str = ""
     # exp42 (docs/experiments/2026-10-18-exp42-objective-plan.md): "rlcd" = the RLCD policy term + gold CE (every run
     # before it); "ce" = gold CE only. The RLCD noise is drawn either way, so both use the same random stream.
     objective: str = "rlcd"
@@ -781,7 +789,7 @@ RESUME = "resume.pt"
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
-                "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
+                "distill_blocks", "vision_unfreeze_top", "lr_vision", "vision_anchor_weight", "vision_anchor_sources", "objective", "aux_weight", "aux_slots",
                 "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
                 "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file", "mixed_input",
                 "tiles", "tile_min_side")
@@ -842,6 +850,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                         or c.distill_weight > 0 or c.vision_unfreeze_top or c.unfreeze_top or c.interaction_file or c.question_conditioning):
         raise ValueError("text_only / mixed_input train LoRA and the decision head only: no local views / reader / region / grounding / "
                          "number / distillation / interaction loss, no vision or encoder unfreezing, no new conditioning")
+    anchor_sources = {x for x in c.vision_anchor_sources.split(",") if x}
+    if c.vision_anchor_weight > 0 and not (c.vision_unfreeze_top and anchor_sources):
+        raise ValueError("vision_anchor_weight > 0 needs vision_unfreeze_top and vision_anchor_sources")
+    if c.vision_anchor_weight > 0 and (c.local_views or c.tiles):
+        raise ValueError("vision_anchor_weight compares one tower call per question: no local views or tiles")
     teacher = None
     if c.distill_weight > 0:
         if not c.distill_teacher or not distill_blocks:
@@ -935,6 +948,12 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if aux is not None:
         aux.to(device).eval()
 
+    anchor = None
+    seen: Dict[str, torch.Tensor] = {}
+    if c.vision_anchor_weight > 0:   # the tower as loaded, frozen; the trained tower's last call is kept by a hook
+        anchor = copy.deepcopy(model.vision).eval().requires_grad_(False)
+        model.vision.register_forward_hook(lambda mod, args, kw_out: seen.__setitem__("patches", kw_out.last_hidden_state))
+
     images = _Images(data_root, decider)
     items = _items(decider, samples)
     if val_samples:
@@ -943,6 +962,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         calib, train_items = holdout_by_image(items, min(400, int(len(items) * c.calib_fraction)))
 
     sets = {"val": calib, **{name: _items(decider, ss) for name, ss in (eval_sets or {}).items()}}
+    if anchor is not None and not anchor_sources <= {it["source"] for it in train_items}:
+        raise ValueError("vision_anchor_sources %s not in the training data"
+                         % sorted(anchor_sources - {it["source"] for it in train_items}))
     if teacher is not None:
         found = {it.get("block") for it in train_items}
         if not distill_blocks <= found:
@@ -1127,6 +1149,18 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 loss = loss + c.distill_weight * kl.sum() / len(chunk)
                 distill = (kl.mean().item(), (t_logits.masked_fill(~mask, -1e4).argmax(-1)
                                               == batch["target"].to(device)[idx].argmax(-1)).float().mean().item())
+            drift = None
+            kept = [i for i, it in enumerate(chunk) if it["source"] in anchor_sources] if anchor is not None and pixels is not None else []
+            if kept and anchor is not None and pixels is not None:
+                idx = torch.tensor(kept, device=device)
+                cur = seen.pop("patches").index_select(0, idx).float()
+                with torch.no_grad(), torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
+                    ref = anchor(pixel_values=pixels[kept].to(device),
+                                 **({"interpolate_pos_encoding": True} if model.interpolate else {})).last_hidden_state.float()
+                rel = ((cur - ref) ** 2).sum((1, 2)) / (ref ** 2).sum((1, 2))
+                loss = loss + c.vision_anchor_weight * rel.sum() / len(chunk)
+                drift = rel.mean().item()
+            seen.clear()
             hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
                    == batch["target"].to(device).argmax(-1)).float().mean()
             if not math.isfinite(loss.item()) or (loss.item() == 0.0 and nll.item() == 0.0 and hit.item() < 1.0):
@@ -1156,6 +1190,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     grad_norm=grad_norm.item(), sigma=sigma,
                     **({"grounding_kl": ground.item()} if ground is not None else {}),
                     **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}),
+                    **({"vision_drift": drift} if drift is not None else {}),
                     **({"number_loss": aux_stats[0], "number_accuracy": aux_stats[1]} if aux_stats is not None else {}),
                     **({"region_kl": region[0], "region_mass": region[1]} if region is not None else {}),
                     **({"interaction_loss": interaction[0], "interaction_j": interaction[1]} if interaction is not None else {}),

@@ -88,3 +88,27 @@ def test_a_stopped_run_resumes_with_the_trained_tower(tmp_path, samples, monkeyp
     a = dict(Decider.load(tmp_path / "whole", device="cpu").model.vision.named_parameters())
     b = dict(Decider.load(tmp_path / "parts", device="cpu").model.vision.named_parameters())
     assert all(torch.allclose(a[n], b[n]) for n in a)
+
+
+def drift(path, before):
+    after = dict(Decider.load(path, device="cpu").model.vision.named_parameters())
+    return sum(float((after[n] - before[n]).detach().pow(2).sum()) for n in before)
+
+
+def test_the_vision_anchor_holds_the_tower_near_where_it_started(tmp_path, samples):
+    """exp136: anchoring the patches of the anchored sources to the tower as loaded keeps the tower closer to its
+    start than the same run without the anchor."""
+    sources = ",".join(sorted({s["source"] for s in samples[:16]}))
+    _, before = run(tmp_path, "free", samples, vision_unfreeze_top=1, lr_vision=1e-2)
+    report, _ = run(tmp_path, "held", samples, vision_unfreeze_top=1, lr_vision=1e-2,
+                    vision_anchor_weight=1000.0, vision_anchor_sources=sources)
+    assert drift(tmp_path / "held", before) < drift(tmp_path / "free", before)
+    assert all(map(lambda x: x == x, report["losses"]))
+
+
+def test_bad_anchor_settings_are_refused(tmp_path, samples):
+    for over in ({"vision_anchor_weight": 1.0, "vision_anchor_sources": "x"},                         # tower frozen
+                 {"vision_anchor_weight": 1.0, "vision_unfreeze_top": 1},                               # no sources
+                 {"vision_anchor_weight": 1.0, "vision_unfreeze_top": 1, "vision_anchor_sources": "nope"}):
+        with pytest.raises(ValueError):
+            run(tmp_path, "bad", samples, **over)
