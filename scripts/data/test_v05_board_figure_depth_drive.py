@@ -47,12 +47,13 @@ def test_camera_and_point_questions():
 
 
 def test_drive_describe_distractors_are_same_category_and_differ():
-    pool = {"Vehicle": ["Black sedan.", "black sedan", "White truck.", "Red bus.", "Blue SUV."]}
+    pool = {"Vehicle": ["Black sedan.", "black sedan", "White truck.", "Red bus.", "Blue SUV.", "Black van.", "Car."]}
     got = describe_question({"Category": "Vehicle", "Visual_description": "Black sedan."}, pool, "k", 2)
     assert got is not None
     opts, gold = got
     assert gold == "Black sedan." and opts.index(gold) == 2 and len(opts) == 4
-    assert sum(o.lower().startswith("black sedan") for o in opts) == 1
+    assert set(opts) == {"Black sedan.", "White truck.", "Red bus.", "Blue SUV."}   # no other black one, no colourless
+    assert describe_question({"Category": "Traffic element", "Visual_description": "Red light."}, pool, "k", 0) is None
     assert describe_question({"Category": "Vehicle", "Visual_description": "Black sedan."},
                              {"Vehicle": ["Red bus."]}, "k", 0) is None
     assert element_answer("Yes, there are traffic elements") == "Yes" and element_answer("No, none.") == "No"

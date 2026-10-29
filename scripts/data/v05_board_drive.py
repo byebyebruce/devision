@@ -5,9 +5,10 @@
 Source: DriveLM v1.1 train (v1_1_train_nus.json + drivelm_nus_imgs_train.zip = nuScenes train keyframes, fetched
 from ModelScope by v05_board_fetch.py --only drivelm). Only the CAM_FRONT picture of a keyframe is used (one image,
 the driver's view, as in RealWorldQA). Questions:
-  describe   a key object of the front camera in a red box: "Which description matches the object in the red box?"
-             options = its DriveLM visual description + 3 descriptions of key objects of the SAME category
-             (vehicle / pedestrian / ...) from OTHER scenes, none equal to the gold after normalising.
+  describe   a vehicle / pedestrian / cycle key object of the front camera in a red box: "Which description matches
+             the object in the red box?" options = its DriveLM visual description (must name a colour) + 3
+             descriptions of key objects of the SAME category from other frames that share NO colour word with it
+             ("White truck." vs "Black SUV.", never vs "White commercial vehicle.").
   light      a front key object described as a red / green / yellow light, in a red box: "What colour is the traffic
              light in the red box?" [red, green, yellow] (gold rotated).
   element    "Is there any traffic element in the front view?" Yes / No from DriveLM's perception answer, balanced.
@@ -34,6 +35,7 @@ OUT = os.path.join("v05", "board", "drive")
 RAW = os.path.join("raw", "board", "drivelm")
 MAX_BOX, MIN_BOX = 0.4, 24
 SAVE_MAX = 960
+DESCRIBE = {"Vehicle", "Pedestrian", "Cycle"}
 LIGHTS = {"red light.": "red", "green light.": "green", "yellow light.": "yellow"}
 
 
@@ -50,13 +52,26 @@ def box_ok(b: List[float], w: int = 1600, h: int = 900) -> bool:
     return bw >= MIN_BOX and bh >= MIN_BOX and bw * bh <= MAX_BOX * w * h
 
 
+COLOURS = {"white", "black", "red", "blue", "green", "yellow", "orange", "grey", "gray", "silver", "brown", "pink",
+           "purple", "beige", "gold", "dark", "light"}
+
+
+def colours(s: str) -> set:
+    return {w for w in norm_desc(s).split() if w in COLOURS}
+
+
 def describe_question(obj: Dict, pool: Dict[str, List[str]], key: str, slot: int) -> Optional[Tuple[List[str], str]]:
+    """Distractors share the category but name other colours only, so one look at the box separates them
+    ("White truck." vs "Black SUV."; never "White truck." vs "White commercial vehicle.")."""
+    if obj["Category"] not in DESCRIBE:
+        return None
     gold = obj["Visual_description"].strip()
     g = norm_desc(gold)
-    if not g or len(gold) > 80:
+    gc = colours(gold)
+    if not g or len(gold) > 80 or not gc:
         return None
     rng = seeded("desc:" + key)
-    cands = [d for d in pool.get(obj["Category"], []) if norm_desc(d) != g]
+    cands = [d for d in pool.get(obj["Category"], []) if norm_desc(d) != g and colours(d) and not colours(d) & gc]
     rng.shuffle(cands)
     ds: List[str] = []
     for d in cands:
@@ -141,7 +156,7 @@ def main(argv=None) -> None:
                 else:
                     got_q = describe_question(o, pool, key, slots["describe"] % 4)
                     if not got_q:
-                        drops["describe_no_distractors"] += 1
+                        drops["describe_skipped"] += 1
                         continue
                     q = ("Which description matches the object in the red box?", got_q[0], got_q[1], "describe")
                 slots[q[3]] += 1

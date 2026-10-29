@@ -30,7 +30,7 @@ from v05_board_common import BoardIndex, choice_sample, image_hashes, manifest, 
 OUT = os.path.join("v05", "board", "figure")
 RAW = os.path.join("raw", "board", "arxivqa")
 MAX_OPT = 200
-LONGEST_MAX = 0.35
+LONGEST_MAX = 0.28
 PREFIX = re.compile(r"^\s*\(?([A-Ja-j])\s*[\.\):]\s+")
 
 
