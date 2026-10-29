@@ -9,6 +9,7 @@ datasets. Only train splits (plus the dev / test *id lists* of Hateful Memes, us
 
   cord      naver-clova-ix/cord-v2           data/train-*.parquet           (the board uses validation + test)
   infovqa   HuggingFaceM4/the_cauldron        infographic_vqa/train-*        (the board uses InfographicVQA validation)
+  docvqa    HuggingFaceM4/the_cauldron        docvqa/train-*                 (document reading; no board benchmark uses DocVQA)
   hateful   neuralcatcher/hateful_memes       train.jsonl + img/<train ids>, dev/test jsonl (board: dev_seen + test_seen)
   arxivqa   MMInstruction/ArxivQA             arxivqa.jsonl + images.tgz (8 GB; CharXiv-like figure QA)
 
@@ -27,6 +28,8 @@ REPOS = {
     "cord": ("naver-clova-ix/cord-v2", "7f0115a4b758a71d6473b8d085751692da2fef98", lambda f: f.startswith("data/train-")),
     "infovqa": ("HuggingFaceM4/the_cauldron", "847a98a779b1652d65111daf20c972dfcd333605",
                 lambda f: f.startswith("infographic_vqa/")),
+    "docvqa": ("HuggingFaceM4/the_cauldron", "847a98a779b1652d65111daf20c972dfcd333605",
+               lambda f: f.startswith("docvqa/")),
     "hateful": ("neuralcatcher/hateful_memes", "d201c488dc7024623d1ecbcc987b3f132c4c2e12", None),   # special-cased
     "arxivqa": ("MMInstruction/ArxivQA", "85a6dca0e2bdc6f0268ae519be8913f83a83cafd",
                 lambda f: f in ("arxivqa.jsonl", "images.tgz", "README.md")),
