@@ -18,7 +18,8 @@ true COCO caption and a negative made from it by rules (no LLM, no parser; Sugar
              image (instances_train2014), so the negative is false for the picture, not only for the caption.
 
 Every negative differs from the caption, is not another caption of the same image, and keeps a/an agreement.
-Per image at most PER_IMAGE questions (kinds rotated, rarest kind first); each kind is capped at --cap-kind.
+Per image at most PER_IMAGE questions (kinds rotated, rarest kind first), each from a different true caption (so a
+caption is never gold twice); each kind is capped at --cap-kind.
 Images: every board image hit (data/v05/board_exclusion.json) and every project held-out picture (pub/held.PubHeld:
 our own eval / monitoring sets, COCO = VG identity) are dropped. The gold is A or B by a seeded hash so positions
 balance. dev = ~4% of images (hash), never in train.
@@ -275,11 +276,15 @@ def build_questions(captions: Dict[int, List[str]], present: Dict[int, Set[str]]
     out = []
     for iid in sorted(cands, key=lambda i: seeded("img:%d" % i).random()):
         bk = cands[iid]
-        took = 0
+        took, trues = 0, set()
         for k in sorted(bk, key=lambda k: (avail[k], k)):   # rarest kind first
             if took >= per_image or used[k] >= cap_kind:
                 continue
-            true, neg = bk[k][int(seeded("%d:%s" % (iid, k)).random() * len(bk[k]))]
+            fresh = [c for c in bk[k] if c[0] not in trues]   # a true caption is gold in one question only
+            if not fresh:
+                continue
+            true, neg = fresh[int(seeded("%d:%s" % (iid, k)).random() * len(fresh))]
+            trues.add(true)
             out.append((iid, k, true, neg))
             used[k] += 1
             took += 1

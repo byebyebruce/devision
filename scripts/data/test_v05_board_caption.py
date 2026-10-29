@@ -36,6 +36,7 @@ def test_build_questions_caps_per_image_and_per_kind():
     qs, stats = build_questions(caps, {i: {"person", "horse", "car", "truck"} for i in range(50)}, cap_kind=20,
                                 per_image=2)
     per_image = {}
+    assert len({(iid, true) for iid, _, true, _ in qs}) == len(qs)       # a caption is gold once per image
     for iid, kind, true, neg in qs:
         per_image[iid] = per_image.get(iid, 0) + 1
         assert true != neg
