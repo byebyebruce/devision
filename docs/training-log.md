@@ -14,6 +14,14 @@
 
 
 
+## 2026-10-29 08:10：exp134（冻结视觉）中期：POPE / VQA 是非修好，但新用途回吐（ChartQA −9.5）→ 判据 2 不过；exp135（lr_vision 1e-6）接续
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
+
+- **exp134 对 v0.4**（24 / 33 集，按图 95%）：POPE −0.19 [−0.62, +0.26]、test_vqa_yesno −0.70 [−1.80, +0.50] 都含 0（exp132 −0.47 / **−1.60**）→ 判据 1 过；What'sUp **+3.9**、CV-Bench **+1.6**；新用途 shop +42.4、gui +36.7、ego +34.4、gui_state +24.6、ChartQA +16.3。
+- **对 exp132（同数据同种子，只差视觉冻结）**：ChartQA **−9.48**、shop **−6.59**、gui_state **−2.86**、ego **−2.64** 显著 → 判据 2 不过。旧能力退步来自视觉漂移，新用途又要视觉适配。
+- **exp135（新）**：exp132 只把 lr_vision 5e-6 → 1e-6，构成 0 / 1e-6 / 5e-6 剂量曲线；`scripts/v05/chain_exp135.sh` 挂在 exp134 之后，预计 12:00 前后评完。见 [exp134](experiments/2026-10-29-exp134-frozen-vision.md)、[exp135](experiments/2026-10-29-exp135-lowlr-vision.md)。
+
 ## 2026-10-29 06:10：exp133 切块判据 1 不过（只 ChartQA +2.6 显著，Mind2Web / FUNSD 不动）→ r23 不加切块；exp134 接续
 
 **当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
