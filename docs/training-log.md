@@ -22,6 +22,7 @@
 - **校准**：23 / 33 集 NLL、ECE 都好于 v0.4；CV-Bench / NaturalBench / RealWorld NLL 显著变差 +0.015 / +0.026 / +0.027（过度自信）。r23 温度只在 512 道图表题上拟合；离线按 v0.4 口径（dev_mix）重拟合几乎不变，扩大拟合集也只部分缓解 → 判据 3 不完全过，不放宽，交负责人。
 - **Decision Index（外部标尺）**：v0.4 8.71 → r23 **9.20**（InfographicVQA +6.6、RealWorldQA +2.8；KIE −3.0、Mind2Web −1.6）；BLINK / CV-Bench 有 < 0.4% 题图泄漏。board dev 基线：caption 85.9 → 84.2、infographic 37.5 → 41.4、KIE 39.3 → 38.5。
 - **exp137**（榜单短板数据混入 r23 配方）14:05 开训，预计 17:30 训完、18:30 前后连同榜单评完；判据见其文档。
+- **exp138（新，预写）**：第二批榜单数据（ArxivQA 图 12k、深度 10k、set-of-marks Mind2Web 7.1k、DriveLM 6k、Hateful Memes 4.2k）混入 r23 配方，基础文件先按 `board_exclusion.json` 过滤；`scripts/v05/chain_exp138.sh 788519` 挂在 exp137 链之后。见 [exp138](experiments/2026-10-29-exp138-board-mix2.md)。
 - 发布草稿 `release/v0.5/notes.md` 已填数字；CPU 延迟与 `hf.py build / verify` 待负责人确认后、机器空闲时做。
 
 ## 2026-10-29 12:15：r23 训练收尾（24,700 / 25,646 步）；exp137（榜单短板数据混入 r23 配方）预写并挂在 r23 链之后
