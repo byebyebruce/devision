@@ -14,6 +14,15 @@
 
 
 
+## 2026-10-29 20:15：exp138 裁决——figure / depth / drive / hateful 进 r24，som 不进；Decision Index 12.78；r24 已于 20:05 自动开训
+
+**当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。
+
+- **exp138 各类 dev 对 r23（按图配对 95%）**：figure **+20.4**、depth **+7.3**、drive **+32.6**、hateful **+8.1**（下界均 > 0），som +2.9 [−2.6, +8.7] 不显著。榜单 skill r23 → exp138：CV-Bench 15.7 → **32.2**、Moderation 3.9 → 10.1、RealWorldQA 8.7 → 13.4、CharXiv 13.5 → 16.8；Mind2Web 3.7 → −0.2、R-Bench-M 4.2 → −0.5。
+- **判据**：1 过 figure / depth / drive / hateful，som 不过；2 过（对 r23 33 集无显著退步，CV-Bench +2.6、MMBench +1.8 显著涨；POPE −0.2；对 v0.4 POPE −0.5 不显著）；3 不过（CountBench ECE +0.035 等 6 集 > 0.01，拟合集仍是 512 道图表题，r24 已换）。对 exp137：EgoThink −4.6、test_gui −2.9 显著更低。
+- **Decision Index**：v0.4 8.71 → r23 9.20 → exp137 14.39 → exp138 12.78。
+- **r24-v05**：`chain_r24.sh` 20:02 自动判定族 = caption, kie, figure, depth, drive, hateful，构造 `data/v05/r24/`（268,583 行；基础文件按 board_exclusion 去掉 145 行 / 88 图，A-OKVQA 回放去掉 5 行，新增族 0 行），20:05 开训；预计 22:00 前后训完、次日 01:00 前后评完 + 榜单，按 [r24 计划](experiments/2026-10-29-r24-v05-plan.md) 裁决。详见 [exp138 裁决](experiments/2026-10-29-exp138-board-mix2.md#裁决2026-10-29-2015)。
+
 ## 2026-10-29 18:45：exp137 裁决——caption、KIE 进入 r24；infographic dev 不显著、A-OKVQA 显著 −1.8 → r24 加回放；Decision Index 9.20 → 14.39；r24 预写并挂在 exp138 之后
 
 **当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。
