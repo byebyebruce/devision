@@ -9,8 +9,11 @@ pHash of the grey image. Source ids: every board item id and image file name ("b
 original files (from the pinned CV-Bench parquet when it is in the HF cache: COCO val2017 -> "coco:<id>",
 ADE20K val -> "ade20k:<name>", Omni3D test -> "omni3d:<path>"), Hateful Memes ids "hm:<id>" of the board rows and,
 when data/raw/board/hateful is present, of all dev_seen / dev_unseen / test_seen / test_unseen rows, FUNSD test
-documents "funsd:<doc>" and Mind2Web annotation ids "m2w:<annotation_id>". "upstream_splits" lists, per board
-benchmark, the upstream splits the board draws from; builders never read them.
+documents "funsd:<doc>", Mind2Web annotation ids "m2w:<annotation_id>" and, when data/raw/board/charxiv_test has
+CharXiv's val / test parquet, the arXiv paper of every CharXiv figure ("arxiv:<id>", so figures of the same paper
+are excluded too). Upstream held-out images that are NOT board rows but belong to the board benchmark's held-out
+split (CharXiv test) are hashed into the same index with paths "upstream/<split>/<n>". "upstream_splits" lists, per
+board benchmark, the upstream splits the board draws from; builders never read them.
 
 --audit FILE...: also report how many images of existing training files hit the index (written to the JSON).
 """
@@ -28,6 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from v05_board_common import BoardIndex, image_hashes  # noqa: E402
 
 OUT = os.path.join("v05", "board_exclusion.json")
+CHARXIV_GLOB = "raw/board/charxiv_test/*.parquet"
+UPSTREAM_EXTRA = {"charxiv_test": "raw/board/charxiv_test/test.parquet"}   # held-out images that are not board rows
 CVBENCH_GLOB = "raw/hf/datasets--nyu-visionx--CV-Bench/snapshots/bc284db50d036958861cb60cdd7b77612052ce0d/test_*.parquet"
 UPSTREAM_SPLITS = {
     "CV-Bench": ["nyu-visionx/CV-Bench test", "COCO val2017 (subset of val2014)", "ADE20K validation",
@@ -52,6 +57,27 @@ def hash_file(path: str) -> Dict:
         return image_hashes(data)
     except Exception as e:   # pragma: no cover - a board file PIL cannot open is reported, not skipped silently
         return {"error": str(e)}
+
+
+def hash_bytes(data: bytes) -> Dict:
+    try:
+        return image_hashes(data)
+    except Exception as e:  # pragma: no cover
+        return {"error": str(e)}
+
+
+def upstream_images(root: str, workers: int) -> List[Dict]:
+    out = []
+    for name, rel in UPSTREAM_EXTRA.items():
+        p = os.path.join(root, rel)
+        if not os.path.exists(p):
+            continue
+        import pyarrow.parquet as pq
+        blobs = [r["bytes"] for r in pq.read_table(p, columns=["image"]).column("image").to_pylist()]
+        with ProcessPoolExecutor(workers) as ex:
+            hs = list(ex.map(hash_bytes, blobs, chunksize=16))
+        out += [{"path": "upstream/%s/%d" % (name, n), **h} for n, h in enumerate(hs) if "error" not in h]
+    return out
 
 
 def board_images(board: str) -> List[str]:
@@ -83,6 +109,10 @@ def source_ids(root: str, board: str) -> List[str]:
                 ids.add("ade20k:" + os.path.splitext(os.path.basename(fn))[0])
             else:
                 ids.add("omni3d:" + fn)
+    for p in sorted(glob.glob(os.path.join(root, CHARXIV_GLOB))):
+        import pyarrow.parquet as pq
+        ids |= {"arxiv:" + str(x).strip() for x in pq.read_table(p, columns=["original_id"]).column(
+            "original_id").to_pylist() if x}
     hm = os.path.join(root, "raw", "board", "hateful")
     for split in ("dev_seen", "dev_unseen", "test_seen", "test_unseen"):
         p = os.path.join(hm, split + ".jsonl")
@@ -130,8 +160,10 @@ def main(argv=None) -> None:
     for p, h in zip(paths, hs):
         rel = os.path.relpath(p, a.board)
         (errors.append({"path": rel, **h}) if "error" in h else images.append({"path": rel, **h}))
-    index = {"board": a.board, "rows_file_sha256": None, "n_images": len(images), "errors": errors,
-             "per_set": dict(Counter(i["path"].split("/")[1] for i in images)),
+    n_board = len(images)
+    images += upstream_images(a.root, a.workers)
+    index = {"board": a.board, "rows_file_sha256": None, "n_images": n_board, "n_upstream_images": len(images) - n_board,
+             "errors": errors, "per_set": dict(Counter(i["path"].split("/")[1] for i in images)),
              "near_rule": "dHash <= 6 bits AND pHash <= 8 bits (64-bit each, grey image)",
              "upstream_splits": UPSTREAM_SPLITS, "source_ids": source_ids(a.root, a.board), "images": images}
     rows = os.path.join(a.board, "vision-rows.jsonl")

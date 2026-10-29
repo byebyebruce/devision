@@ -10,6 +10,10 @@ datasets. Only train splits (plus the dev / test *id lists* of Hateful Memes, us
   cord      naver-clova-ix/cord-v2           data/train-*.parquet           (the board uses validation + test)
   infovqa   HuggingFaceM4/the_cauldron        infographic_vqa/train-*        (the board uses InfographicVQA validation)
   docvqa    HuggingFaceM4/the_cauldron        docvqa/train-*                 (document reading; no board benchmark uses DocVQA)
+  infovqa_full lmms-lab/DocVQA                InfographicVQA/train-* (all 4.4k train images, with question / image ids)
+  charxiv_test princeton-nlp/CharXiv          val + test parquet - only for the exclusion index (test images, arXiv paper ids)
+  drivelm   ModelScope OpenDriveLab/DriveLM   v1_1_train_nus.json + drivelm_nus_imgs_train.zip (nuScenes train keyframes;
+            gated on HF, so fetched from ModelScope with `curl -C -`, size-checked)
   hateful   neuralcatcher/hateful_memes       train.jsonl + img/<train ids>, dev/test jsonl (board: dev_seen + test_seen)
   arxivqa   MMInstruction/ArxivQA             arxivqa.jsonl + images.tgz (8 GB; CharXiv-like figure QA)
 
@@ -30,6 +34,10 @@ REPOS = {
                 lambda f: f.startswith("infographic_vqa/")),
     "docvqa": ("HuggingFaceM4/the_cauldron", "847a98a779b1652d65111daf20c972dfcd333605",
                lambda f: f.startswith("docvqa/")),
+    "infovqa_full": ("lmms-lab/DocVQA", "539088ef8a8ada01ac8e2e6d4e372586748a265e",
+                     lambda f: f.startswith("InfographicVQA/train-")),
+    "charxiv_test": ("princeton-nlp/CharXiv", "f441eb632fc62f6f777830a0f47619e6e86459b0",
+                     lambda f: f in ("test.parquet", "val.parquet")),
     "hateful": ("neuralcatcher/hateful_memes", "d201c488dc7024623d1ecbcc987b3f132c4c2e12", None),   # special-cased
     "arxivqa": ("MMInstruction/ArxivQA", "85a6dca0e2bdc6f0268ae519be8913f83a83cafd",
                 lambda f: f in ("arxivqa.jsonl", "images.tgz", "README.md")),
@@ -56,7 +64,46 @@ def du(path: str) -> float:
     return total / 1e9
 
 
+MODELSCOPE = {"drivelm": ("OpenDriveLab/DriveLM", ("v1_1_train_nus.json", "drivelm_nus_imgs_train.zip", "README.md"))}
+
+
+def fetch_modelscope(root: str, name: str) -> None:
+    import subprocess
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from v05_gui_fetch import file_url, tree  # ModelScope tree / file API
+    repo, want = MODELSCOPE[name]
+    out = os.path.join(root, "raw", "board", name)
+    os.makedirs(out, exist_ok=True)
+    files = [(p, sz) for p, sz in tree(repo, "") if p in want]
+    with open(os.path.join(out, "REVISION"), "w") as f:
+        f.write("ModelScope %s master %s\n" % (repo, json.dumps(files)))
+    for path, size in files:
+        dest = os.path.join(out, path)
+        if os.path.exists(dest) and os.path.getsize(dest) == size:
+            continue
+        log(root, "%s: fetching %s (%.2f GB)" % (name, path, size / 1e9))
+        stop = threading.Event()
+
+        def ticker():
+            while not stop.wait(60):
+                got = os.path.getsize(dest) if os.path.exists(dest) else 0
+                log(root, "%s: %s %.2f / %.2f GB" % (name, path, got / 1e9, size / 1e9))
+
+        threading.Thread(target=ticker, daemon=True).start()
+        for _ in range(20):
+            subprocess.run(["curl", "-s", "-L", "-C", "-", "--retry", "5", "--retry-delay", "10", "--speed-limit",
+                            "10000", "--speed-time", "120", "-o", dest, file_url(repo, path)])
+            if os.path.exists(dest) and os.path.getsize(dest) >= size:
+                break
+            time.sleep(15)
+        stop.set()
+        ok = os.path.exists(dest) and os.path.getsize(dest) == size
+        log(root, "%s: %s %s" % (name, "done" if ok else "FAILED (size mismatch)", path))
+
+
 def fetch(root: str, name: str, workers: int) -> None:
+    if name in MODELSCOPE:
+        return fetch_modelscope(root, name)
     from huggingface_hub import HfApi, hf_hub_download
     repo, rev, keep = REPOS[name]
     out = os.path.join(root, "raw", "board", name)
@@ -105,11 +152,11 @@ def fetch(root: str, name: str, workers: int) -> None:
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default="data")
-    ap.add_argument("--only", nargs="*", default=list(REPOS))
+    ap.add_argument("--only", nargs="*", default=list(REPOS), choices=list(REPOS) + list(MODELSCOPE))
     ap.add_argument("--workers", type=int, default=8)
     a = ap.parse_args(argv)
     os.makedirs(os.path.join(a.root, "raw", "board"), exist_ok=True)
-    if "hf-mirror" not in os.environ.get("HF_ENDPOINT", ""):
+    if "hf-mirror" not in os.environ.get("HF_ENDPOINT", "") and set(a.only) - set(MODELSCOPE):
         sys.exit("set HF_ENDPOINT=https://hf-mirror.com (CLAUDE.md: downloads go through the domestic mirror)")
     for name in a.only:
         fetch(a.root, name, a.workers)
