@@ -1,0 +1,32 @@
+{
+  "version": "v0.5",
+  "published_at": "2026-10-30T15:25:02.656678+08:00",
+  "checkpoint": "runs/r24-v05/train",
+  "github_tag": "model-v0.5",
+  "github_tag_commit": "81d45fdbe3edd9b1f93d06ec4ef1f5897115e119",
+  "huggingface": {
+    "repo": "lukbit/devision",
+    "commit": "3f36a55891cdc6fada3005fde3bd3ebad6b51b0e",
+    "tag": "v0.5",
+    "verified_files": 18,
+    "public": true
+  },
+  "modelscope": {
+    "repo": "baibaibai000/devision",
+    "commit": "0315c9b7ef20cf4c935040bdeb671169841618b4",
+    "tag": "v0.5",
+    "verified_files": 18,
+    "public": true
+  },
+  "weight_sha256": "3fe35afde0bb0d8e40ed190241836c31577a90a9c774a9c54f62c4eadccdbcfd",
+  "validation": {
+    "tests_passed": 101,
+    "tests_skipped": 1,
+    "cpu_requests": 200,
+    "cpu_threads": 4,
+    "cpu_p50_ms": 300.66265849995943,
+    "cpu_p95_ms": 321.46255515008306,
+    "local_build_and_cpu_smoke": "passed"
+  },
+  "acceptance": "Owner approved calibration trade-offs; original official ImageJevBench objectives are not claimed as achieved."
+}
