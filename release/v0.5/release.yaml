@@ -1,6 +1,4 @@
-# DRAFT (2026-10-30): deVision v0.5 candidate = runs/r24-v05/train (owner 2026-10-29 17:30: v0.5 waits for r24;
-# verdict in docs/experiments/2026-10-29-r24-v05-plan.md: rules 1-2 met, rule 3 calibration not fully met - NaturalBench NLL).
-# Not adopted yet: publishing needs the owner's confirmation. Do not run `hf.py publish` from this draft.
+# Owner approved publishing r24 as v0.5 on 2026-10-30; calibration trade-offs retained.
 version: v0.5
 git_tag: model-v0.5
 model_name: devision-v0.5

@@ -1,6 +1,6 @@
 # v0.5 adoption
 
-DRAFT (2026-10-30): the owner decided on 2026-10-29 that v0.5 waits for `r24-v05` instead of `r23-v05`. Publishing r24 as v0.5 still needs the owner's confirmation. The rules were written before r24 trained, in `docs/experiments/2026-10-29-r24-v05-plan.md` (the same rules as r23); the full table is in [accept_vs_v0.4.md](accept_vs_v0.4.md).
+**Owner approved on 2026-10-30:** publish `runs/r24-v05/train` as model v0.5, after being informed that calibration is not fully preserved and the original formal ImageJevBench objectives have not been demonstrated. This is an explicit release trade-off, not a claim that all prewritten rules passed. The acceptance table below is unchanged.
 
 | Rule (vs v0.4, paired by question, pictures resampled) | Result |
 |---|---|
@@ -11,3 +11,6 @@ DRAFT (2026-10-30): the owner decided on 2026-10-29 that v0.5 waits for `r24-v05
 The rule-3 failures are over-confidence on harder general benchmarks. Refitting the temperatures offline on the development sets only (dev_mix, or all development sets) brings NaturalBench to 0.705 / 0.698 (v0.4 0.693) and RealWorldQA below v0.4, but makes the size and counting sets worse; the released temperatures are the ones fitted at the end of training.
 
 The POPE regression (−0.5) is within what the owner accepted on 2026-10-29. Test sets informed several decisions in this release cycle. This is one training seed.
+
+
+The original ImageJevBench v0.3.0 admission, sub-1B leadership and five official domain objectives are not established by this release. The project-specific five-use evaluation and the public Decision Index are different protocols. No official ImageJevBench rank is claimed.

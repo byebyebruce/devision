@@ -1,0 +1,247 @@
+{
+  "n": 200,
+  "images": 199,
+  "accuracy_all": 0.62,
+  "accuracy": {
+    "noul": null,
+    "choice": 0.62
+  },
+  "nll": 0.9363848029670663,
+  "brier": 0.49875960038674777,
+  "ece": 0.08038865998387337,
+  "ece_bins": 15,
+  "reliability": [
+    {
+      "bin": [
+        0.2,
+        0.3
+      ],
+      "n": 4,
+      "confidence": 0.28683528304100037,
+      "accuracy": 0.25
+    },
+    {
+      "bin": [
+        0.3,
+        0.4
+      ],
+      "n": 21,
+      "confidence": 0.3550230505920592,
+      "accuracy": 0.23809523809523808
+    },
+    {
+      "bin": [
+        0.4,
+        0.5
+      ],
+      "n": 27,
+      "confidence": 0.45185136574286,
+      "accuracy": 0.4074074074074074
+    },
+    {
+      "bin": [
+        0.5,
+        0.6
+      ],
+      "n": 23,
+      "confidence": 0.5413056534269581,
+      "accuracy": 0.5217391304347826
+    },
+    {
+      "bin": [
+        0.6,
+        0.7
+      ],
+      "n": 23,
+      "confidence": 0.6432638349740402,
+      "accuracy": 0.6086956521739131
+    },
+    {
+      "bin": [
+        0.7,
+        0.8
+      ],
+      "n": 24,
+      "confidence": 0.750172791381677,
+      "accuracy": 0.5416666666666666
+    },
+    {
+      "bin": [
+        0.8,
+        0.9
+      ],
+      "n": 26,
+      "confidence": 0.8457011099045093,
+      "accuracy": 0.7307692307692307
+    },
+    {
+      "bin": [
+        0.9,
+        1.0
+      ],
+      "n": 52,
+      "confidence": 0.9622523956573926,
+      "accuracy": 0.9423076923076923
+    }
+  ],
+  "thresholds": {
+    "0.6": {
+      "coverage": 0.625,
+      "accuracy": 0.76
+    },
+    "0.7": {
+      "coverage": 0.51,
+      "accuracy": 0.7941176470588235
+    },
+    "0.8": {
+      "coverage": 0.39,
+      "accuracy": 0.8717948717948718
+    },
+    "0.9": {
+      "coverage": 0.26,
+      "accuracy": 0.9423076923076923
+    }
+  },
+  "by_source": {
+    "aokvqa": {
+      "n": 200,
+      "images": 199,
+      "accuracy": 0.62,
+      "nll": 0.9363848029670663,
+      "ece": 0.08038865998387337
+    }
+  },
+  "by_kind": {
+    "aokvqa": {
+      "n": 200,
+      "images": 199,
+      "accuracy": 0.62,
+      "nll": 0.9363848029670663,
+      "ece": 0.08038865998387337
+    }
+  },
+  "by_axis": {
+    "-": {
+      "n": 200,
+      "images": 199,
+      "accuracy": 0.62,
+      "nll": 0.9363848029670663,
+      "ece": 0.08038865998387337
+    }
+  },
+  "by_options": {
+    "4": {
+      "n": 200,
+      "images": 199,
+      "accuracy": 0.62,
+      "nll": 0.9363848029670663,
+      "ece": 0.08038865998387337
+    }
+  },
+  "ms_per_question": {
+    "p50": 300.66265849995943,
+    "p95": 321.46255515008306,
+    "overall": 302.3525179750118
+  },
+  "request_latency_ms": {
+    "p50": 300.66265849995943,
+    "p95": 321.46255515008306,
+    "requests": 200,
+    "warmup_excluded": 3
+  },
+  "questions_per_request": {
+    "mean": 1.0,
+    "p50": 1.0,
+    "max": 1
+  },
+  "latency_ms": {
+    "p50": 300.66265849995943,
+    "p95": 321.46255515008306,
+    "requests": 200,
+    "warmup_excluded": 3
+  },
+  "control": "none",
+  "model": "devision-v0.3",
+  "reading": {
+    "mode": "none",
+    "routed_questions": 0,
+    "read_questions": 0
+  },
+  "temperature": {
+    "choice": 1.160062551498413,
+    "noul": 0.9890053272247314,
+    "by_options": {
+      "choice:2": 1.1245635747909546,
+      "choice:3-5": 1.1677029132843018,
+      "noul:2": 0.9890053272247314
+    }
+  },
+  "grouping": {
+    "max_questions_per_request": 1,
+    "by": "none (one question per request)",
+    "max_questions_per_call": "one request per call"
+  },
+  "environment": {
+    "threads": 4,
+    "machine": "x86_64",
+    "system": "Linux"
+  },
+  "run": {
+    "checkpoint": "runs/r24-v05/train",
+    "data": "runs/v04-cpu/latency200.jsonl",
+    "data_sha256": "e0f4d5b0f82ff59ba91d141f49833ad9a097ac36842b98c32e2c4a834d0b9691",
+    "role": "monitoring",
+    "device": "cpu",
+    "temperature": "fitted",
+    "control": "none",
+    "seed": 0,
+    "code": "143d23b+dirty",
+    "reading": {
+      "mode": "none",
+      "routed_questions": 0,
+      "read_questions": 0
+    },
+    "code_identity": {
+      "modules": {
+        "devision": {
+          "path": "/home/bruce/proj/devision/src/devision/__init__.py",
+          "sha256": "aa00e0d329f33444a51bc4cab7691911b6b226664fdc2fbd438103de8d0c27a1"
+        },
+        "devision.image": {
+          "path": "/home/bruce/proj/devision/src/devision/image.py",
+          "sha256": "1ae756d80aa9ccaece93b82eb53dcd65559a2d11f951012ad3ad125f1de81c99"
+        },
+        "devision.infer": {
+          "path": "/home/bruce/proj/devision/src/devision/infer.py",
+          "sha256": "297ca0790b8d2d77711a13a3024a78a50b5722935bb38519fd5ae5d7672c115f"
+        },
+        "devision.model": {
+          "path": "/home/bruce/proj/devision/src/devision/model.py",
+          "sha256": "e4f53a944c5c0fc6f4bb30e518af2fc91eec2ece78eb88ff88651323fb9084e8"
+        },
+        "devision.reading": {
+          "path": "/home/bruce/proj/devision/src/devision/reading.py",
+          "sha256": "dc2f3cc2151ec4761dcfc404b28d609a932aac70ff0ff02b0dd6e170b6c1f8ba"
+        },
+        "devision.train": {
+          "path": "/home/bruce/proj/devision/src/devision/train/__init__.py",
+          "sha256": "16c32ba2bae66029fb0afd4946827c475729aa45c7dde335864d002c564df289"
+        },
+        "devision.train.cli": {
+          "path": "/home/bruce/proj/devision/src/devision/train/cli.py",
+          "sha256": "aab8811a63c89726fd78dd7ea88ab930c6d115b529a011173ccc8637f081d342"
+        },
+        "devision.train.evaluate": {
+          "path": "/home/bruce/proj/devision/src/devision/train/evaluate.py",
+          "sha256": "4d5df39b37b0854ead1b8c7d0a04933e24ab9b05e0e341f0bdbfbc6911af2d90"
+        },
+        "devision.train.samples": {
+          "path": "/home/bruce/proj/devision/src/devision/train/samples.py",
+          "sha256": "5a4d5a75ec31380f5470a22c0ba4e370e170ba0499e5d4a77ed573450f9c3e31"
+        }
+      },
+      "version": "0.3.0.dev1",
+      "python": "3.12.3"
+    }
+  }
+}

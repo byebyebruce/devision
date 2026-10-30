@@ -1,4 +1,3 @@
-<!-- DRAFT 2026-10-30 00:20: numbers from runs/r24-v05/eval (release/v0.5/accept_vs_v0.4.md). r24 passed plan rules 1-2; rule 3 (calibration) not fully met (NaturalBench NLL) - awaiting the owner's decision, not published. -->
 ## training
 
 This release continues v0.4 in one pass on one RTX 5070 (bf16), with SigLIP2's top four encoder layers and final LayerNorm fine-tuned at 5e-6 alongside the projector, decision head and ModernBERT LoRA (merged into the released weights). The input remains 256×256 with 64 visual tokens; the architecture is unchanged.
@@ -42,3 +41,5 @@ No other evaluation set (MMBench, MME, NaturalBench, RealWorldQA, CountBench, Eg
 - **Calibration.** NLL is lower than or equal to v0.4's on 27 of 30 sets (strongly on the new uses), but the model is more over-confident on NaturalBench (NLL +0.029, significant); ECE is also higher on RealWorldQA, MMBench, NaturalBench and a few others (by 0.003–0.029). Refitting the temperatures on the development sets alone narrows but does not remove this.
 - **Labels.** The relative-depth questions use a depth model's predictions, not measured depth; the memes source has its own research licence. Several sources are non-commercial; see the dataset list.
 - **Test-set reuse.** Test sets informed several decisions in this cycle. This is one training seed.
+
+- **Release decision and original goals.** The owner approved r24 as v0.5 on 2026-10-30 with the calibration trade-offs above. This release does not establish official ImageJevBench v0.3.0 admission, sub-1B leadership, or improvement across its five official domains. The five project-use evaluations above are a different protocol; no official rank is claimed.
