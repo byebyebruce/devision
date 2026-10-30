@@ -4,7 +4,7 @@
 
 **deVision = Decision + Vision**：看图做决策。输入一张图片和若干英文问题，输出 Jev 格式的答案（`noul` 是非题 / `choice` 选择题）和校准过的概率。SigLIP2 看图，Laya 的 ModernBERT 决策头打分，不生成文字；没有 GPU 也能跑。
 
-模型在 Hugging Face：[`lukbit/devision`](https://huggingface.co/lukbit/devision)（当前模型 **v0.4**）；ModelScope：[`baibaibai000/devision`](https://modelscope.cn/models/baibaibai000/devision)。
+模型在 Hugging Face：[`lukbit/devision`](https://huggingface.co/lukbit/devision)（当前模型 **v0.5**）；ModelScope：[`baibaibai000/devision`](https://modelscope.cn/models/baibaibai000/devision)。
 
 ## 安装
 
@@ -65,7 +65,7 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 
 ```json
 {
-  "model": "devision-v0.4",
+  "model": "devision-v0.5",
   "answers": {
     "has_fork": {"type": "noul", "noul": 0.03},
     "room": {"type": "choice", "choice": "kitchen",
@@ -84,20 +84,25 @@ curl -s http://127.0.0.1:8000/v1/systemone -H 'Content-Type: application/json' -
 用概率做阈值，没把握的转给人或更强的模型；阈值请在自己的数据上验证。
 
 - **适合**：有没有某物、有几个（用选择题问）、是什么类别、颜色材质、室内室外、照片里的上下左右（用选择题问）。
-- **不适合**：示意图、图表、地图上比较两处；相对位置的是非题；图中小字（输入 256×256）；非英文、多张图。
+- **不适合**：复杂示意图、密集图表和地图上的细节比较；相对位置的是非题；图中小字（输入 256×256）；非英文、多张图。
 
 ## 效果
 
-v0.4 与 laya-vision 201M 在同一批题上逐题比较（差值 95% 区间按图片重采样；POPE 仅比较公开汇总分，没有配对区间）：
+v0.5（r24）相对 v0.4，在同一批题上按图片配对重采样：
 
-| 评测集 | 题数 | laya-vision | deVision v0.4 | 差值 |
-|---|---|---|---|---|
-| POPE random / popular / adversarial | 3 × 3,000 | 0.836 / 0.819 / 0.777 | **0.899 / 0.873 / 0.824** | +6.3 / +5.4 / +4.7 |
-| VQAv2 是非题 | 4,887 | 0.717 | **0.756** | +3.9 [+2.4, +5.3] |
-| A-OKVQA | 1,138 | 0.598 | **0.634** | +3.5 [+0.3, +6.6] |
-| ScienceQA（带图题） | 2,097 | **0.824** | 0.821 | −0.3 [−2.2, +1.7] |
+| 评测用途 | v0.4 | v0.5 | 准确率差（百分点，95%区间） |
+|---|---|---|---|
+| 手机购物界面状态 | 21.4% | 68.5% | +47.0 [+42.8, +51.2] |
+| 手机 / 网页 GUI | 38.6% | 78.2% | +39.7 [+36.8, +42.7] |
+| 手机界面状态 | 25.3% | 52.4% | +27.1 [+24.0, +30.1] |
+| 第一人称场景 | 34.7% | 71.7% | +37.0 [+35.4, +38.7] |
+| 图表 ChartQA | 30.7% | 58.9% | +28.2 [+25.7, +30.9] |
+| CV-Bench | 55.1% | 60.8% | +5.7 [+4.0, +7.3] |
+| POPE | 86.5% | 86.1% | −0.5 [−1.1, +0.1] |
 
-相对 v0.3（同一批题配对），23 个判定集合里 22 个提升、没有显著退步：镜像关系 +21.2、What'sUp +18.0、CountBench +14.5、Visual7W +7.2、VSR +7.0、GQA +6.1、CLEVR-CoGenT B +4.0、ScienceQA +3.1、MMBench +2.3、POPE +1.7。v0.4 是负责人接受取舍后的采用：事先写下的校准规则未通过（大小、存在题的概率偏保守，MME 略偏自信）。这些集合已多轮用于实验决策，不是新的独立测试；详见 [采用说明](release/v0.4/adoption.md)。
+其余24个旧能力集合未检出显著准确率退步，不代表已证明等效。计数与ScienceQA未显著改善。负责人于2026-10-30接受校准取舍发布：NaturalBench NLL显著增加0.029，部分集合ECE也升高。完整数据及采用说明见 [v0.5验收表](release/v0.5/accept_vs_v0.4.md) 和 [发布取舍](release/v0.5/adoption.md)。这些集合已参与多轮实验决策，不是新的独立测试。
+
+以上五个用途是项目评测协议，不等同于ImageJevBench的五个官方领域；本版本不宣称已完成正式ImageJevBench上榜或小于1B模型领先目标。历史v0.4证据保留在 [v0.4采用说明](release/v0.4/adoption.md)。
 
 完整结果和每一轮的训练记录见 [`docs/training-log.md`](https://github.com/byebyebruce/devision/blob/master/docs/training-log.md)，模型结构和设计见 [`docs/spec/vision-decision-mvp.md`](https://github.com/byebyebruce/devision/blob/master/docs/spec/vision-decision-mvp.md)。
 

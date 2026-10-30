@@ -1,0 +1,14 @@
+# Second-batch board-gap dev splits (data/v05/exp138/dev_board_*, held out by image inside each family) on runs/r21-soft/train, a reference for
+# exp138 (docs/experiments/2026-10-29-exp138-board-mix2.md). Results in the checkpoint round's eval/.
+name: boarddev2
+device: cuda
+stages: []
+evaluate:
+  checkpoint: runs/r21-soft/train
+  controls: true
+  sets:
+    dev_board_figure: {path: data/v05/exp138/dev_board_figure.jsonl, role: heldout}
+    dev_board_depth: {path: data/v05/exp138/dev_board_depth.jsonl, role: heldout}
+    dev_board_som: {path: data/v05/exp138/dev_board_som.jsonl, role: heldout}
+    dev_board_drive: {path: data/v05/exp138/dev_board_drive.jsonl, role: heldout}
+    dev_board_hateful: {path: data/v05/exp138/dev_board_hateful.jsonl, role: heldout}

@@ -4,6 +4,705 @@
 
 **当前采用：`r21-soft`**（`runs/r21-soft/train`，模型 v0.4，2026-10-22 发布到 Hugging Face / ModelScope）。负责人 2026-10-22 决定发布（"发布这一版"）。相对 v0.3：23 个判定集合 22 个提升、无显著退步（镜像关系 +21.2、What'sUp +18.0、CountBench +14.5、V7W +7.2、VSR +7.0、ScienceQA +3.1、POPE +1.7）；事先写下的校准规则 4 未通过（size / MME / 存在 NLL 超门槛，主要是欠自信）。细节见 r21-soft 一节及 `release/v0.4/adoption.md`。
 
+
+**v0.5开发方向**：图表方向保留exp81-chart作为后续起点；exp82-ui未通过，不取代它。exp83/84/85未通过；exp86原生SmolVLM未过筛；exp87 D3原生决策UI筛选通过，exp88图表/照片增益通过但位置/大小退化，exp89未见明显顺序偏置；exp94/96恢复pilot未通过，exp97组合诊断不扩量；exp98真实表单绑定开发筛选通过，exp99科学图示代理明显落后v0.4，exp100计数代理未达扩大门槛，尚缺表面检查域与正式全用途证据。exp110–112 D3 末层科学适配三次未过门槛，exp113 排除分辨率，D3 末层适配在科学图示上停止（2026-10-27），候选回到 v0.4 架构。均未正式发布。
+
+
+
+
+
+
+
+
+## 2026-10-30 00:30：r24 裁决——判据 1、2 过，判据 3 只差 NaturalBench NLL → 交负责人决定是否发布 v0.5；Decision Index 15.56；exp140（榜单数据加量）挂在 exp139 之后
+
+**当前采用不变：v0.4（`r21-soft`）**；v0.5 候选 = `runs/r24-v05/train`，`release/v0.5` 已改指 r24，待负责人确认。
+
+- **对 v0.4（按图配对 95%，`release/v0.5/accept_vs_v0.4.md`）**：新用途 shop_state **+47.0**、gui **+39.7**、ego **+37.0**、ChartQA **+28.2**、gui_state **+27.1**；CV-Bench **+5.7**、What'sUp **+5.1** 显著；其余 24 个旧能力集合无显著退步（最差 CoGenT B −1.6 [−3.4, +0.1]）；POPE −0.5 [−1.1, +0.1]。计数（CountBench +1.4、COCO +0.5）、ScienceQA（+0.0）不动。
+- **对 r23**：各 dev_board caption +10.2、KIE +14.9、figure +21.8、depth +5.1、drive +31.3、som +6.3（下界 > 0）；对 v0.4 figure +19.6、KIE +14.1、drive +32.3、caption +8.5、hateful +10.2、depth +5.1。
+- **校准**：27 / 30 集 NLL 不高于 v0.4；NaturalBench NLL **+0.029** 显著（r23 的 CV-Bench / RealWorld 显著变差已消失）；ECE 有 10 集略高（≤ 0.029）。离线只用 dev 集重拟合温度能把 NaturalBench 拉到 0.698–0.705（v0.4 0.693），但 size / 计数变差，不替换（`docs/experiments/2026-10-29-r24-v05-plan.md#裁决2026-10-30-0010`）。
+- **Decision Index**：v0.4 8.71 → r23 9.20 → exp137 14.39 → exp138 12.78 → **r24 15.56**（CV-Bench 14.4 → 28.0、KIE 6.0 → 26.1、InfographicVQA 16.4 → 32.8、RealWorldQA 4.0 → 13.2、Moderation 4.5 → 12.8、CharXiv 13.8 → 19.5；Mind2Web 5.7 → 1.7、R-Bench-M 2.7 → −0.2）。
+- **lv_report**（`runs/r24-v05/eval/compare/laya_vision.md`，对 laya-vision 逐题配对）：VQAv2 是非 +3.2 [+1.7, +4.7]、A-OKVQA +2.9 [−0.3, +6.2]（r23 +4.0）、ScienceQA −0.3 [−2.3, +1.5]（r23 +0.8）；POPE 三档都高于 laya-vision 公开分（89.4 / 86.7 / 82.1 vs 83.6 / 81.9 / 77.7）；ScienceQA 必须看图的切片仍 −7.1 [−12.2, −1.8]（自然科学 −9.9）。
+- **exp139**（r24 + 全量信息图）训练中，约 01:45 评完；**exp140**（[预写](experiments/2026-10-30-exp140-board-scale.md)：caption 40k、figure 30k、depth / drive 全部，单因素对 r24）由 `chain_exp140.sh` 挂在 exp139 链之后，约 04:30 评完。
+
+## 2026-10-29 22:20：r24 评测中（17 / 41 集）；exp139（r24 + 全量信息图 / 文档 31k）预写并挂在 r24 链之后
+
+**当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。
+
+- **r24-v05**：20:05–21:42 训完，21:43 起评 41 集 + 对照，之后自动 lv_report、对 v0.4 / r23 / exp137 / exp138 配对、验收表、Decision Index；预计 23:15 前后整条链结束，下一次检查按 [r24 计划](experiments/2026-10-29-r24-v05-plan.md) 裁决。
+- **exp139-infographic**（[预写](experiments/2026-10-29-exp139-infographic.md)）：单因素对 r24，加 InfographicVQA train + DocVQA 30,849 行（按榜单规则过滤，并按哈希排开两个 infographic dev 的图——exp137 的 dev 图在完整版 train 里换了文件名，去掉 525 行）；温度拟合集沿用 r24 的。主判据：新 dev（1,758 题）对 r24 下界 > 0 且榜单 InfographicVQA 上升、旧能力不退。`scripts/v05/chain_exp139.sh 834364` 等 r24 链结束后自动开始，预计次日 02:30 前后评完。
+
+## 2026-10-29 20:15：exp138 裁决——figure / depth / drive / hateful 进 r24，som 不进；Decision Index 12.78；r24 已于 20:05 自动开训
+
+**当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。
+
+- **exp138 各类 dev 对 r23（按图配对 95%）**：figure **+20.4**、depth **+7.3**、drive **+32.6**、hateful **+8.1**（下界均 > 0），som +2.9 [−2.6, +8.7] 不显著。榜单 skill r23 → exp138：CV-Bench 15.7 → **32.2**、Moderation 3.9 → 10.1、RealWorldQA 8.7 → 13.4、CharXiv 13.5 → 16.8；Mind2Web 3.7 → −0.2、R-Bench-M 4.2 → −0.5。
+- **判据**：1 过 figure / depth / drive / hateful，som 不过；2 过（对 r23 33 集无显著退步，CV-Bench +2.6、MMBench +1.8 显著涨；POPE −0.2；对 v0.4 POPE −0.5 不显著）；3 不过（CountBench ECE +0.035 等 6 集 > 0.01，拟合集仍是 512 道图表题，r24 已换）。对 exp137：EgoThink −4.6、test_gui −2.9 显著更低。
+- **Decision Index**：v0.4 8.71 → r23 9.20 → exp137 14.39 → exp138 12.78。
+- **r24-v05**：`chain_r24.sh` 20:02 自动判定族 = caption, kie, figure, depth, drive, hateful，构造 `data/v05/r24/`（268,583 行；基础文件按 board_exclusion 去掉 145 行 / 88 图，A-OKVQA 回放去掉 5 行，新增族 0 行），20:05 开训；预计 22:00 前后训完、次日 01:00 前后评完 + 榜单，按 [r24 计划](experiments/2026-10-29-r24-v05-plan.md) 裁决。详见 [exp138 裁决](experiments/2026-10-29-exp138-board-mix2.md#裁决2026-10-29-2015)。
+
+## 2026-10-29 18:45：exp137 裁决——caption、KIE 进入 r24；infographic dev 不显著、A-OKVQA 显著 −1.8 → r24 加回放；Decision Index 9.20 → 14.39；r24 预写并挂在 exp138 之后
+
+**当前采用不变：v0.4（`r21-soft`）**；v0.5 等 r24。
+
+- **exp137 对 r23 / 对 v0.4（按图配对 95%，36 集评完）**：caption dev **+10.2** / +8.5、KIE dev **+13.4** / +12.6、infographic dev +4.9 [−0.4, +10.1] / +8.8；EgoThink +2.8 / +5.3、test_gui +1.9 / +39.9、test_ego +1.3 / +37.9、MMBench +0.8 / +0.6；**A-OKVQA −1.8 [−3.3, −0.2]** / −1.3（不显著），其余无显著退步。
+- **判据**（`scripts/v05/judge_board.py`）：1 caption、KIE 过，infographic 不过（榜单 +11.5 但 dev 下界 < 0，不放宽）；2 不过（A-OKVQA）；3 按原 checkpoint 不过（是非温度 0.5；CountBench ECE +0.039）。
+- **Decision Index**：v0.4 8.71 → r23 9.20 → exp137 **14.39**（KIE 1.0 → 21.5、InfographicVQA 25.1 → 36.6、CharXiv 13.5 → 20.1、Winoground 16.0 → 20.2、RealWorldQA 8.7 → 12.6；Mind2Web 3.7 → 2.7、MMMU-Pro 0.2 → −0.9）。
+- **r24 预写**（[计划](experiments/2026-10-29-r24-v05-plan.md)）：r23 配方 + caption 20k + KIE 7.4k + exp138 自动判定过的类 + A-OKVQA 回放 4k，全部按 board_exclusion 过滤；温度拟合集改为图表 512 + 是非 / 存在 450 + 通用 choice 400（是非 461 题）。`scripts/v05/chain_r24.sh` 挂在 exp138 链之后。
+- exp138 训练中（18:05 时 18.7k / 30.5k 步），预计 21:00 前后评完，r24 约 21:15 开训、次日 01:30 前后评完。
+
+## 2026-10-29 17:30：负责人决定 v0.5 等 r24（不用 r23 发布）
+
+- r24 = r23 配方 + exp137 / exp138 判定有效的榜单短板数据（训练混合先按 `data/v05/board_exclusion.json` 过滤）+ 修好的温度拟合下限；exp138 评完即预写并挂接，按 r23 同一套判据裁决，过则 `release/v0.5` 改指 r24。
+
+## 2026-10-29 16:40：exp137 中期——三类榜单数据在 dev 上大涨、旧集合不退；是非题温度只用 11 题拟合成 0.5 → 修拟合下限
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 候选 `runs/r23-v05/train` 待负责人决定。
+
+- **exp137（19 / 36 集，对 r23 / 对 v0.4，按图配对 95%）**：caption dev **+10.2** / +8.5、KIE dev **+13.4** / +12.6、infographic dev +4.9（不显著）/ **+8.8**；EgoThink +2.8 / +5.3、test_gui +2.0 / +39.9、test_ego +1.3 / +37.9、MMBench +0.8 / +0.6；对 r23 无显著退步（最差 ChartQA −0.7 [−2.6, +1.0]），对 v0.4 POPE −0.1、RealWorld −0.7 均不显著。
+- **校准**：exp137 是非温度 = 0.5（拟合集 512 题里只有 11 道是非题），POPE / MME / NaturalBench NLL 0.36 / 0.65 / 0.72 → 0.49 / 0.88 / 0.98。离线换回 T = 1.0 后与 r23 持平——是拟合问题不是模型问题。`MIN_TYPE_ITEMS` 10 → 50，exp138 开训前生效；exp137 判据 3 按原 checkpoint 裁决。
+- **接续不变**：exp137 余下评测 + 榜单（约 19:30），随后 `chain_exp138.sh`（约 01:00 结束）。
+
+## 2026-10-29 14:30：r23-v05 裁决——判据 1、2 过，判据 3（校准）不完全过 → 交负责人决定是否发布 v0.5；exp137 已开训
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 候选 = `runs/r23-v05/train`，待负责人决定。
+
+- **对 v0.4（按图配对 95%，表 `release/v0.5/accept_vs_v0.4.md`）**：新用途 shop_state **+50.0**、gui **+38.0**、ego **+36.6**、ChartQA **+27.3**、gui_state **+27.3**；What'sUp **+2.9** 显著；其余 28 集无显著退步，POPE −0.34 [−0.94, +0.30]。计数（CountBench +0.2、COCO +0.3）和 ScienceQA（+1.1）不动。对 exp132（同配方另一种子）只 RealWorld −2.6 显著。
+- **校准**：23 / 33 集 NLL、ECE 都好于 v0.4；CV-Bench / NaturalBench / RealWorld NLL 显著变差 +0.015 / +0.026 / +0.027（过度自信）。r23 温度只在 512 道图表题上拟合；离线按 v0.4 口径（dev_mix）重拟合几乎不变，扩大拟合集也只部分缓解 → 判据 3 不完全过，不放宽，交负责人。
+- **Decision Index（外部标尺）**：v0.4 8.71 → r23 **9.20**（InfographicVQA +6.6、RealWorldQA +2.8；KIE −3.0、Mind2Web −1.6）；BLINK / CV-Bench 有 < 0.4% 题图泄漏。board dev 基线：caption 85.9 → 84.2、infographic 37.5 → 41.4、KIE 39.3 → 38.5。
+- **exp137**（榜单短板数据混入 r23 配方）14:05 开训，预计 17:30 训完、18:30 前后连同榜单评完；判据见其文档。
+- **exp138（新，预写）**：第二批榜单数据（ArxivQA 图 12k、深度 10k、set-of-marks Mind2Web 7.1k、DriveLM 6k、Hateful Memes 4.2k）混入 r23 配方，基础文件先按 `board_exclusion.json` 过滤；`scripts/v05/chain_exp138.sh 788519` 挂在 exp137 链之后。见 [exp138](experiments/2026-10-29-exp138-board-mix2.md)。
+- 发布草稿 `release/v0.5/notes.md` 已填数字；CPU 延迟与 `hf.py build / verify` 待负责人确认后、机器空闲时做。
+
+## 2026-10-29 12:15：r23 训练收尾（24,700 / 25,646 步）；exp137（榜单短板数据混入 r23 配方）预写并挂在 r23 链之后
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
+
+- **r23-v05**：训练约 96%，随后由 `chain_r23.sh` 自动评 33 集 + 对照、lv_report、对 v0.4 / exp132 / exp135 逐题配对；预计 15:00 前后评完，按 [r23 计划](experiments/2026-10-29-r23-v05-plan.md) 裁决。后台 board 数据构建（深度伪标注 6 线程）占 CPU，训练步长从 0.17 s 涨到 0.4–0.7 s。
+- **exp137（新，预写）**：r23 配方与种子不变，数据 = r23 的文件 + Winoground 式 caption 难负例 20,000、KIE（CORD+FUNSD）7,402、InfographicVQA 5,733（`data/v05/exp137/`，238,301 行）。判据：各类自己的 dev 对 r23 下界 > 0 且 Decision Index 对应基准上升；33 集对 r23 无 > 1 点显著退步。见 [exp137](experiments/2026-10-29-exp137-board-mix.md)。
+- **接续**：`scripts/v05/chain_exp137.sh 773215`（等 r23 链）：r23 的 Decision Index 全量（新脚本 `scripts/v05/board_run.sh`，GPU 服务，冒烟 8 行通过）→ v0.4 / r23 的 board dev 基线 → exp137 训练评测 → exp137 榜单，预计 20:30 前后结束。
+- **发布准备（不占 GPU）**：`release/v0.5/` 草稿（release.yaml 指向 r23、notes.md 训练 / 限制节，数字待裁决后填）、`scripts/v05/cpu_latency.sh`（与 v0.4 同 200 题同口径，等机器空闲时测）。
+
+## 2026-10-29 11:05：r23-v05 已开训（lr_vision 5e-6）；与之撞车的 exp136 已停
+
+- 10:40 exp135 评完，按预写规则选 lr_vision：exp135 对 exp132 在 test_gui_shop_state **−6.46**（最差一项 < −2）→ r23 用 **5e-6**（exp132 原值）。
+- 10:40 r23 开训，但 10:00 那一轮挂的 exp136（视觉锚定）也同时开训，两者都拖慢到 0.7–1.0 秒/步；POPE 已放行、正式轮次优先，11:05 停掉 exp136（第 1,200 步，无结论，见其文档末节）。r23 单独占卡后预计约 13:00 训完（25,646 步）、15:30 前后评完。
+
+## 2026-10-29 10:20：负责人决定放行 POPE 小幅退步、不换架构 → 第 23 轮 r23-v05 正式训练已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
+
+- **决定（负责人 2026-10-29）**：POPE 对 v0.4 约 −0.5～−0.8 的小幅退步可以接受（模型卡写明）；v0.5 不换架构。
+- **r23-v05**：exp132 配方 + 新种子 2323；lr_vision 在 exp135（1e-6）评完后按预写规则自动选（新用途最差一项不低于 exp132 2 点即用 1e-6）。`scripts/v05/chain_r23.sh` 挂在 exp135 链之后，预计 12:30 开训、18:00 前后评完；判据与发布准备见 [r23 计划](experiments/2026-10-29-r23-v05-plan.md)。
+
+## 2026-10-29 10:20：exp134 终裁（33 集对 v0.4 零显著退步，首个）；exp135 中期判据 2 不过；exp136（视觉特征锚定）实现并接续
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
+
+- **exp134（冻结视觉）33 集评完**：对 v0.4 **没有一个集合显著退步**（从 v0.4 续训以来第一次），显著提升 shop +42.4、gui +36.7、ego +34.4、gui_state +24.6、ChartQA +16.3、What'sUp +3.9、CV-Bench +1.6；但对 exp132 新用途回吐（判据 2 不过）。保留为零退步的保底配方。计数、ScienceQA 无提升。
+- **exp135（lr_vision 1e-6）14 / 33 集**：对 v0.4 ChartQA **+23.5**、shop +42.5、gui +37.7、ego +35.4、gui_state +25.2；对 exp132 shop **−6.46**、ChartQA **−2.30**、gui_state **−2.21** 显著 → 判据 2 不过；POPE / VQA 是非待评（约 12:00）。
+- **视觉漂移实测**（相对 v0.4 SigLIP 输出）：exp132 照片 0.08、图表 / 购物截图 0.31–0.38；exp135 照片 0.008、截图 0.05–0.06。学习率统一调不出「照片不动、截图大动」。
+- **exp136（新）**：新增 `vision_anchor_weight / vision_anchor_sources`（附测试），在 13 个旧自然照片来源上把 SigLIP 特征拉向 v0.4（权重 10），其余同 exp132。`scripts/v05/chain_exp136.sh` 挂在 exp135 之后，预计 15:00 前后评完。见 [exp136](experiments/2026-10-29-exp136-vision-anchor.md)。
+
+## 2026-10-29 08:10：exp134（冻结视觉）中期：POPE / VQA 是非修好，但新用途回吐（ChartQA −9.5）→ 判据 2 不过；exp135（lr_vision 1e-6）接续
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
+
+- **exp134 对 v0.4**（24 / 33 集，按图 95%）：POPE −0.19 [−0.62, +0.26]、test_vqa_yesno −0.70 [−1.80, +0.50] 都含 0（exp132 −0.47 / **−1.60**）→ 判据 1 过；What'sUp **+3.9**、CV-Bench **+1.6**；新用途 shop +42.4、gui +36.7、ego +34.4、gui_state +24.6、ChartQA +16.3。
+- **对 exp132（同数据同种子，只差视觉冻结）**：ChartQA **−9.48**、shop **−6.59**、gui_state **−2.86**、ego **−2.64** 显著 → 判据 2 不过。旧能力退步来自视觉漂移，新用途又要视觉适配。
+- **exp135（新）**：exp132 只把 lr_vision 5e-6 → 1e-6，构成 0 / 1e-6 / 5e-6 剂量曲线；`scripts/v05/chain_exp135.sh` 挂在 exp134 之后，预计 12:00 前后评完。见 [exp134](experiments/2026-10-29-exp134-frozen-vision.md)、[exp135](experiments/2026-10-29-exp135-lowlr-vision.md)。
+
+## 2026-10-29 06:10：exp133 切块判据 1 不过（只 ChartQA +2.6 显著，Mind2Web / FUNSD 不动）→ r23 不加切块；exp134 接续
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
+
+- **exp133 tiles 2 对 tiles 0**（同数据同 seed，按图 95%）：test_chartqa **+2.62 [+0.67, +4.61]** 显著；Mind2Web 子集 gui_state +0.24、gui −0.24，test_funsd −2.70，都含 0 → 读小字四项只一项显著，**判据 1 不过**。守护侧已见 MMBench −0.86 显著退步。切块把网页字高从 ~4.8 px 提到 ~9.6 px，Mind2Web 仍停在 36–37%，瓶颈不在像素。
+- 两臂对 v0.4：chartqa 30.7 → 53–56、test_gui 38.6 → 75、test_ego 34.7 → 62（同为 exp129 系数据的效果，不是切块）。
+- tiles 0 臂守护集还剩 7 集（约 06:40 评完），链随后补比较与 CPU 延迟，然后自动启动 exp134（冻结视觉），预计 10:30–11:00 评完。见 [exp133](experiments/2026-10-29-exp133-tiles.md)。
+
+## 2026-10-29 04:15：exp132 裁决（不过：test_vqa_yesno 对 v0.4 −1.60 显著）；exp134（冻结视觉）预写并挂在 exp133 之后
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。
+
+- **exp132（离线蒸馏向 v0.4，同 exp129 数据与 seed）31 / 32 集（剩 test_count_coco）**，对 v0.4（按图 95%）：POPE −0.47 [−1.00, +0.10]（不再显著；exp129 −0.66 显著），**test_vqa_yesno −1.60 [−3.17, −0.20] 显著** → 判据 1 不过；新用途 shop +49.0、gui +38.4、ego +37.0、gui_state +27.4，What'sUp +4.3、EgoThink +4.1；其余 18 集都含 0。对 exp129：test_v7w **+2.0** 显著修好，POPE +0.19、VQA 是非 −0.60（都不显著）→ 按预写「对 POPE 漂移无效，不再重复」。
+- **exp134（新）**：exp132 原样，只把视觉编码器冻结在 v0.4 权重（此前 exp114–exp132 续训全部解冻视觉顶 4 层，从没试过冻结）。判据：POPE、VQA 是非对 v0.4 不显著退步，新用途对 exp132 点估计 ≥ −2.0。`scripts/v05/chain_exp134.sh` 挂在 exp133 链之后，预计 15:00 前后评完。见 [exp134](experiments/2026-10-29-exp134-frozen-vision.md)。
+- GPU 排程：exp132 剩 test_count_coco（约 04:30 完）→ exp133 切块两臂（约 11:00–12:00）→ exp134。
+
+## 2026-10-29 02:15：exp129 / exp130 裁决（都不过：POPE 对 v0.4 仍显著退步）；ChartQA 官方 test 图表 +27.7 确认；exp133 切块对照预写并挂链
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp129–exp133 为实验。
+
+- **exp129 32 集评完**（对 v0.4，按图 95%）：新用途 shopping **+48.7**、test_gui **+38.7**、test_ego **+37.3**、test_gui_state **+26.3**、What'sUp **+4.6**、EgoThink **+3.6**、CV-Bench **+1.8**；**POPE −0.66、test_v7w −1.70 显著** → 判据 2 不过；test_vqa_yesno −1.0、test_size +0.8 等其余含 0。
+- **exp131（ChartQA 官方 test，2,215 题未见图）**：v0.4 30.7 → **exp129 58.4，+27.67 [+25.2, +30.2]**、exp130 53.7，+23.0 → 图表能力在未见测试上显著提升，作为 v0.5 图表证据；后续候选都加评 test_chartqa。
+- **exp130（v0.4 → exp129 插值，开发集选 α = 0.75）**：对 exp129 修好 test_vqa_yesno **+1.10**、test_v7w **+1.20**、A-OKVQA **+0.97**，但 POPE 只 +0.14，对 v0.4 仍 **−0.51 [−1.02, −0.03]**；新用途回吐 3–4pp（ego −3.84、gui −3.25、shop −3.36）；ECE 中位数 0.077 > exp129 0.062 → 判据 1、3 不过，r23 不加插值。
+- **exp132**（离线蒸馏向 v0.4，回答 POPE 漂移）02:00 开训，02:07 在 1.4k / 25.6k 步，显存 10.3 GB；预计 03:20 训完、05:30 前后评完。
+- **exp133（新，切块）**：字高检查通过——256 下 Mind2Web / FUNSD / ChartQA 文字几乎全 < 6 px，2×2 切块后 < 6 px 降到 5% / 25% / 7%（手机截图 72% 短边 < 512 不切块，本实验不回答手机 UI）。从 v0.4 起、同一 53,762 题大图小字混合、seed 133、micro batch 4，tiles 0 / 2 两臂只差切块，评 18 集（ChartQA test、Mind2Web 子集、FUNSD、守护集）+ CPU 延迟；`scripts/v05/chain_exp133.sh` 挂在 exp132 之后，预计 11:00–12:00 完成。见 [exp133](experiments/2026-10-29-exp133-tiles.md)。
+
+**下一步**：exp132 评完裁决 POPE（过则以其配方写 r23）；exp133 判定切块是否进入 r23。
+
+## 2026-10-29 00:40：exp129 评测 18 / 32：判据 2 不过（POPE 对 v0.4 −0.66 显著，回放没修好）；exp132（离线蒸馏向 v0.4）预写并挂链
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp129–exp132 为实验。
+
+- **exp129 对 v0.4**（按图 95%）：新用途 shopping **+48.7**、test_gui **+38.7**、test_ego **+37.3**、test_gui_state **+26.3**；What'sUp **+4.6**、EgoThink **+3.6**、CV-Bench **+1.8** 显著；MME +0.4、MMBench 0.0、NaturalBench +0.1、RealWorld +0.5、CountBench +0.6、ScienceQA +1.0、lv VQAv2 是非 −0.2、A-OKVQA −0.4 含 0；**POPE −0.66 [−1.21, −0.09] 显著** → 判据 2 不过，不定 r23。对 r22 POPE −0.31（含 0）。yes ratio 不变（0.456 / 0.457），不是是非偏向。
+- POPE 漂移六次运行都在（r22 −0.34 … exp129 −0.66），与回放量、种子无关；预写的「回到 exp128 配方」分支失效（exp128 也 −0.76）。另：未重拟合温度时 POPE NLL 0.557 / ECE 0.121（v0.4 0.363 / 0.048），候选必须重拟合温度再比校准。
+- **exp132（新，预写）**：题目与 seed 同 exp129，只把 13 个旧自然照片来源 60,014 题的目标改成 `0.5·gold + 0.5·v0.4 答案`（离线蒸馏，不加显存），判据：POPE / test_vqa_yesno 对 v0.4 不显著退步且新用途保持。`scripts/v05/chain_exp132.sh` 挂在 exp131 之后（exp129 评完 → exp130 插值 → exp131 ChartQA test → exp132），预计 07:00–08:00 评完。见 [exp132](experiments/2026-10-29-exp132-v4-offline-distill.md)。
+
+**下一步**：exp129 余下 14 集评完补表；exp130 选中 α 后看 POPE 是否回到 v0.4；exp130 / exp132 任一过判据即写 r23。
+
+## 2026-10-28 23:25：exp129 评测 11 / 32：新用途判据 1、3 已过（test_ego 对 r22 +3.97 显著）；新建图表未见测试集 test_chartqa（exp131，挂在 exp130 之后）
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp129–exp131 为实验。
+
+- **exp129 已评集合**（按图 95%，对 v0.4 / 对 r22）：test_ego 72.0，**+37.30** / **+3.97**；test_gui 77.3，**+38.70** / +1.04；test_gui_state 51.6，**+26.30** / +0.65（aitw-general 组对 r22 +2.08，含 0，点估计 ≥ 0）；shopping 70.2，**+48.71** / +1.55；EgoThink **+3.64** / +1.66；MMBench 0.00、RealWorld +0.51、ScienceQA +1.00（对 v0.4 含 0）。判据 1（新用途显著提升）、3（种子稳定）已过；判据 2 关键的 POPE / test_vqa_yesno / test_size 尚未评。评测比预计慢（同机其他 CPU 负载），预计次日 02:00–03:00 评完，之后 exp130 → exp131 依次自动接续。
+- **exp131（新）**：32 集里没有图表测试，图表只有 chart_dev（val，监测用）。从 ChartQA 官方 test 划分（此前未下载）按 exp81 协议生成 `test_chartqa` 2,215 题（像素与 train / val 重叠的 21 图剔除），评 v0.4 / exp129 / exp130 选中的 α 并配对。见 [exp131](experiments/2026-10-28-exp131-chartqa-test.md)。
+
+**下一步**：exp129 评完裁决判据 2；文档 / 小字仍缺未见测试集，下一步用同样方式补（DocVQA / InfographicVQA val 转选择题）。
+
+## 2026-10-28 22:05：exp129 训完 25,646 步、32 集评测中；exp130（v0.4 → exp129 权重插值）预写并挂链
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp129、exp130 为实验。
+
+- **exp129**（exp127 + 尺寸 / 是非 / 存在回放，seed 23）约 22:00 训完，显存 11.5 / 12.2 GB 正常；末段 loss 0.57–0.60。训练监测集（非判据）：val 59.4、gui 79.3、gui_state 55.1、gui_shop 71.5、ego 74.0、protect 80.2、chart 57.5、ui 69.1。32 集评测 22:03 开始，预计 23:45 前后评完并自动跑 lv_report。尚无判据结论。
+- **exp130 预写**：POPE 对 v0.4 在五次运行中一直 −0.3 到 −1.0，数据回放没能稳定修好；改试权重插值 θ_v0.4 + α(θ_exp129 − θ_v0.4)，α ∈ {0.9, 0.75, 0.6}，温度重拟合，**只在开发集上**选 α（新用途保留 ≥ 85% 收益且 coco-exist + VQAv2 是非准确率合计比 exp129 高 ≥ 0.5pp，取最小 α），选中才全量评测 32 集 + lv_report。`scripts/v05/chain_exp130.sh` 挂在 exp129 链之后，预计次日 02:00 完成。见 [exp130](experiments/2026-10-28-exp130-v4-interp.md)。
+
+**下一步**：exp129 评完按判据 1–3 与 v0.4 配对裁决；exp130 结果决定 r23 是否加插值后处理。
+
+## 2026-10-28 21:05：exp128（r22 + 尺寸回放）评完 32 集：test_size 修复（对 r22 +3.5 显著），但 POPE 对 v0.4 −0.76 显著 → 判据 2 不过；exp129 训练 5.2k / 25.6k 步
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp128、exp129 为实验。
+
+- **exp128 对 v0.4 / 对 r22**（按图 95%，`runs/exp128-v4-size-replay/eval/compare/`）：**test_size 87.9，+0.92（含 0）/ +3.51 [+2.16, +4.90]** → 判据 1 过，尺寸退步确是欠采样。新用途保持（test_gui_state +25.9、shopping +46.3、test_gui +37.5、test_ego +34.9 对 v0.4；test_ego 对 r22 **+1.59**）；CV-Bench **+1.59**、What'sUp **+2.56** 对 v0.4 显著；**POPE −0.76 [−1.42, −0.11] 对 v0.4 显著**（对 r22 −0.41 含 0）；test_vqa_yesno −1.10、MME 0.00、MMBench +0.12、ScienceQA +0.86 等其余 27 集含 0。lv_report：对 laya-vision VQAv2 是非 +3.4、A-OKVQA 未见过 +3.5 显著，ScienceQA +0.5，POPE 三档 89.0 / 86.2 / 82.1 均高于其公开分。
+- **裁决**：判据 1 过、2 不过 → 不定 r23；尺寸回放保留进后续配方。POPE 对 v0.4 在 −0.3 到 −1.0 之间随种子 / 混合波动（r22 −0.34、exp125 −0.78、exp126 −0.98、exp128 −0.76），正是 exp129 是非 / 存在回放要解决的问题。exp129 后备分支（判据 3 不过时回到 exp128 配方）也须带这批回放。见 [exp128](experiments/2026-10-28-exp128-v4-size-replay.md)。
+- **exp129**（exp127 + 尺寸 / 是非 / 存在回放，seed 23）20:47 开训，21:03 在 5,200 / 25,646 步（loss 0.77–0.80），显存 11.5 / 12.2 GB；预计 22:15 训完、23:45 前后评完并自动跑 lv_report。
+
+**下一步**：exp129 评完按判据 1–3 与 v0.4 配对裁决，重点看 POPE 和 test_vqa_yesno；过则写 r23。exp129 评完前预写下一个 GPU 任务并挂链。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 20:05：exp128（r22 + 尺寸回放）训完、评测 6 / 32：三个新用途对 v0.4 仍大幅提升，test_ego 对 r22 +1.6 显著；test_size 尚未评
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp128、exp129 为实验。
+
+- **exp128**（r22 数据 + coco-size 4,202，seed 22）19:50 前后训完 21k 步，显存峰值 10.6 / 12.2 GB。已评 6 集（对 r22 / 对 v0.4，按图 95%）：test_gui_state 51.2，+0.26 / **+25.91**；test_gui_shop_state 67.7，−0.90 / **+46.25**；test_gui 76.0，−0.19 / **+37.47**；test_ego 69.6，**+1.59** / **+34.91**；EgoThink 0.00 / +1.99；ScienceQA −0.14 / +0.86（后两项含 0）。尺寸回放未挤掉 GUI / 第一人称。判据 1（test_size）未评，预计 21:45 前后 32 集评完并自动跑 lv_report。
+- **exp129**（exp127 数据 + 尺寸 / 是非 / 存在回放，seed 23）由 `scripts/v05/chain_exp129.sh` 在 exp128 链退出后自动开训，预计次日 00:30–01:00 评完；GPU 到那时一直有任务。
+
+**下一步**：exp128 评完按判据 1、2 裁决；exp129 评完与 v0.4、exp127 配对，过则写 r23。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 19:15：exp127 评完 32 集：第一人称 / 手机 GUI 扩量有效（ego +3.8、gui +2.7），但 VQAv2 是非 −3.0、POPE 对 v0.4 −0.8 显著 → 判据 3 不过；exp129 开训前加是非题回放
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp127 为实验（不算轮次）。
+
+- **exp127**（r22 数据 + EPIC-VISOR 19.6k + AITW-general 状态题 9k，seed 22）对 r22 / 对 v0.4（按图 95%）：test_ego 71.8，**+3.79** / +37.11；test_gui 79.0，**+2.73** / +40.39；test_gui_state 51.9，+0.91 / **+26.56**；shopping 70.5，+1.94 / **+49.10**；What'sUp +1.83 / **+4.76**；**test_vqa_yesno 69.4，−3.00 / −2.80（均显著）**；**POPE −0.46 / −0.80（对 v0.4 显著）**；test_size +0.08 / −2.50（r22 已知欠采样）；其余 22 集对两者含 0（MME +1.05 / +0.51、ScienceQA −0.05 / +0.95、RealWorld、MMBench、CV-Bench、EgoThink 等）。
+- **裁决**：判据 1、2 过，判据 3 不过 → 不定 r23。不是是非偏向（新增 touching 题配平，预测 true 比例 0.51 → 0.48、true 召回 −6pp），是自然照片是非题占比被稀释。
+- **exp129 开训前修订**：数据改为 exp127 + coco-size 4,202 + vqav2 是非 5,307 + coco-exist 3,000（`data/v05/exp129r/`，205,166 题，与评测集图片重叠 0），seed 23，判据不变。exp128（r22 + 尺寸回放）19:15 训练 6.8k / 21k 步，loss 0.70，显存 10.6 / 12.2 GB；约 21:30 评完后 exp129 自动启动，约次日 00:30 评完。见 [exp127](experiments/2026-10-28-exp127-v4-gui-ego-scale.md)、[exp129](experiments/2026-10-28-exp129-v4-scale-size-seed23.md)。
+
+**下一步**：exp128 评完裁决尺寸回放；exp129 过则写 r23。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 17:10：r22-guiego 评完 32 集：新用途大幅提升、30 个旧集合不退，但 test_size −2.6 显著 → 按预写判据不采用；定位为尺寸题欠采样（129 / 4,331），exp128 尺寸回放挂在 exp127 之后
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。r22 为正式轮次（判据 2 不过，不采用），exp127（训练中）、exp128（预写）为实验。
+
+- **r22-guiego 对 v0.4**（按图 95%）：test_gui_state **+25.65**、test_gui_shop_state **+47.16**、test_gui **+37.66**、test_ego **+33.32**、What'sUp **+2.93**、CV-Bench **+1.48**（均显著）；**test_size −2.59 [−4.10, −1.18] 显著退步**（84.4 vs 87.0，NLL 0.507 → 0.359、ECE 0.234 → 0.033）；其余 25 集含 0（POPE −0.34、MME −0.55、MMBench −0.58、ScienceQA +1.00、CountBench +0.81、RealWorld −0.51、EgoThink +1.99）。对 exp124 同数据异种子 18 集全部含 0。lv_report：对 laya-vision VQAv2 是非 +3.7、A-OKVQA +3.9 显著，ScienceQA +0.7（上一版 −0.3），POPE 三档均高于其公开分。
+- **裁决**：判据 1、3 过，判据 2 不过 → 不采用（相对上一轮 v0.4 的增长见上；不是正式五用途 / ImageJevBench 成绩）。原因：exp116 起 v05 混合的 coco-size 只剩 129 题（v0.4 4,331；其他 v0.4 来源保留约 35%）。
+- **exp128 预写**：r22 数据 + soft_mix 其余 4,202 道 coco-size（168,242 题，与 test_size 图片重叠 0），seed 22 与 r22 配对，32 集全评 + lv_report；`scripts/v05/chain_exp128.sh` 挂在 exp127 链之后，预计 22:45 评完。exp127 17:00 在 8,500 / 24,083 步（loss 0.74–0.75，显存 8.9 / 12.2 GB），预计 20:10 评完。exp124 / exp126 的 test_size CPU 补评因拖慢训练而停止，由 exp128 同种子配对回答。见 [r22](experiments/2026-10-28-r22-guiego.md)、[exp128](experiments/2026-10-28-exp128-v4-size-replay.md)。
+
+**下一步**：exp127 评完按其判据裁决（其判据 3 的旧集合包含 test_size，同样会受欠采样影响，裁决时要和 exp128 分开看）；exp128 过则 r23 = 选定数据 + 尺寸回放。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 16:05：r22-guiego 训完、评测 9 / 32：三个新用途对 v0.4 显著提升（GUI 状态 +25.7、shopping +47.2、第一人称 +33.3），已评旧集合不退；exp127（第一人称 / 手机 GUI 扩量）挂在 r22 之后
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。r22 为正式轮次（评测中），exp127 为实验（未开训）。
+
+- **r22-guiego**（exp124 数据 + seed 22）15:39 训完 20,505 步。已评 9 集（对 v0.4 / 对 exp124，按图 95%）：test_gui_state 51.0，**+25.65** / +1.04；test_gui_shop_state 68.6，**+47.16** / −1.03；test_gui 76.2，**+37.66** / +0.91；test_ego 68.0，**+33.32** / −0.80；EgoThink +1.99 / −0.33；ScienceQA +1.00 / +0.33；dev_sqa −0.30 / −0.50；RealWorld −0.51 / −1.36（后六项均含 0）。判据 1 过；对 exp124 全部含 0（配方稳定）；判据 2 待其余 23 集，预计 17:30 前后评完并自动跑 lv_report。见 [r22](experiments/2026-10-28-r22-guiego.md)。
+- **exp127 预写**：r22 数据 + EPIC-VISOR 剩余 19.6k + AITW-general 屏幕状态 9k（192,657 题），seed 22 与 r22 同种子配对；`scripts/v05/chain_exp127.sh` 在 r22 链退出后自动开训，预计 20:10 前后评完。见 [exp127](experiments/2026-10-28-exp127-v4-gui-ego-scale.md)。
+
+**下一步**：r22 评完按判据 2 裁决，与 v0.4 逐题配对、读 lv_report；过则 r22 进入候选冻结后的独立校准 / 测试。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据；Mind2Web 网页在 256 输入下无看图增益。
+
+## 2026-10-28 15:10：exp126（种子对照）评完：ScienceQA 退步是种子，回放的 GUI 代价不显著（−1.1，下界 −2.8）→ r22 继续；r22 训练 6.2k / 20.5k 步
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp126 为实验，r22 为正式轮次（训练中）。
+
+- **exp126**（exp122 数据 + seed 124；对 exp122 / exp124 / v0.4）：test_gui_state 51.0，−1.36 / +1.10 / +25.7；test_gui_shop_state 69.1，−0.26 / −0.52 / +47.7；test_ego 68.1，−0.61 / −0.73 / +33.4；**ScienceQA −1.57 显著** / −0.33 / +0.33；**POPE** −0.27 / −0.57 / **−0.98 显著**；MMBench **+1.30 / +0.93** 显著；What'sUp、CV-Bench、EgoThink 对 v0.4 显著提升；其余含 0。
+- **裁决**：判据 1 部分成立（ScienceQA 退步同种子复现 → 种子；GUI 同向但含 0）；判据 2 严格不过（exp124 − exp126 test_gui_state −1.10 [−2.79, +0.65]）；判据 3 不成立 → 按预写分支 **r22 不停**。回放修 POPE（−0.98 → −0.41），代价是 GUI 约 −1pp 点估计（Mind2Web 为主）。见 [exp126](experiments/2026-10-28-exp126-v4-seed-control.md)。
+- **r22-guiego** 14:43 开训，15:01 在 6,200 / 20,505 步（loss 0.74–0.84），显存 9.1 GB；预计 15:45 训完、17:30 前后评完（32 集 + lv_report）。
+
+**下一步**：r22 评完按其判据与 v0.4 逐题配对、lv_report；r22 评测期间预写候选冻结后的独立校准 / 测试流程。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 14:05：exp126（种子对照）训完 19,380 步、评测中；第 22 轮 r22-guiego 预写并挂在 exp126 之后
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。exp126 为实验，r22 为正式轮次（尚未开训）。
+
+- **exp126**（exp122 数据 + seed 124）：14:00 训完 19,380 / 19,380 步，末段 loss 0.65–0.70（与 exp124 同期一致），val 准确率 62.1、ECE 0.049，显存 11.7 / 12.2 GB 正常；18 集评测中，预计 15:00 前后评完。尚无对照结论。
+- **r22-guiego 预写**：exp124 训练文件（9k 存在回放）+ seed 22，评测 = exp124 的 18 集 + v0.4 的 14 个旧集合，评完自动跑 lv_report。`scripts/v05/chain_r22.sh` 在 exp126 退出后自动开训；若 exp126 判出 9k 回放有真实 GUI 代价（其判据 3），下一轮停掉 r22 改训 COCO-only 回放。见 [r22](experiments/2026-10-28-r22-guiego.md)。
+
+**下一步**：exp126 评完按判据裁决并核对 r22 分支；r22 评完与 v0.4 逐题配对、lv_report。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 13:20：exp125（回放减半）评完：POPE 对 v0.4 −0.8 显著（半剂量不够），GUI 对 exp122 仍 −2 → 9k 剂量；exp126 种子对照 13:09 开训
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp125**（exp122 + 4.5k 回放，seed 125；对 exp122 / exp124 / v0.4）：**POPE 85.8，−0.07 / −0.37 / −0.78 [−1.41, −0.17]**；test_gui_state 50.3，**−2.08 [−4.16, −0.19]** / +0.39 / +25.0；test_gui_shop_state 67.3，−2.07 / −2.33 / +45.9；test_ego 68.8，+0.10 / −0.02 / +34.1；ScienceQA **−1.81 显著** / −0.57 / +0.10；MME +1.01 / **+1.43** / **+1.14**；What'sUp **+5.37**、EgoThink **+3.48** 对 v0.4 显著；其余含 0。
+- **裁决**：判据 1、2 不过，3 过 → 走预写分支"POPE 需要 9k 剂量"。exp124、exp125 两个不同种子对 exp122 的 GUI / ScienceQA 退步几乎一样，而两者之间不显著 → 减半回放收不回 GUI，更像 exp122 种子偏高。见 [exp125](experiments/2026-10-28-exp125-v4-exist-replay-half.md)。
+- **exp126**（exp122 数据 + seed 124）13:09 自动开训，预计 15:10 前后评完；与 exp124 同种子配对量回放的 GUI 代价。
+
+**下一步**：exp126 评完后按其判据定 `r22-*` 配方（预期 9k 回放），并把 r22 预写挂在 exp126 之后。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 12:05：exp124 评完：存在题回放修好 POPE（对 v0.4 −0.4 含 0），旧集合全守住，但 GUI −2 显著；exp126（同种子对照）已挂在 exp125 之后
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp124 其余 13 集**（对上一实验 exp122 / 对 v0.4）：**POPE 86.1，+0.30 / −0.41 [−0.97, +0.16]**（误报 503→440，yes ratio 0.470→0.459）；lv VQAv2 是非 **+0.80 显著** / +0.06；What'sUp 49.8，−1.10 / **+3.05 显著**；CV-Bench +0.53 / **+1.63 显著**；ScienceQA **−1.24 [−2.24, −0.14]** / +0.67；MMBench、MME、CountBench、RealWorld、NaturalBench、A-OKVQA、dev_sqa、EgoThink 均含 0。
+- **裁决**：判据 1（POPE）过、3（旧能力对 v0.4）过、2（GUI 对 exp122 下界 > −2pp）不过（test_gui_state −2.47、test_gui −1.95）。exp124 与 exp122 种子不同，GUI / ScienceQA 的退步可能是种子噪声。见 [exp124](experiments/2026-10-28-exp124-v4-exist-replay.md)。
+- **exp125**（半剂量回放）12:05 在 10,900 / 19,943 步（loss 0.70–0.73），预计 13:15 前后评完。
+- **exp126 预写并挂接**：exp122 数据 + seed 124（= exp124 去掉回放），与 exp124 同种子配对量回放的真实 GUI 代价、与 exp122 同数据配对量种子噪声；不新造数据。`scripts/v05/chain_exp126.sh` 在 exp125 退出后自动开跑，预计 15:10 前后评完。见 [exp126](experiments/2026-10-28-exp126-v4-seed-control.md)。
+
+**下一步**：exp125 判半剂量；exp126 定回放剂量后写 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 11:05：exp124（存在题回放 9k）评测中 5/18：test_gui_state 对 exp122 −2.5 显著，判据 2 不过；exp125（回放减半）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp124**（对上一实验 exp122）：test_gui_shop_state 69.6，+0.26（含 0）；**test_gui_state 49.9，−2.47 [−4.29, −0.58]**（主要在网页 Mind2Web −3.06；手机 AITW −1.80 含 0）；test_gui 75.3，−1.95 [−3.64, −0.26]；test_ego 68.8，+0.12；EgoThink −0.17。两者种子不同，未排除种子噪声。POPE（判据 1）等 13 集评测中，预计 11:30 前后评完。
+- **裁决（部分）**：判据 2 不过 → 按预写规则回放减半。见 [exp124](experiments/2026-10-28-exp124-v4-exist-replay.md)。
+- **exp125 预写并挂接**：exp122 训练文件 + coco-exist 3k（真假各半）+ VQAv2 是非 1.5k（159,540 题，seed 125）；`scripts/v05/chain_exp125.sh` 在 exp124 退出后自动开跑，预计 13:15 前后评完。见 [exp125](experiments/2026-10-28-exp125-v4-exist-replay-half.md)。
+
+**下一步**：exp124 补齐后判 POPE；exp125 与 exp122 / exp124 配对定回放剂量，过则定 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 10:10：exp123（GUI 23% + 配平）评完：去掉 24k GUI 使未见网站 −8.8，MME / MMBench 不变 → r22 用 33% GUI；POPE 仍 −0.8，等 exp124
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp123**（对配对的 exp122 / 对 v0.4）：未见网站 `test_gui_shop_state` **60.6，−8.79 [−11.89, −5.56]** / +39.2；test_gui_state −6.17、test_gui −4.87（均显著）；test_ego 68.6，−0.07；**MME −0.13 [−1.10, +0.80]、MMBench +0.49 [−0.30, +1.28]**（对 v0.4 均 0.0）；What'sUp 51.5，+0.61 / **+4.76 显著**（对 exp120 +18.9）；CV-Bench +0.99 / **+2.08 显著**；**POPE −0.11 / −0.82 [−1.50, −0.12]**；其余（ScienceQA、dev_sqa、CountBench、EgoThink、RealWorld、NaturalBench、A-OKVQA、VQAv2 是非）对 v0.4 均含 0。
+- **裁决**：判据 1 过；判据 2 → GUI 扩量不是 MME / MMBench 退步来源，**r22 采用 exp122 的 33% GUI**；判据 3 只剩 POPE（与 GUI 量无关，归因存在题稀释）。见 [exp123](experiments/2026-10-28-exp123-v4-spatial-gui23.md)。
+- **exp124**（exp122 + 存在题回放 9k）09:51 开训，10:00 在 3,300 / 20,505 步（loss 0.87–0.93，与前几轮同期一致），预计 11:10 训完、12:05 前后评完。
+
+**下一步**：exp124 判 POPE 修复；过则以其配方定 `r22-*`，11:00 那一轮须把 r22（或 exp124 不过时的下一个实验）预写并挂在 exp124 之后。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 09:05：exp122 补齐：What'sUp 左右恢复（+18.4），CV-Bench 守住，但 POPE 对 v0.4 −0.7 显著；exp124（存在题回放）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp122 剩余 10 集**（对上一实验 exp121 / 对 v0.4）：**What'sUp 50.9，+18.41 [+14.02, +22.56] / +4.15 [+1.71, +6.59]**（left_of 2.9→49.8、right_of 3.4→53.7）；CV-Bench 56.2，−1.29（含 0）/ +1.10（含 0，3D-depth 55.2 vs v0.4 54.8）；MMBench +0.70 / −0.47、MME +0.17 / +0.13、NaturalBench、CountBench 均含 0；**POPE 85.8，−0.48（含 0）/ −0.71 [−1.36, −0.06]**；lv VQAv2 是非 −0.74 [−1.54, +0.04]、A-OKVQA −1.32（含 0）对 v0.4。
+- **裁决**：判据 1（左右恢复）、2（深度保住）过；判据 3 有 test_ego 对 exp121 −1.1 一项小幅显著；对 v0.4 还有 POPE −0.7 显著 → 不直接定 r22。见 [exp122](experiments/2026-10-28-exp122-v4-spatial-balance.md)。
+- **exp123** 09:00 训练 14,300 / 16,380 步（loss 0.69–0.72，正常），预计 10:05 前后评完。
+- **exp124 预写并挂接**：exp122 训练文件 + v0.4 混合中的 coco-exist 6k（真假各半）+ VQAv2 是非 3k（164,040 题）；判据：POPE 对 v0.4 不显著退步、GUI / ego 对 exp122 不退、其余旧集合对 v0.4 不退。`scripts/v05/chain_exp124.sh` 在 exp123 退出后自动开跑，预计 12:00 前后评完。见 [exp124](experiments/2026-10-28-exp124-v4-exist-replay.md)。
+
+**下一步**：exp123 与 exp122 配对定 GUI 占比；exp124 判存在题回放；两者合并后定 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 08:05：exp122（关系词配平）训完，8/18 集已评：GUI 小涨、ScienceQA 对 v0.4 +1.9 显著、test_ego −1.1；exp123 已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp122**（对上一实验 exp121 / 对 v0.4）：未见网站 `test_gui_shop_state` **69.4，+2.20 [−0.26, +4.52]** / +47.9；`test_gui_state` 52.4，+2.34 [+0.45, +4.22]；test_gui 77.3，+1.43（含 0）；**test_ego 68.7，−1.11 [−2.01, −0.21]**；EgoThink +1.32 / +2.48（含 0）；ScienceQA 84.0，+0.67 / **对 v0.4 +1.91 [+0.67, +3.15]**；dev_sqa +0.99 / +0.40；RealWorld +0.51 / −1.19（含 0）。
+- 判据 1（What'sUp 左右恢复）、2（CV-Bench）及 MMBench / MME / CountBench / POPE 等 10 集评测中，预计 08:45 补齐后裁决。见 [exp122](experiments/2026-10-28-exp122-v4-spatial-balance.md)。
+- exp123（exp122 去掉 24k GUI）由 `scripts/v05/chain_exp123.sh` 在 exp122 退出后自动开跑，预计 10:30 前后评完；GPU 到那时都不空。
+
+**下一步**：exp122 补齐并裁决；exp123 与 exp122 配对定 GUI 占比；10:00 那一轮前须预写 `r22-*` 并挂在 exp123 之后。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 07:10：exp121（手机 GUI 再扩 24k）：未见网站 GUI +8.7，但 MME / MMBench 小幅显著退，判据 3 不过；exp123（GUI 23% + 配平）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp121**（对上一实验 exp120 / 对 v0.4）：未见网站 `test_gui_shop_state` **67.2，+8.66 [+5.56, +11.76]** / +45.7（配错图 29.3）；`test_gui_state` 的 AITW 部分 +6.37 [+3.60, +9.42]；Mind2Web 不变（−0.49 / 0.00，仍无看图增益）；test_ego 69.8，+1.69；ScienceQA +0.48 / 对 v0.4 +1.24 显著；CV-Bench 对 v0.4 +2.39 显著。
+- **退步**：MME 对 exp120 −1.14 [−2.19, −0.08]；MMBench 对 v0.4 −1.16 [−2.07, −0.26]；What'sUp 对 v0.4 −14.3（继承 exp120）。判据 1、2 过，**3 不过**，按预写规则 GUI 回到 23%。见 [exp121](experiments/2026-10-28-exp121-v4-gui-scale.md)。
+- **exp122** 训练中（07:05 在 7,600 / 19,380 步，loss 0.71–0.78），预计 08:40 前后评完。
+- **exp123 预写并挂接**：exp120 训练文件 + 与 exp122 相同的 n2-spatial 10,151 题（= exp122 去掉 24k GUI），131,040 题；与 exp122 逐题配对判定 GUI 扩量是否是 MME / MMBench 退步的来源，选出 r22 配方。`scripts/v05/chain_exp123.sh` 在 exp122 退出后自动开跑，预计 10:30 前后评完。见 [exp123](experiments/2026-10-28-exp123-v4-spatial-gui23.md)。
+
+**下一步**：exp122 判关系词配平；exp123 与 exp122 配对定 GUI 占比，选出的配方进 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据；网页（Mind2Web）在 256 输入下不可读。
+
+## 2026-10-28 06:00：exp120 补齐：What'sUp 左右关系崩溃（−12.9），判据 3 不过；exp122（关系词配平）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp120 剩余 6 集**（对上一实验 exp119 / 对 v0.4）：**What'sUp 32.6，−12.93 [−17.07, −8.78] / −14.15 [−18.05, −10.12]**——left_of / right_of 从约 50% 掉到 1.5%（in-front_of 32→78、behind 28→59）；CountBench +3.05 / +2.04（含 0）；POPE −0.56 [−1.13, −0.01] / −0.29（含 0）；lv VQAv2 是非 +0.33、A-OKVQA −0.09（含 0）。
+- **归因**：新增 4,000 道 n2-spatial 深度题的选项是 left / right / front / behind 四选一，gold 只会是 front / behind，混合里以 left / right 为 gold 的只有 213 题 → 模型学到"不选 left / right"的选项先验。CV-Bench 3D 的提升（选项是物体名）仍成立。**exp120 判据 3 不过**，05:05 节"判据 3 只差 MMBench 一项小幅"的结论作废；exp121 以 exp120 为底，预计继承此退步。详见 [exp120](experiments/2026-10-28-exp120-v4-depth-ego.md)。
+- **exp121** 06:00 训完 18,112 步（末段 loss 0.63–0.70，acc ≈ 0.74），评测中，预计 07:00 前后结束。
+- **exp122 预写并挂接**：exp121 训练文件 + n2-spatial 剩余全部 10,151 题（混合内各关系类别比例与源文件一致），155,040 题；判据：What'sUp 对 exp121 下界 > 0 且对 v0.4 不显著退步、左右子项各 ≥ 40%，CV-Bench 不退，其余对 exp121 不退。`scripts/v05/chain_exp122.sh` 在 exp121 退出后自动开跑，预计 08:45 前后评完。见 [exp122](experiments/2026-10-28-exp122-v4-spatial-balance.md)。
+
+**下一步**：exp121 判 GUI 扩量（What'sUp 预计同样崩溃，与 GUI 判据分开看）；exp122 判关系词配平，过则 exp122 配方定 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 05:05：exp120（深度回放 + ego 扩量）部分结果：CV-Bench 3D 修复、ego +3.6，MMBench 小幅退；exp121 已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp120**（exp119 + n2-spatial 深度 4k + EPIC ego 12k，120,889 题），18 集已评 12 集。相对上一实验 exp119：**CV-Bench +2.31 [+1.02, +3.56]**（3D-depth +3.17、3D-distance +4.83；对 v0.4 +2.65 [+1.29, +4.02]，exp117/118 以来的 3D 退步修复）；**test_ego 64.6→68.1，+3.56 [+2.56, +4.52]**（对 v0.4 +33.4），EgoThink +0.00；GUI 三集均含 0（shop 58.5 −1.29、state 47.1 +0.13、原题型 −1.36）；ScienceQA +0.91、dev_sqa +0.59、MME +1.01、NaturalBench +0.07、RealWorld −1.02 均不显著退步；**MMBench −0.95 [−1.77, −0.12]**（对 v0.4 −0.72 含 0）。→ 判据 1、2 过，判据 3 有 MMBench 一项小幅不过；剩余 CountBench / What'sUp / POPE / lv 三集评测中。详见 [exp120](experiments/2026-10-28-exp120-v4-depth-ego.md)。
+- **exp121**（exp120 + 手机 GUI 改写 24k）由 `scripts/v05/chain_exp121.sh` 在 exp120 评测结束后自动开跑（dry-run 通过，数据 `data/v05/exp121/` 就绪），预计 07:00 前后评完。
+
+**下一步**：补齐 exp120 剩余 6 集；exp121 判 GUI 再扩量后定 `r22-*` 正式配方（含深度回放与 ego 扩量，MMBench 对 v0.4 继续盯）；Mind2Web 走切块 / 高分辨率小实验。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 04:05：exp119（手机 GUI 扩量 + 科学回放）判据全过，成为 r22 候选；exp120 训练中，exp121（GUI 再扩 24k）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp119**（104,889 题）：未见网站的手机购物操作 `test_gui_shop_state` **59.8**（配错图 31.1；v0.4 21.4、exp117 36.4、exp118 49.6），相对上一实验 exp118 **+10.21 [+6.72, +13.70]**；`test_gui_state` AITW 58.9 vs 配错图 32.3；Mind2Web 原题型对 exp117 +0.00（判据 2 过）。旧能力：对 exp117 无显著退步，CV-Bench +1.71 [+0.45, +2.92]（3D-depth +3.83），**对 v0.4 15 个旧集合全部区间含 0**（ScienceQA −0.14、dev_sqa −0.05、CV-Bench +0.34、CountBench −1.02、What'sUp −1.22）；新用途对 v0.4：test_ego +29.86、test_gui +35.39、shop +38.37。→ 判据 1–3 全过，**exp119 配方为 `r22-*` 候选**。详见 [exp119](experiments/2026-10-28-exp119-v4-gui-phone-science.md)。
+- **exp120**（+深度回放 4k + ego 12k）04:00 训练 5,300/15,112 步，loss 0.73–0.86，正常，预计 05:15 前后评完。
+- **exp121 预写并挂接**：exp120 训练文件 + AITW-general 改写 10k + AITW-shopping 改写 14k（未用 episode，GUI 占比 23%→33%，144,889 题）；判据：GUI 对 exp120 下界 > 0、Mind2Web 不退 > −3pp、旧能力对 exp120 与 v0.4 无显著退步。`scripts/v05/chain_exp121.sh` 在 exp120 退出后自动开跑，预计 06:50 评完。见 [exp121](experiments/2026-10-28-exp121-v4-gui-scale.md)。
+
+**下一步**：exp120 判深度 / ego 扩量，exp121 判 GUI 再扩量，合并后定 `r22-*` 正式轮次（与 v0.4 全面逐题配对、lv_report、独立校准）。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据；网页（Mind2Web）在 256 输入下不可读，需切块 / 分辨率实验。
+
+## 2026-10-28 03:05：exp118 补完判据 3（CV-Bench 仍退）；exp119 训完评测中；exp120（深度回放 + ego 扩量）已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp118 判据 3**（对上一实验 exp116 按图配对）：**CV-Bench −2.05 [−3.26, −0.87]** 显著退步（与 exp117 的 3D 退步同向）；NaturalBench +1.25 [+0.66, +1.86]；其余 8 集含 0。GUI-shopping 基线（`test_gui_shop_state`，774 题、未见网站）：v0.4 21.4、exp117 36.4、exp118 49.6。
+- **exp119** 13,112 步 03:00 训完（末段 loss 0.64–0.77，acc ≈ 0.70，正常），评测进行中，预计 03:55 结束。
+- **exp120 预写并挂接**：exp119 训练文件 + n2-spatial 深度题（in front of / behind）4,000 + EPIC-VISOR 12,000（共 120,889 题）；判据：CV-Bench 对 exp119 下界 > 0 或对 v0.4 不再显著退步、test_ego 对 exp119 下界 > 0、GUI / 科学 / 其余不退。`scripts/v05/chain_exp120.sh` 在 exp119 退出后自动开跑，预计 05:30 前后评完。见 [exp120](experiments/2026-10-28-exp120-v4-depth-ego.md)。
+
+**下一步**：exp119 评完按预写判据裁决（手机 GUI 扩量、Mind2Web 不退、科学守住）；exp120 判深度回放能否修 CV-Bench 3D；两者都过则定 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 02:10：exp118（要看屏幕的 GUI 题）初步结果：手机屏幕看图成立，网页在 256 下不可读；exp119 已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp118**（exp116 + GUI 改写题：去历史操作、干扰项换同 episode 其他步的 gold）GUI / ego / 科学已评完，其余 10 集评测中（预计 02:50 结束）。`test_gui_state`：45.5（配错图 35.1，+10.4pp）；**相对上一实验 exp116 +6.49 [+3.83, +9.09]**；分来源：**AITW 手机 56.6 vs 配错图 34.8（+21.8pp），对 exp116 +14.27 [+9.97, +18.56]**；**Mind2Web 网页 35.6 vs 35.3，对 exp116 −0.37 [−3.79, +3.06]** → 按预写判据 1 不过（Mind2Web < 5pp）。原题型 test_gui 80.6→66.3（判据 2 不过，Mind2Web 丢了历史线索）。ego 对 exp117 +0.73 [−0.10, +1.58]。科学对 exp117 −2.3 / −2.5（exp118 底座是 exp116，无科学回放，与 exp116 一致，预期内）。
+- **裁决**：手机 GUI 题型有效；Mind2Web 是 1024×800 桌面页，256 letterbox 下文字约 3px，走"分辨率 / 切块"分支，不加步数。详见 [exp118](experiments/2026-10-28-exp118-gui-screen-state.md)。
+- **exp119 预写并挂接**：exp117 混合（科学回放）+ AITW-general 改写 6k + 新增 AITW-shopping 改写 12k（未见网站分组 test 774 题）+ Mind2Web 保持原题型，104,889 题；`scripts/v05/chain_exp119.sh` 在 exp118 退出后先评 v0.4 / exp117 / exp118 的 shopping 基线，再训练评测，预计 04:30 前后结束。见 [exp119](experiments/2026-10-28-exp119-v4-gui-phone-science.md)。
+
+**下一步**：exp118 剩余集合评完补判据 3；exp119 判手机 GUI 扩量 + 科学是否同时守住，过则作为 `r22-*` 候选；Mind2Web 另做切块 / 高分辨率小实验。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 01:15：exp117（exp116 + 科学回放）结果：科学退步修复，CV-Bench 3D 小幅退步；exp118 已自动开跑
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp117**（exp116 + exp114 科学题 15,841，92,889 题 / 11,612 步，对 v0.4 按图配对）：ScienceQA 82.1→82.5（+0.48 [−0.62, +1.67]）、dev_sqa 84.6→85.0（+0.40）；**相对上一实验 exp116：ScienceQA +2.19 [+0.95, +3.48]、dev_sqa +3.82 [+2.37, +5.31]** → 科学退步修复。GUI 80.1（对 exp116 −0.52，含 0；配错图 79.2，仍是文字先验）、ego 64.9（−0.51，含 0）、EgoThink 77.0（对 exp116 +2.32 [+0.17, +4.47]）、CountBench +1.43、MME 对 exp116 +1.26 [+0.17, +2.32]；图表 dev 56.3、UI dev 68.8（均过门槛，比 exp116 低 2–3 点）。**不过的一项**：CV-Bench −1.36 [−2.62, −0.08]（3D-depth 对 v0.4 −3.83、3D-distance 对 exp116 −4.00；二选一、v0.4 自身近随机），其余 13 集无显著退步。lv_report 已生成。裁决：作为合并配方底座，不是发布候选。详见 [exp117](experiments/2026-10-27-exp117-v4-gui-ego-science.md)。
+- **exp118**（要看屏幕的 GUI 题型）01:07 由 `scripts/v05/chain_exp118.sh` 自动启动：先评 v0.4 / exp116 的 `test_gui_state` 基线，再训练评测，预计 03:00 前后结束。
+
+**下一步**：exp118 判 GUI 是否看屏幕；过则合并 exp117 科学回放 + exp118 GUI 题型 + aitw-shopping / ego 扩量，复查 CV-Bench 3D，定 `r22-*`；3D 退步若仍在，加深度 / 距离真实照片数据。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-28 00:10：exp116（+GUI 操作 + 第一人称）结果：ego 成立，GUI 是文字先验；exp117 训练中，exp118 已挂接
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp）。
+
+- **exp116**（exp115 + GUI 12k + EPIC ego 12k，对 v0.4 按图配对）：test_ego 34.7→**65.4**（+30.73 [+29.28, +32.26]），配错图低 13–25pp（action 72.4 vs 47.9），EgoThink +0.00 [−3.15, +3.15] → **ego 判据通过**。test_gui 38.6→**80.6**（+42.08 [+39.22, +45.00]），但**配错图 78.9%**（Mind2Web 配错图 78.9 > 真图 78.2）→ 模型靠 goal + 历史操作推下一步，不看屏幕，**GUI 判据不过**。旧能力：ScienceQA −1.72 [−3.05, −0.38]、dev_sqa −3.42 [−5.22, −1.70] 仍显著（承自 exp115，对 exp115 不显著）；CountBench 对 exp115 +4.28 [+1.22, +7.33] 已恢复；其余集合均含 0；图表 dev 58.5、UI dev 71.9。相对上一实验 exp115：GUI +38.1、ego +31.6，科学不变。详见 [exp116](experiments/2026-10-27-exp116-v4-gui-ego.md)。
+- **exp117**（exp116 + 科学 15.8k）00:05 训练 3,500/11,612 步，loss 0.75–0.83，正常，预计 00:30 训完、01:20 评完。
+- **exp118 预写并挂接**：GUI 题改成要看屏幕才能答（去掉历史操作，干扰项换成同 episode 其他步骤的 gold 操作；词重叠基线 0.43→0.26），其余与 exp116 相同；`scripts/v05/chain_exp118.sh` 在 exp117 退出后先评 v0.4 / exp116 的改写 test，再训练评测。判据：改写 test 上真图 − 配错图 ≥ 10pp 且对 exp116 下界 > 0。见 [exp118](experiments/2026-10-28-exp118-gui-screen-state.md)。
+
+**下一步**：exp117 评完按预写判据裁决科学 / 计数；exp118 判 GUI 是否真的看屏幕；两者都过则合并配方、加 aitw-shopping / ego 扩量，定 `r22-*`。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-27 22:20：exp114 / exp115（v0.4 + 图表 + UI ± 科学 ± 计数）结果，exp116（+GUI 操作 + 第一人称）已接续开跑
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。均为实验（exp），不是正式轮次。
+
+- **exp114**（exp81 图表 + 科学 16k + ScreenQA UI）：图表 dev 58.6%、UI dev 66.8%（v0.4 54.7%）；ScienceQA +0.57 [−0.48, +1.62] 未达"下界 > 0"；CountBench **−5.70 [−9.57, −1.83]**。未通过。
+- **exp115**（去掉科学、补 3,000 计数）：图表 dev 58.9%（exp81 52.7%，+6.2），UI dev 70.7%（v0.4 +16.0）；CountBench −2.65 [−6.72, +1.22]（不再显著；相对 exp114 +3.05）；MMBench / MME / CV-Bench / NaturalBench / What'sUp / POPE / lv 三集均无显著退步；但 **ScienceQA −1.72 [−2.96, −0.48]、dev_sqa −2.08 [−3.31, −0.88]** 显著退步 → 判据 3 不过。归因对照：exp81 单独 CountBench −6.72 [−10.79, −2.65]，计数退步来自图表数据。详见 [exp115](experiments/2026-10-27-exp115-v4-chart-ui-count.md)。
+- **exp116**（exp115 + GUI 下一步操作 12k〔Mind2Web 6k + AITW 6k〕+ EPIC 第一人称 12k）：已预写判据（GUI / ego 在未见 App·网站 / 未见参与者的 test 上相对 v0.4 下界 > 0、配错图低 ≥ 5pp、GUI 超过只看文字基线 +5pp；EgoThink 和旧能力无显著退步），22:15 由 `scripts/v05/chain_exp116.sh` 自动接续：先冻结数据（`data/v05/exp116/MANIFEST.json`，GUI test 1,540、ego test 5,864、EgoThink 604），评 v0.4 / exp115 基线（含 v0.4 缺的 RealWorld 明细），再训练 + 评测，预计 23:40 前后结束。见 [exp116](experiments/2026-10-27-exp116-v4-gui-ego.md)。
+
+**23:02 补记**：exp116 训练 7,300/9,631 步，loss 0.69–0.75，正常；exp117（exp116 + exp114 科学题 15,841，92,889 题）已预写并由 `scripts/v05/chain_exp117.sh` 挂在 exp116 流水线之后自动启动，见 [exp117](experiments/2026-10-27-exp117-v4-gui-ego-science.md)。
+
+**下一步**：exp116 评完按预写裁决；ScienceQA 退步单独修（exp117 候选：exp116 混合 + exp114 的科学题，检验能否同时守住科学与计数）。**阻塞**：ImageJevBench v0.3.0 public300 / score / 正式接入仍是外部阻断，本轮无新证据。
+
+## 2026-10-27：exp112 未通过、exp113 排除分辨率，停止 D3 末层科学适配
+
+**当前采用不变：v0.4（`r21-soft`）**，v0.5 未发布。GPU 实查空闲（0%、412MiB），没有训练进程；exp112 已于 10-25 20:14 跑完，结果此前没写入，本轮补裁决。
+
+- **exp112（末十二层适配，256 步）未通过**：科学 72.27→74.22%（+1.95pp，图片配对 95% [−1.17, +5.08]），未达 +3pp 且下界 >0；图表 +2.34 [0, +5.43]，UI 不变，大小 +14.06 [+3.03, +25.81]（64 题 monitoring，只记录），位置不变。相对 exp110（72.66%）+1.56pp，相对 exp111（71.88%）+2.34pp，仍比 v0.4（83.20%）低 9pp。证据 `runs/exp112-d3-science-depth/train/report.json`。
+- **错误域切片**：D3 对 v0.4 的科学差距全部集中在三族——地图 / 地理 65.6 vs 96.7（61 题）、磁铁 21.1 vs 84.2（19 题）、天气 / 气候 44.4 vs 100（9 题）；其余 132 题 D3 81.8 vs v0.4 79.5。exp110–112 的训练输入里已有数百道同族题（exp111：highlighted 218、capital 347、magnet 241），三族几乎不动；磁铁、天气题固定偏向 attract / Pair 1 / weather。
+- **exp113（零训练，19 秒）**：最小图像像素 65,536→262,144，磁铁 4→3/19，地图 40→40/61（对照不变），概率确有变化（磁铁逐题最大变化 0.461）。按预写判据**排除分辨率**。
+- **决定**：D3 末层适配在科学图示上停止（exp110/111/112 三次都没过门槛，不再加步数或加层）；v0.5 候选回到 deVision 自身架构（v0.4 系），D3 只作参照。详见 [exp113](experiments/2026-10-27-exp113-d3-small-image-resolution.md)，就绪矩阵已更新。
+
+**下一步**：在 v0.4 架构上选下一个训练方向（从 exp81-chart 和 exp79 的结论出发，以真实场景集合与 v0.4 逐题配对作判据），先预写再跑。**阻塞**：ImageJevBench v0.3.0 的 public300 / score 语义 / 正式接入仍拿不到（外部），五用途正式比较做不了。
+
+
+## 2026-10-25 19:20 +08:00：exp110真实科学训练完成未达门槛，exp111覆盖续训进行中
+
+**当前阶段/实际状态**：已恢复训练优先。exp110实际完成256步/2048题并保存全部五份适配权重与优化器；未获得足够科学准确率提升，不采用。exp111从该末步权重和优化器接续，新增1024步/8192题的独立覆盖实验正在运行，19:19:37实查已新增51步，CE .658、梯度 .802，峰值显存2.89GB。Python435954、supervisor435950，前台工具会话81558；实际进程、逐步日志、checkpoint共同核对，非只读状态文件。仍采用v0.4，未发布v0.5。
+
+- **重要，直接观察**：exp110科学256题72.2656→72.6563%，仅+0.3906pp，图片配对95%[-1.5625,+2.3438]pp，未达到+3pp且下界>0的原主要门槛；NLL .610308→.586110。UI128题100%不变，图表128题86.7188→87.5%；大小64题70.3125→65.625%（区间含0），位置64题89.0625→87.5%。不能称科学能力提升或整体替换。证据[runs/exp110-d3-science/train/verification.json](../runs/exp110-d3-science/train/verification.json)、[exp110记录](experiments/2026-10-25-exp110-d3-science-adaptation.md)。
+- **已验证**：保存patch重载的科学256题与原末端概率误差<1e-5、语义一致；真图72.6563%、无图60.5469%、倒序73.4375%。原汇总漏qid报错，失败日志与执行源码保留；独立补控工具退出0、CPU复算退出0，不伪称原训练进程exit0。实际完成训练/640对逐题/768条补控，全部checkpoint保留。
+- **进行中，有上限的训练假设**：[exp111预案](experiments/2026-10-25-exp111-d3-science-coverage.md)检验首轮仅覆盖每源不足11%是否限制收益；保持lr1e-4、末四层MLP/末层全注意力秩8及回放比例，额外6144道科学题ID与exp110不重复、2048条回放。末四层16模块、532480参数，未改视觉/线性注意力核。从磁盘恢复patch全部张量一致，固定640题续训起点概率最大差0，优化器/输入身份哈希落盘。不是以首轮成功为由晋级；该覆盖试验再失败则停止简单加步数。
+- **数据限制**：本轮8192题5905图与保留集映射ID及可访问RGB像素交集0，证据runs/exp111-d3-science-coverage/{isolation_verification.json,train/coverage_verification.json,train/resume_verification.json}。1783个历史图片引用不可访问、近重复和外部预训练曝光仍未证明排除，不宣称完全隔离。原数据准备两次失败、原训练末尾汇总失败和唯一权重全部保留。
+- **阻断发布**：科学准确率未达标；正式ImageJevBench v0.3.0认可入口/public300/score语义、五用途、独立校准、完整回归和部署验收仍缺。exp109拿到的是旧版228/456配置，不能冒充目标版本。当前证据不支持按目标正式发布，已提前报告，不降低质量标准。
+
+**下一步/预算**：exp111预计19:40左右训练+固定复验，内部2400秒、外层2700秒，每64步独立权重+优化器，非有限/错误零loss/异常即停；监督进程存活，EXIT_CODE待实际退出采集。20:00原CC-Connect小时任务继续实查并按原门槛裁决；不启动并行GPU任务，不重复旧精度小面板。后续21–23点回归/可行独立校准，23–07点正式验收与材料，07–09点发布缓冲；正式证据缺口不解除则明确未达标。exp81控制权重2073754784 bytes保持保留。实际py_compile、独立隔离/重载/概率/NLL/bootstrap复算与git diff --check通过；未重装环境、改许可、创建递归定时任务或对外发布。
+
+
+## 2026-10-25 18:04:18 +08:00：exp109评分入口版本核对、进入发布收口
+
+**当前阶段/实际状态**：18:00训练冻结，仍采用v0.4，未发布v0.5。实读AGENTS/CLAUDE/目标/spec及最新实验日志；RTX5070实查0%/201MiB、无训练评测进程。exp81控制权重实查2,073,754,784 bytes；exp106 verification在。exp86原repro_after.log实读token1–49279<49280、image id49190一致、seq64，历史故障修复不重复。所有失败目录与唯一权重保留。CC-Connect原064e9c68仍为唯一启用小时任务，未创建/补触发或递归调度。
+
+- **本轮完成，直接观察**：[exp109](experiments/2026-10-25-exp109-official-score.md)预写后实际下载exit0；固定commit两份公开评分入口/profile及哈希、独立静态验证落盘runs/exp109-official-score。零GPU前向、零训练、无新checkpoint。
+- **阻断**：profile明确imagejevbench v0.1.，包装器要求public228/sealed456；不是目标v0.3.0 public300/sealed1200。load_system/score_group数学实现仍需维护者主机scorer.py与参考文件。不能据此宣称score契约完整或正式可执行。建议停止此旧profile检索路线；最小解除为v0.3.0认可的接入、合法public300与完整题型语义。证据原件official-profiles.json:25–30、official_score.py:70–89及verification.json。
+- **发布判断**：新增[就绪矩阵](experiments/2026-10-25-v05-release-readiness.md)，分别列明正式榜单、五用途、校准、回归、性能和发布材料。exp106退化仍在，当前不支持达标发布，距截止约15小时。已授权发布有效，但不提交不达标候选。
+
+**下一步/阻塞**：23:00前完成可复用研究材料与验收缺口收口；只推进能解除具体缺口的工作，不重复小面板或失败训练，不对失败候选拟合发布温度。周一08:00缓冲、09:00截止；正式执行接入和合格全域候选为关键阻塞。实际完成下载、哈希/AST/版本题数断言；未运行全仓测试、模型评测或正式榜单，未改环境/许可、未对外发布。
+
+
+## 2026-10-25 17:05:25 +08:00：exp108官方全题型与候选适配器边界核对完成
+
+**当前阶段/实际状态**：正式接入契约收口，仍采用v0.4、未发布v0.5。实读AGENTS/CLAUDE/目标/spec和最新日志，GPU实查0%/144MiB、无训练评测任务；exp106完整verification仍在。exp81权重实查2,073,754,784 bytes；exp86原repro_after.log确认词表映射及64图片token一致，历史故障已有修复，不重复。保留所有失败目录和唯一权重。CC-Connect仅原064e9c68每小时任务启用，未新建/补触发任务。
+
+- **本轮完成，直接观察**：预写并执行[exp108](experiments/2026-10-25-exp108-official-contract.md)，下载exit0，5份同commit公开原件及URL/哈希归档，独立复核和静态契约断言通过；零训练、无GPU前向或新checkpoint。
+- **阻断**：官方页面源码78行明确600 choice/300 Noul/300 score；找到的native_image适配器1–10行却明确proposed、未获正式认可且只处理choice，不能解除全题型接入缺口。其嵌套state.image.data也不是本项目图像传输契约，未来需显式适配并检查真正看图。当前不据未认可源码改产品API。证据`runs/exp108-official-contract/{manifest,verification}.json`及原始源码；验证标准是正式认可的运行路径、完整题型和概率评分语义。
+- **能力阻断仍在**：exp106科学图示对v0.4 −11.328pp、95%区间[−17.969,−4.688]pp；正式public300、五用途显著提升、独立校准及完整回归未完成。距周一09:00约16小时，当前不支持达标发布；发布授权有效，未提交不达标候选。
+
+**下一步/倒排**：检查固定commit的official_score.py公开依赖以定位score定义和完整执行条件，20分钟CPU预算；18:00冻结训练，23:00完成发布就绪证据矩阵与最小缺口，周一08:00缓冲、09:00截止。不给失败候选拟合虚假发布温度，不占卡空跑。实际py_compile、5文件哈希/契约断言及git diff --check通过；未运行全仓测试、正式榜单或训练，未改环境/许可、未对外发布。
+
+
+## 2026-10-25 16:05:51 +08:00：exp107正式接入证据归档与接口契约验证完成
+
+**当前阶段/实际状态**：v0.5正式评测接入收口；采用仍为v0.4、未发布v0.5。实读AGENTS/CLAUDE/目标/spec及最新实验训练记录，实查RTX5070 0%/144MiB，无训练评测进程；exp106完整逐题和report仍在，无活跃任务需干预。exp81控制权重实际2,073,754,784 bytes。CC-Connect原064e9c68启用、proj-codex、每小时整点/new_per_run/50分钟，仅1项，info last_run=15:07:14；本轮未新增/补触发任务。零训练、无新checkpoint，全部失败目录和唯一权重保留。
+
+- **已完成，直接观察**：预写并执行[exp107](experiments/2026-10-25-exp107-official-access.md)，实际exit0。固定发布者commit `4365ca7ec2ee12ea952079185cbf68f37bbf7ff1`，完整tree 43,352条/truncated=false；官方results与示例manifest原始响应、URL、哈希持久化于`runs/exp107-official-access/`。官方聚合source hash/built_at未变，示例明确8题public_examples_only，本次未取得public300；没有把路径搜索无结果写成题集不存在。官方[data card](https://benchmarkheaven.com/jev-models/data)仍仅提供系统级结果；[提交页](https://benchmarkheaven.com/submit)普通队列免费、须审核、时间由维护者决定，本轮未提交。
+- **阻断，直接观察**：`src/devision/infer.py:204`拒绝score，现有实际decide契约测试16 passed/21 deselected、exit0（含score拒绝）；说明当前规格行为正常，但完整正式评测兼容尚未实现。最小解除材料为明确score输入/输出及评分语义、合法public300归档或正式可执行接入。不能靠ECE替代官方Calibration。
+- **重要，历史结果未改变**：exp106科学图示相对v0.4 −11.328pp，图片配对95%区间[−17.969,−4.688]pp；不整体替换、不扩大exp94/96已失败配方。exp86原首错169占位/64视觉特征已有seq64修复和完整结果，tokenizer/config一致，不原样重复故障。
+
+**下一步/倒排**：下一轮优先从本轮固定tree定位官方score契约/评分及执行代码，30分钟CPU预算，形成明确可测适配再实现；不给失败候选做发布温度。18:00训练冻结，23:00完成可行回归/独立校准与缺口材料，周一08:00缓冲、09:00截止。距截止约17小时，正式public300、五用途显著改善、独立校准与完整回归仍缺，当前证据不支持按期达标发布；发布授权有效，未上传未达标版本。
+
+**改动/验证**：新增exp107预案/脚本/原始归档与结果，追加接入调研。实际元数据实验及16项现有接口测试完成；没有模型训练、GPU前向、全仓测试或正式榜单执行，未改依赖/许可。
+
+
+## 2026-10-25 15:07:01 +08:00：exp105完整复核、exp106 FP32科学图示退化确认
+
+**当前阶段与实际状态**：小型预训练骨干基线回归；仍采用v0.4，未发布v0.5。读取项目约定/目标/spec、最新实验/训练日志，实际GPU空闲且无训练评测后预写并串行运行exp106。768次CUDA前向完成、49.86秒、峰值3.55GB；结束GPU0%/144MiB、无本实验进程，零训练、无新checkpoint。外层shell未写出EXIT_CODE，原返回码未知，不以完整report冒充exit0；独立复算实际exit0。原launcher和日志保留，后续用前台工具会话/独立supervisor采集返回值。exp81控制权重实际2,073,754,784 bytes，全部失败目录及唯一权重保留。CC-Connect实查仅原064e9c68每小时启用，未创建、补触发或递归调度。
+
+- **已完成，直接观察**：exp105两设备各EXIT_CODE=0和24条明细；report_exp105.py复算通过，四域跨设备最大概率差9.8733e-6、重复差0、语义一致。CPU4线程p50/p95=4653.84/11031.03ms，CUDA205.30/506.52ms、峰值3.74GB；12题无预热monitoring，非正式速度admission。证据`runs/exp105-d3-crossdomain-device/verification.json`及[exp105追加](experiments/2026-10-25-exp105-d3-crossdomain-device.md)。
+- **重要，退化未消除（直接观察）**：固定exp99全部256图三臂，只改FP32，真图184/256=71.875%、无图153/256、倒序185/256；对v0.4 213/256差−11.328pp，图片配对95%区间[−17.969,−4.688]pp。看图增益+12.109pp [5.859,18.359]pp，倒序语义改变6.25%，原门槛失败。对BF16仅1题语义改变但概率最大差.115891，不能继承其校准。建议与决定：不整体替换v0.4，不扩大失败训练，不再重复本面板精度诊断；验证依据为完整三臂及v0.4逐题标签/概率/NLL/配对复算通过，仍非正式五用途或独立测试。证据[exp106](experiments/2026-10-25-exp106-d3-fp32-scienceqa.md)、`runs/exp106-d3-fp32-scienceqa/{report,verification,fp32-comparison}.json`及1024条明细。
+- **exp86故障核实**：本轮读取PIL2原始masked_scatter首错和seq64 repro_after.log：token1–49279<49280、image id49190一致、processor64。历史169占位/64特征不匹配已有修复及512题产物，未重复故障、未重装环境；pad警告不是已证实根因。
+- **阻断发布，提前报告**：正式public300合法归档/执行接入缺口沿用历史核查，本轮未重复联网、不声称题集不存在；五用途显著提高、score契约、独立校准及完整外部回归未完成，且科学图示退化在FP32下仍有证据。距周一09:00约18小时，现有证据不支持达标发布，也无法保证维护者按时接受上榜。已获发布授权，未上传未达标候选。
+
+**下一步/倒排**：优先正式ImageJevBench题集/执行接入的版本化材料核对与缺口收口，不再继续小面板精度复跑；新训练需有不同监督/可训层假设及预写门槛。18:00训练冻结、23:00可行回归/独立校准与缺口材料、周一08:00材料缓冲、09:00截止。最终候选未达能力门槛前不把开发集当独立校准，不生成虚假达标模型卡。
+
+**改动与验证范围**：新增exp106预案、运行及复算脚本，追加exp105结果；实际py_compile、768次CUDA前向、完整1024条逐题与bootstrap复算、git diff --check通过。未运行全仓测试、未更改依赖或许可、未外发发布、未干预他人任务。
+
+
+## 2026-10-25 14:05 +08:00：exp105非UI跨设备FP32验证已启动
+
+**当前阶段/实际状态**：仍采用v0.4，未发布v0.5。实读AGENTS、CLAUDE、目标/spec及最新exp103/104与日志，核对GPU0%/144MiB且无训练评测；预写[exp105](experiments/2026-10-25-exp105-d3-crossdomain-device.md)后启动CPU→CUDA串行固定面板。总timeout PID421869、CPU Python421875，14:04:51已有首条真实图表调用落盘（2.702秒），CPU217%、RSS约4.5GB；GPU仍空闲。不能据进程存活声称通过，最终结果待核实。日志`runs/exp105-d3-crossdomain-device/supervisor.log`，身份及逐题在cpu/cuda-0子目录；总预算1800秒、子阶段850秒、内部800秒、异常即停，独立EXIT_CODE。零训练、无新checkpoint。
+
+- **直接观察**：exp103 verification确认UI跨设备最大差2.767e-5、重复差0；exp104 verification确认587题FP32准确率61.16%、对v0.4 +14.48pp。支持继续FP32部署验证，不代表五用途或概率跨精度等价。exp105固定四域各3题、每设备两轮，按id哈希选题而非按误差，判据为跨设备≤.005、重复≤1e-5且语义一致。独立复算入口`scripts/v05/report_exp105.py`已编译，待完整两设备exit0后执行。
+- **exp86故障原证据**：本轮实读PIL2首个masked_scatter断言及seq64 repro_after.log；token1–49279<49280、image id49190一致、processor64，原169占位/64特征不匹配已有修复与512题结果。未重复已修复故障。exp81控制权重实际2,073,754,784 bytes，全部失败目录与唯一权重保留。
+- **阻断发布**：public300合法完整归档/正式执行入口缺口沿用历史核查，本轮未重复联网，不声称题集不存在；五用途显著改善、score、独立校准、完整回归仍未完成，科学图示/大小位置退化仍在。距周一09:00约19小时，当前证据不支持达标发布，正式接受日期也无法保证。发布授权有效，未上传不达标候选。
+
+**下一步/倒排**：核对exp105两阶段退出、完整48条及逐域概率，运行独立复算；失败保留现场并按域定位。18:00训练冻结，23:00完成可行回归/校准与缺口材料，周一08:00材料缓冲、09:00截止。最终模型/精度未冻结前不把开发集当独立校准。CC-Connect原064e9c68每小时enabled、仅1项，未创建或补触发任务。实际py_compile及git diff --check通过，未运行全仓测试，未重装环境、变更依赖/许可、触碰他人进程或外发发布。
+
+
+## 2026-10-25 13:09:04 +08:00：exp103完整复核、exp104 FP32真实照片回归完成
+
+**当前阶段/实际状态**：小型图文预训练D3基线的部署精度与真实照片回归；仍采用v0.4，v0.5未发布。完整读取项目约定/目标/spec、最新实验与日志，实查GPU空闲、无训练评测后预写exp104；首轮输出适配遗漏exit1，保留目录，修正noul后独立retry1实际587题exit0。结束GPU0%/144MiB、无本实验进程，零训练/无新checkpoint。exp81控制权重实查2,073,754,784 bytes，所有唯一权重和失败目录保留。CC-Connect原064e9c68每小时启用，仅1项，未新建或递归调度。
+
+- **已完成，直接观察**：exp103两设备各67调用、子阶段EXIT_CODE均0，完整逐题独立复算；32题两轮跨设备最大概率差.00002767、同设备重复差0、语义一致，原数值门槛通过。CPU4线程p50/p95=11.435/12.030秒，CUDA493.54/515.52ms、峰值3.74GB；仅UI本地system_one/非HTTP，不能外推全用途。根目录无总EXIT_CODE，不虚构launcher退出状态。证据`runs/exp103-d3-fp32-deployment/verification.json`及两设备原始产物；[exp103追加](experiments/2026-10-25-exp103-d3-fp32-deployment.md)。
+- **已完成，直接观察**：exp104真实照片587题/585图，FP32 61.1584%、NLL .799531，对历史BF16 −.1704pp、NLL +.001113，通过预写部署筛选；对v0.4 +14.4804pp，图片分组95%区间[9.3697,19.6581]pp。仅1题语义改变，但最大概率差.097842，须按最终路径独立校准，不能称概率等价或直接继承BF16校准。229.35秒、峰值3.74GB，概率/标签/NLL和历史同图gold核对、5000次bootstrap通过。证据`runs/exp104-d3-fp32-realworld-retry1/{verification.json,report.json,details.jsonl,IDENTITY.json,EXIT_CODE}`；[预写与结果](experiments/2026-10-25-exp104-d3-fp32-realworld.md)。该集已用于路线筛选，monitoring；预训练曝光未知，不是正式五用途。
+- **exp86故障实查**：本轮读取原repro_after.log，token1–49279<49280、image token49190一致、processor64；原PIL2首错169占位/64特征masked_scatter不匹配，已有完整修复评测。pad token警告仍有但不是已证实首错根因；未重复旧失败或已通过的CUDA诊断。
+- **阻断发布，提前报告**：正式public300合法归档/执行接入缺口沿用此前核查，本轮未重新联网，不声称题集不存在；五用途显著改善、score、独立校准、完整外部回归仍未完成，科学图示/大小位置已有退化，D3不整体替换v0.4。当前证据不支持达标发布，距周一09:00不足20小时，正式被接受上榜无法保证；发布授权有效，未上传未达标候选。
+
+**下一步/倒排**：FP32保留为可验证计算路径，下一轮优先非UI跨设备固定面板（图表/文档/照片和noul，约10分钟），验证数值结论适用范围；停止扩大exp94/96失败配方。18:00冻结训练，23:00完成可行回归/校准和缺口材料，周一08:00发布材料缓冲、09:00截止。仅在最终模型/精度冻结且有独立数据时做正式校准，不用本轮开发集代替。
+
+**改动/验证范围**：新增exp104预案、运行与独立复算脚本，追加exp103实际结果；实际py_compile、CUDA587调用、离线配对与概率/NLL复算、git diff --check通过。首轮noul适配失败完整保留；未运行全仓测试，未重装环境、改依赖或许可、对外上传发布。
+
+
+## 2026-10-25 12:05:11 +08:00：exp103 FP32完整32题重复性与端到端成本复验进行中
+
+**当前阶段/运行状态**：已完整读取AGENTS、CLAUDE、v0.5目标与spec、最新exp102及训练日志，核对实际GPU0%/144MiB且无训练评测后，预写[exp103](experiments/2026-10-25-exp103-d3-fp32-deployment.md)，在现有uv环境启动真实CPU→CUDA串行评测。总timeout PID416682，CPU Python PID416687；模型已完成加载，12:05实查已落盘5条真实调用（含3次warmup），CPU约383%占用，GPU仍0%/144MiB；尚无最终结果，不把进程存活视为验收通过。总预算1800秒、每设备内部800秒，逐题flush，错误即停，阶段退出码保留。日志`runs/exp103-d3-fp32-deployment/supervisor.log`，逐题和身份在其cpu/cuda-0子目录。零训练，无新checkpoint。
+
+- **重要，直接观察**：exp86原始repro_after.log确认token1–49279<49280、image token49190一致、processor image_seq_len64；历史PIL2原因是169占位/64特征不匹配，已有修复完整产物；本轮不重复故障或已失败配方，全部失败目录保留。exp81控制权重实际2,073,754,784 bytes，未改动。CC-Connect仅既有064e9c68每小时启用，本轮未创建或补触发任务。
+- **待验证**：exp103固定exp101全部32题、原生system_one、加载BF16权重转FP32、CPU4线程，各设备3次warmup和两轮32题。标准是跨设备概率最大差≤0.005、同设备重复≤1e-5并语义一致；记录全部延迟/概率，不挑较好轮。FP32四题成功尚不能外推全用途；本轮未完成校准或产品集成。py_compile已通过。
+- **阻断发布/路线决定**：当前仍采用v0.4。D3保留UI/文档/图表研究基线，但科学图示/旧大小位置已有退化，不支持整体替换，不扩大exp94/96失败训练。正式public300合法归档/执行接入缺口、五用途显著改善、score契约、独立校准和完整回归仍缺，现有证据不支持正式达标发布，周一09:00期限高风险；沿用已有接入核查证据，本轮未新联网、不声称题集不存在。
+
+**下一步/倒排**：本轮评测结束按完整32题及重复结果决定可用部署精度和CPU成本，下一小时核对退出码、逐题完整性与GPU再做分析，异常保留目录。18:00训练冻结、23:00完成可行回归/校准和缺口材料，周一08:00发布材料缓冲、09:00截止；只有证据支持才使用已授予发布权限，不以局部UI或数值通过冒充目标完成。未改依赖/许可，未重装环境，未上传发布或触碰他人进程。
+
+
+## 2026-10-25 11:07 +08:00：exp102固定输入精度诊断完成，FP32值得部署复验
+
+**当前阶段与实际状态**：小型预训练D3部署数值诊断；仍采用v0.4，无达标v0.5候选。读取项目约定、目标/spec与最新实验，实查GPU0%/144MiB且无训练评测后预写执行exp102；20条固定输入前向与8次原生调用核对、118.19秒、实际exit0。结束GPU0%/144MiB、无本实验进程。exp81控制权重实查2,073,754,784 bytes，全部失败目录/唯一权重保留。CC-Connect原064e9c68 enabled、每小时整点/new_per_run/50分钟，last_run10:10:26，无last_error，未创建/补触发任务。
+
+- **重要，直接观察**：exp101差值最大的固定4题、2张截图，CPU生成一次输入张量并保存跨设备复用。BF16最大概率差0.01394290>0.005，FP32降至0.00002772，BF16 CUDA math仍0.01543504；原生接口与固定张量前向最大误差2.10e-7。支持精度相关数值路径是主要因素，单改注意力后端不足，尚未定位具体层/算子。证据[exp102](experiments/2026-10-25-exp102-d3-device-numerics.md)、`runs/exp102-d3-device-numerics/{report.json,verification.json,details.jsonl,inputs.pt,EXIT_CODE}`。验证标准为固定输入下症状复现及各单变量比较，20条概率/候选映射/差值离线复算通过。
+- **重要，未验证部分**：本轮BF16与exp101同题最大差0.02597889，未精确复现原0.03625573，运行间/冷暖状态重复性仍待区分。选择后4题不能证明全用途等价；FP32仅为候选计算路径，尚未测其端到端成本和完整概率稳定性，独立校准也未完成。下一项固定全部32题加入重复调用/冷暖与FP32成本（约10分钟），完成条件是明确重复性及可验证部署精度，不原样扩量BF16或声称已修复全部原因。
+- **exp86故障复核**：实际读取after原日志：token1–49279<49280、image id49190一致、processor64；历史PIL2为169占位/64特征不匹配且已有完整修复CUDA产物。本轮未重复已通过复现、未重装环境。
+- **阻断发布，提前报告**：正式public300合法归档/执行接入缺口沿用已核查证据，本轮未重复联网；五用途显著改善、score产品契约、独立校准、完整外部回归尚未完成，D3科学图示/旧大小位置已有退化。现有证据不支持正式达标发布，周一09:00期限高风险；发布授权有效，未提交不达标候选。
+
+**倒排与下一步**：12:00依据能力与成本证据决定路线，不扩大exp94/96失败配方；18:00训练冻结、23:00可行回归/独立校准/性能、周一08:00材料与09:00截止。主指标接入与现有退化未解除前，不以局部UI、FP32四题成功替代目标。
+
+**改动与验证范围**：新增exp102预案/结果和诊断脚本；实际py_compile、20条前向、8次原生核对、独立离线复算及真实退出/GPU检查完成。零训练、无新checkpoint，未运行全仓测试，未改环境/许可或外部上传发布。
+
+## 2026-10-25 10:10:18 +08:00：exp101 CPU/CUDA端到端成本完成，设备概率筛选未通过
+
+**当前阶段**：小型图文预训练D3基线部署成本验证；仍采用v0.4，无达标v0.5候选。实查空闲后预写并CPU→CUDA串行完成各35调用，实际退出码均0；结束GPU0%/144MiB，无对应进程。exp81控制权重实查2,073,754,784 bytes；失败目录及唯一权重保留。CC-Connect原任务064e9c68实查启用、每小时整点，未新增/补触发递归任务。
+
+- **重要，直接测量**：32题UI热调用，CPU4线程p50/p95=11.00/11.35秒，CUDA=235.30/253.18ms、峰值1.99GB。原生backbone BF16/readout float32、D3_FAST=0，参考算子环境；非HTTP、非全用途或正式榜单计时。证据[exp101预案与结果](experiments/2026-10-25-exp101-d3-deployment-cost.md)、`runs/exp101-d3-deployment-cost/{cpu,cuda-0}/report.json`及逐题/身份/退出码。CPU代价明显，未安装新依赖。
+- **重要，数值筛选失败**：32/32语义答案一致，概率最大差0.03626，超过预写0.005；原因待验证，不能声称概率跨设备等价。建议下一轮取最大差题，固定相同输入张量、单变量精度/算子诊断（预计10–20分钟），完成条件是定位差异来源并选择可验证部署路径，不原样扩量。
+- **重要，部署契约差异**：固定revision原生`d3_runtime.py:316–343`使用熵式confidence，与项目Jev公式不同；筛选概率/准确率不受其影响，但正式集成需重建并验证confidence。尚未改产品API；score正式schema未验收。
+- **exp86故障核对**：原始repro_after.log确认token范围1–49279<49280、image id两端49190，processor64；历史PIL2失败为169占位/64特征不匹配且已有完整修复CUDA产物。未重复故障/重装环境。
+- **阻断发布，提前报告**：正式public300归档/可执行接入缺口仍在（沿用历史核查，本轮未重复联网）；五用途、独立校准、完整外部回归、score与部署验收未完成，且科学图示/旧大小位置已有退化。当前证据不支持正式达标发布，周一09:00目标高风险。发布授权继续有效。
+
+**倒排与下一步**：12:00据能力/成本证据确定路线，优先上述数值诊断与正式接入材料；18:00冻结训练，23:00完成可行回归/独立校准/性能，周一08:00材料、09:00截止。只在新监督或可训层假设成立时启动新训练，不扩大exp94/96失败配方。
+
+**改动与验证**：新增exp101预案、成本脚本、两设备实际70次调用和离线配对；py_compile通过，未运行全仓测试、未训练或生成checkpoint、未改依赖/许可、未上传发布。
+
+## 2026-10-25 09:06:00 +08:00：exp100真实计数全量开发对照完成，尚不支持D3整体替换
+
+**当前阶段与实际状态**：小型图文预训练骨干基线与真实数据覆盖；仍采用v0.4，无合格v0.5候选、未发布。已读取AGENTS/CLAUDE、目标/spec、最新实验和训练日志；实查起始GPU空闲、无训练评测后预写并串行执行exp100。真实1473次CUDA前向、94.76秒、峰值1.99GB、exit0，结束GPU0%/144MiB且无对应任务。exp81控制权重实查2,073,754,784 bytes，所有唯一权重及失败目录保留。CC-Connect仅既有064e9c68启用、每小时整点，未创建、补触发或递归定时任务。
+
+- **重要，计数扩大门槛未通过（直接观察）**：全部491道CountBench派生choice，D3真图268/491=54.58%、无图26/491=5.30%、倒序264/491=53.77%，v0.4历史同题246/491=50.10%。差+4.48pp，图片配对bootstrap95%区间[−1.43,+10.39]pp；真图-无图+49.29pp [44.81,53.77]pp，语义改变15.07%。具视觉依赖，但不满足预写相对v0.4至少+5pp且下界>0，不扩大本域直接验证或重复失败恢复训练。证据[exp100](experiments/2026-10-25-exp100-d3-countbench.md)、`runs/exp100-d3-countbench-retry1/`的report/verification/IDENTITY/四臂明细/EXIT_CODE。1964条标签、概率与NLL独立复算，491张RGB像素与历史baseline哈希全部一致。monitoring、未知预训练曝光、非原生开放计数、未独立校准，不代表正式检查用途达标。
+- **exp86故障优先复核（直接读取原始证据）**：实际`repro_after.log`词表49280、token1–49279、image token49190两端一致；历史PIL2首错为169占位/64视觉特征masked_scatter长度不匹配，seq64已有完整CUDA产物。pad token警告尚非已确认根因；未原样重复已修复故障或重装环境。本轮CPU选样脚本误替换哈希名导致首轮exit1，已修正、独立retry1成功，两个目录/日志均保留，未掩盖失败。
+- **探索性错误分析（非新主判据）**：实际查看ScienceQA val-2532地图；固定国家高亮问题12题D3对5/v0.4对11，其余244题180/202，不能把全部科学集差距归因为地图或选项映射。证据`runs/exp99-d3-scienceqa/country-question-analysis.json`与exp99追加；仅抽看一图，不称全量标签审计。
+- **阻断发布，提前报告**：正式ImageJevBench public300合法归档/执行接入仍缺，沿用历史调查、本轮未重复联网探测；五用途显著收益、score接入、独立校准、完整外部回归与CPU/CUDA部署验收未完成。现有D3还存在科学图示及旧大小/位置退化，当前证据不支持整体替换或正式达标发布。授权有效但不发布未达标候选；距周一09:00约24小时，无法保证按期被正式接受上榜。
+- **下一步与倒排**：下轮优先做D3完整输入/结构化输出部署及CPU成本测量，为12:00路线决定补成本证据（预计10–20分钟，GPU部分串行）；仅在新的真实监督/可训层假设和保护门槛成立后启动新训练，不扩大exp94/96原配方。18:00冻结训练，23:00完成可行的回归/独立校准/性能，周一08:00材料、09:00截止。正式题集接入仍为最小外部缺失，局部代理不替代目标。
+
+**改动与验证范围**：新增exp100预案/结果与运行、复算脚本，追加exp99错误分层。实际py_compile、1473次CUDA前向、1964条离线复算及491图历史身份检查完成；无新checkpoint，未运行全仓测试、未改依赖/许可、未对外上传或发布。
+
+## 2026-10-25 08:04:44 +08:00：exp99科学图示筛选未通过，D3整体替换风险确认
+
+**当前阶段与实际状态**：小型图文预训练骨干基线与真实数据覆盖，采用仍v0.4；无合格v0.5候选、未发布。先读取项目约定/目标/spec、最新实验日志，实查GPU空闲且无训练评测后预写并串行执行exp99。实际CUDA768次前向、47.38秒、峰值1.82GB、真实exit0；结束GPU0%/144MiB，无对应Python。无训练、无新checkpoint；exp81唯一控制权重2,073,754,784 bytes及所有失败目录保留。CC-Connect原任务064e9c68实查enabled、proj-codex、每小时整点/new_per_run/50分钟，last_run07:08:55；未新建、补触发或递归调度。
+
+- **重要，图示代理筛选未通过（直接观察）**：预写[exp99](experiments/2026-10-25-exp99-d3-scienceqa.md)，对scienceqa.unseen按图片ID固定哈希选256题，保留原state_text；D3真图185/256=72.27%、无图153/256=59.77%、倒序185/256，v0.4历史同题213/256=83.20%。D3-v0.4 −10.94pp [−17.97,−4.30]，真图-无图+12.50pp [6.25,18.75]，倒序语义改变5.86%。虽有视觉收益，整体替换门槛失败，停止本域晋级，不扩大已失败恢复配方。证据`runs/exp99-d3-scienceqa/{report.json,verification.json,IDENTITY.json,EXIT_CODE}`与四臂明细。验收标准为原预写双收益与顺序门槛，本轮第一项未过；这是monitoring科学图示代理，不是官方五用途结果。
+- **探索性分析，原因待验证**：四选98题D3 70.41%/v0.4 93.88%，是主要差距；三选64题76.56%/73.44%。选项数和内容混杂，不能认定token/映射bug。v0.4独对56、D3独对28；错误清单及分层在`slices.json`/`v04_only_correct.jsonl`，尚未视觉抽查。原生NLL未校准，不作固有概率质量比较。
+- **exp86复核（直接读取原始证据）**：after日志token1–49279<49280，image id49190两端一致、占位64；PIL2原故障是169/64的masked_scatter长度不匹配，已有完整CUDA修复产物。pad token警告不等于根因；未重复历史失败或再次空跑已通过复现。
+- **下一步与预算**：优先补计数/检查域的固定真实外部对照（数分钟CUDA），并少量视觉核查本轮四选错误，再于12:00做路线决定。18:00训练冻结、23:00完整回归/独立校准/CPU与CUDA性能、周一08:00材料、09:00发布截止不变。新训练必须先有区别于exp94/96的新假设与预写门槛，不能因期限扩大失败配方。
+- **阻断发布，提前报告**：正式ImageJevBench public300/接入缺口沿用历史证据，本轮未重新联网探测；五用途显著收益、score、独立校准、完整回归与CPU/CUDA部署验收尚未完成，本轮又确认科学图示代理明显退化。距截止约25小时，按时完整达标风险高；发布授权有效，但现有证据不支持正式达标发布。最小外部缺失仍是合法public300归档/manifest或正式可执行接入，局部UI/文档/图表不能替代。
+
+**改动与验证范围**：新增exp99预案/结果、筛选与独立复算脚本；实际py_compile、768次CUDA、四臂1024条概率/标签/NLL与图片配对bootstrap复算通过，退出码核实0。未运行全仓测试、未重装环境或更改许可，未上传/发布。
+
+## 2026-10-25 07:08:00 +08:00：exp98真实扫描表单绑定筛选通过，完成v0.4同题参照
+
+**当前阶段与实际状态**：小型图文预训练D3基线与真实数据覆盖，仍采用v0.4，v0.5未发布。实查起始GPU空闲且无训练/评测，CPU审计后串行完成D3 333次、v0.4 111次CUDA前向，均真实exit0；结束GPU0%/144MiB、无对应任务。D3耗时35.54秒、峰值1.88GB。无新训练或checkpoint；exp81控制权重实查2,073,754,784 bytes，所有失败目录、唯一权重及exp96补丁保留。CC-Connect仅原任务064e9c68启用、proj-codex、每小时整点/new_per_run/50分钟，实查last_run06:05:51；未创建或补触发任务。
+
+- **已完成，直接观察**：预写[exp98](experiments/2026-10-25-exp98-funsd-binding.md)，从作者固定commit取得FUNSD原包，只解析原train149页，按文档像素哈希固定30页开发。保守唯一实体链接转换得到训练414题/106页、开发111题/29页，原test未解析；与既有v05共42,306个图片路径像素交集0，train/dev交集0。全部525题链接、gold文本、框范围和候选实体映射独立核对通过。证据`data/v05/funsd/derived/{audit.json,manifest.jsonl}`及`runs/exp98-funsd-audit/`。近重复/预训练曝光未知，包内没有数据LICENSE，只本地研究、不再分发；实际视觉抽看两页，未声称完成开训前50题检查。
+- **重要正结果，限派生文档开发集（直接观察）**：D3真图109/111=98.20%、无图71/111=63.96%、倒序109/111，语义改变率0；真图减无图+34.23pp，29页聚类bootstrap95%区间[25.66,43.36]pp，通过预写门槛。v0.4真图38/111=34.23%，D3差+63.96pp [55.65,71.56]pp。证据`runs/exp98-d3-funsd-binding/{report.json,verification.json,IDENTITY.json,EXIT_CODE}`及四臂完整逐题（v0.4在`runs/exp98-v04-funsd/`）；复算`scripts/v05/report_exp98.py`。NLL均复核，但温度/分辨率/预训练不同，不把跨模型原始NLL差当固有校准差异，也不称官方FUNSD或五用途得分。
+- **方向决定**：该子集已接近满分，且无图文本捷径明显，不立即对其训练或重开exp96。新训练池保留为未来真实文档回放候选，开训前仍需50题视觉审计；下一项优先图示与检查域基线、同类型困难文档负例，不在已解子集增加预算。原test留给将来固定验证，不据本轮结果调它。
+- **exp86实际证据核对**：PIL2原日志首错masked_scatter totalElements<=srcSize，既有after日志token1–49279<49280、image id49190一致、占位64；seq64完整512题产物仍在。根因是169占位/64特征长度不匹配，非已确认词表越界；本轮未重复已修复故障或重装环境。
+- **阻断发布，提前报告**：本轮重新读取[正式提交页](https://benchmarkheaven.com/submit)，免费队列及所有提交的代码审核由维护者安排，周一09:00被接受无法保证；public300缺归档沿用历史核查，本轮未重探题集。正式主榜、五用途显著收益、score适配、独立校准、完整外部回归及CPU/CUDA部署验收仍未完成，现有证据不支持达标发布。发布授权有效，但不上传未达标候选。12:00路线决定、18:00训练冻结、23:00回归/校准/性能、周一08:00材料、09:00发布缓冲不变，按时完成完整目标风险高。
+
+**改动与验证范围**：新增exp98预案/结果、FUNSD转换/D3基线/独立复算脚本，补充文档数据来源与正式入口核实。实际py_compile、525题结构/链接验证、444次CUDA前向、四臂逐题概率与NLL复算、checkpoint身份哈希完成；未运行全仓测试、未改环境或许可、未对外提交/上传。
+
+## 2026-10-25 06:05:00 +08:00：exp97错误交集与面积语义/LoRA组合诊断完成
+
+**当前阶段与实际状态**：小型预训练D3路线诊断，仍采用v0.4，v0.5未发布。已阅读项目约定/目标/spec、最新实验训练日志并实查GPU和进程；启动前空闲，exp97真实进程退出0，结束后GPU0%/144MiB、无训练评测任务。exp81控制权重实查2,073,754,784 bytes，全部失败目录、唯一权重保留。CC-Connect只有原任务064e9c68，enabled、每小时整点、project=proj-codex、new_per_run；last_run实查05:07:15（本轮尚未返回，不能据此断言06点未执行），未创建或补触发新任务。
+
+- **已完成，直接观察**：预写[exp97](experiments/2026-10-25-exp97-size-error-factorial.md)，CPU复算错误交集后，只读加载exp96 step64补丁，执行128次CUDA前向，12.61秒、峰值显存1.82GB。64道大小题原生45对、面积语义51对、LoRA47对、组合56对；原生温度NLL依次.539521/.478905/.482325/.423011。组合对面积语义+7.8125pp、60图bootstrap95%区间[0,16.129]pp，下界未大于0，**预写晋级门槛未通过，不扩大exp96**。单独LoRA两道修复与语义七道修复重合一道；位置LoRA未改变任何对错身份。组合交互只是假设。证据`runs/exp97-size-error-factorial/{report.json,error-intersections.json,combined.details.jsonl,verification.json,EXIT_CODE}`与`runs/exp97-size-error-factorial.log`；monitoring小切片不能替代真实五用途验收。
+- **exp86故障核实**：读取原before/after复现日志，token范围1–49279<49280、processor/config image id49190一致；首错为169占位/64视觉特征不匹配，seq64已修复且有完整CUDA结果。本轮未重复失败实验或已多次通过的复现，无需重装环境。pad token警告不是已确认根因。
+- **阻断发布，直接与历史证据分开**：本轮重新读取[正式提交页](https://benchmarkheaven.com/submit)，免费队列与代码审核仍由维护者安排，无法保证周一09:00正式接受；主榜抓取触及大小上限。public300缺归档沿用历史调查，本轮未重复探测。五用途显著收益、score接入、独立校准、完整外部回归及CPU/CUDA部署验收仍未完成；现有证据不支持达标发布。已获版本发布授权，但没有发布未达标权重或材料。
+- **下一步与期限**：停止本面板继续提示搜索和末层q/v扩量，优先准备真实文档字段绑定的小预算数据/对照，同时补图示、检查域覆盖；正式300需合法题集归档及manifest或官方可执行入口。12:00路线决定、18:00训练冻结、23:00回归/独立校准/性能、周一08:00材料、09:00发布缓冲不变；当前约27小时，完整目标按时完成风险高，不能用局部收益缩减目标。
+
+**文档与验证范围**：新增exp97预案/结果、诊断脚本，追加正式入口核实；实际py_compile、CUDA四臂前向、面积语义逐题重现误差0、64条概率有限/归一化与准确率/NLL独立复算通过。无新训练、无新权重，未运行全仓测试，未更改环境/许可或对外上传。
+
+## 2026-10-25 05:07:06 +08:00：exp96末层LoRA恢复pilot完成，未通过扩量门槛
+
+**当前阶段与实际状态**：D3小型预训练骨干恢复实验，仍采用v0.4，v0.5未发布。检查实际GPU/进程空闲、exp94/95日志和产物后串行执行exp96，64次更新与384题验证完整，report和日志末尾汇总一致，耗时107.35秒、峰值显存2,031,112,192 bytes；结束后实际GPU0%/144MiB，无训练评测进程。注意launcher未写出EXIT_CODE，原shell退出码未知，不以完整report冒充exit0；此证据缺口不改变已完整逐题复算的结果。exp81控制权重实查2,073,754,784 bytes，全部失败目录和唯一权重保留。CC-Connect原任务064e9c68启用、每小时整点/new_per_run/50分钟，未创建新任务。
+
+- **重要，未通过预写规则（直接观察）**：四源256图一遍训练、末层q/v rank4、26,624可训参数、AdamW lr1e-3、batch4累积64更新。大小45/64→47/64（+3.125pp，图片bootstrap95%区间[0,8.065]pp），位置57/64不变，图表111/128、UI128/128不变。大小NLL .53952→.48233，位置 .26000→.26152，图表 .31442→.31428，UI .02090→.01066，均为原生温度未校准。位置未达+3pp，停止扩大本配方；大小区间下界0，不能称显著改善，准确率不变也不能证明完整等效。证据 `runs/exp96-d3-lora/report.json`、`validation.details.jsonl`、`verification.json`及`supervisor.log`；方案[exp96](experiments/2026-10-25-exp96-d3-lora-pilot.md)。这些是monitoring切片，不是正式五用途测试。
+- **工程与隔离验证（直接观察）**：exp93全部10份训练/验证源及COCO/VG alias哈希未变，训练inputs哈希匹配；384题原生概率与exp94基线最大误差0，保存补丁实际重载并注入runtime首题概率误差0，全部概率有限/归一化通过。step16/32/48/64补丁及优化器均保留，IDENTITY记录代码commit和实际脚本/配置/输入哈希。未实现自动续训，恢复需按保存的step及固定shuffle重建；补丁依赖原始基座，尚非完整发布checkpoint。近重复与外部预训练曝光仍未知。不同minibatch的CE不用于声称训练前后下降。
+- **exp86历史故障核对**：原修复记录表明image id49190两端一致、输入1–49279<49280，PIL2首错为169占位/64视觉特征masked_scatter长度不匹配，seq64已有完整CUDA评测通过。本轮不重复历史失败和多次通过的诊断；本次训练/验证未出现CUDA断言。
+- **下一步**：停止扩大本末层q/v配方。下一轮先做现有大小/位置错误交集与面积定义修正的CPU分析（约15分钟），形成可区分的新监督或可训层假设后才开新训练；优先补文档/图示/检查真实数据覆盖和正式基准接入，不继续以局部恢复代替五用途。长任务启动改用可靠等待/退出码采集，保留本轮原launcher证据。12:00路线决定、18:00训练冻结、23:00回归/独立校准/CPU与CUDA性能、周一08:00材料及09:00发布缓冲保持。
+- **阻断发布，提前报告**：正式ImageJevBench public300/评测接入仍缺合法归档或正式可执行入口（本轮未联网，沿用历史证据）；五用途显著收益、score接口、独立校准、完整外部回归和CPU部署验收未完成。现有证据不支持达标发布，无法保证周一09:00被接受上榜；不发布未达标候选。发布授权已收到，无需再次确认。
+
+**改动与验证范围**：新增exp96预案、独立YAML和训练脚本，实际py_compile、CUDA训练/384题验证、补丁重载、原生基线比较及离线NLL复算通过；未运行全仓测试、未重装环境或更改许可，未对外上传。
+
+## 2026-10-25 04:04:41 +08:00：exp95末层低秩适配工程探针完成
+
+**当前阶段与实际状态**：D3恢复训练接口准备，仍采用v0.4，v0.5未发布。本轮完整读取AGENTS/CLAUDE、v0.5目标与最新exp94/训练日志，并检查实际GPU、进程及产物：exp94独立验证已exit0，但大小恢复门槛失败，停止扩大冻结读出配方。GPU起始空闲，无活跃训练评测；随后串行执行exp95，真实子进程退出0，结束后GPU0%/144MiB、无训练评测进程。exp81控制权重仍为2,073,754,784 bytes，失败目录与所有唯一权重保留。CC-Connect原任务064e9c68实查启用、每小时整点，未创建新任务。
+
+- **已完成，直接观察**：预写[exp95](experiments/2026-10-25-exp95-d3-encoder-seam.md)后，在固定D3 revision的最后语言层23的q_proj/v_proj接入rank4增量，仅26,624可训参数；取exp93已审计训练图四源各一张。零增量原生概率最大误差0；单次AdamW更新CE .206853783→.206807924，梯度范数 .016906656，耗时4.66秒、峰值显存2,021,862,400 bytes。保存诊断补丁并实际重新读取核对张量相等。证据 `runs/exp95-d3-encoder-seam/{report.json,diagnostic-lora.safetensors,supervisor.log,EXIT_CODE}`。工程接口通过；四张训练图loss略降不证明泛化，补丁不是完整可发布checkpoint，未验证注入新runtime后的输出一致性。
+- **exp86历史身份核对**：最新记录及原修复脚本表明PIL2首错为masked_scatter长度断言，169占位/64视觉特征；已有seq64完整CUDA评测。不是已确认词表越界，本轮不重复原失败实验，也未再次运行已多轮通过的CPU复现。保留原始失败证据。
+- **下一步**：在exp93固定隔离训练池上预写末层低秩恢复pilot，保持exp94验证图片与原生D3对照，先做有限预算再按大小/位置恢复及图表/UI保持门槛决定扩量；不能把本次训练批下降作为采用依据。周日12:00路线决定、18:00训练冻结、23:00回归/独立校准/CPU性能、周一08:00材料与09:00发布缓冲不变。
+- **阻断发布，提前报告**：正式ImageJevBench public300与评测接入、五用途显著收益、独立校准、score接口及完整回归/CPU部署验收仍未完成，现有证据不支持达标发布，无法保证周一09:00被接受上榜。本轮未重新联网核验官方入口，不把历史访问证据冒充本轮结论；未发布未达标候选。
+
+**文档与验证范围**：新增exp95预案和诊断脚本；实际语法编译、CUDA四源前向/单步反向、补丁保存读取检查完成。未运行全仓测试、未改环境或许可。
+
+## 2026-10-25 03:05:43 +08:00：exp94冻结读出恢复pilot未通过，停止扩大本配方
+
+**阶段与实际状态**：已实际完成256题冻结读出100步训练和384题固定验证；独立验证进程exit0、384条明细完整、概率有限与归一化离线检查通过。当前仍采用v0.4，v0.5未发布。启动前GPU空闲；exp81原控制权重实查2,073,754,784 bytes，所有唯一权重、失败目录保留。CC-Connect仅原任务064e9c68，每小时整点启用，未新增任务。
+
+- **重要，恢复门槛未通过（直接观察）**：训练CE .282644→.272172，100步梯度有限，保存20/40/60/80/100步读出补丁；固定末步验证：大小45/64→42/64（−4.6875pp，图片bootstrap95%区间[−11.59,+1.59]pp），位置57/64不变，ChartQA111/128不变，UI128/128不变。未达到大小/位置均+3pp的预写规则，停止扩大此冻结读出配方；大小变化不能称显著退化。证据 `runs/exp94-d3-readout-validation/{report.json,validation.details.jsonl,probability-check.json,supervisor.log,EXIT_CODE}` 与原训练目录五份补丁。图表/UI不变不能视为完整等效证明，验证仅128题切片且未做独立校准。
+- **已修复的执行故障**：首轮验证224题后ChartQA noul缺criteria导致KeyError，exit1；原目录全部保留。核对原生d3_format.options为false/true，修正后独立YAML加载已有step100补丁只重做验证，没有重复训练。当前入口为exp92脚本的YAML pilot扩展，通用deVision pipeline/加载仍未支持D3，补丁不是完整发布checkpoint。
+- **exp86复核**：本轮实际CPU repro_after.py exit0，输入1–49279<49280、image token49190一致、占位64与配置64一致；历史PIL2为169/64长度不匹配。原pad token警告仍在，未证实导致该故障；未原样重跑CUDA失败实验。
+- **下一步与期限**：本配方停止；优先检查大小/位置错误的表示与可训encoder seam，预写低秩适配相对原生D3的对照，再决定是否投入单卡训练，避免扩大仅能降训练loss的读出。周日12:00路线决定、18:00冻结训练、23:00回归/独立校准/性能、周一08:00材料及09:00发布缓冲保持。
+- **阻断发布**：正式ImageJevBench public300/评测接入、五用途显著收益、score接口、独立校准、完整回归和CPU部署验收仍缺，现有证据不支持达标发布；不能保证周一09:00被接受上榜。本轮未重新联网查官方入口，沿用已记录的访问证据；未上传或发布候选。
+
+**文档与验证**：新增exp94预案、两份YAML，扩展现有探针入口；实际py_compile、CPU缓存训练、CUDA384题验证及概率完整性检查。未运行全仓测试、未重装环境或改变许可。
+
+## 2026-10-25 02:06:19 +08:00：exp93恢复训练数据审计与冻结特征缓存完成
+
+**当前阶段与运行状态**：D3小型图文预训练骨干的恢复pilot准备，采用仍为v0.4，v0.5未发布。实查RTX5070空闲、无训练/评测进程后执行；实际任务exit0，256条缓存完整，结束后GPU0%/144MiB。exp81控制权重仍为2,073,754,784 bytes；原权重及全部失败目录保留。同一CC-Connect Cron 064e9c68启用、proj-codex、每小时整点/new_per_run/50分钟，info last_run=01:06:09，本轮实际会话执行；未新建任务。
+
+- **已完成，直接观察**：按[exp93预案](experiments/2026-10-25-exp93-d3-cache-audit.md)，审计3776张图片，排除既有大小/位置、图表、UI、照片与公开示例验证图片，检查COCO/VG alias及解码RGB哈希。最终大小/位置/ChartQA/UI各64图，共256条，指定验证像素交集0。冻结D3特征与原生system_one四源首题概率误差最大4.56e-8；耗时40.42秒、峰值显存约1.90GiB。实际重载缓存、输入行数与SHA256校验通过。证据 `runs/exp93-d3-cache-audit-64/{audit.json,report.json,features.safetensors,metadata.json,supervisor.log,EXIT_CODE}`。缓存不是新模型checkpoint，未更新权重、未验证泛化。
+- **重要，数据预算修正**：初始128图/源审计失败，大小原始非翻转choice仅128图、排除验证后127，GPU模型加载前assert退出1。完整保留 `runs/exp93-d3-cache-audit/`。再次执行前把四源统一缩为64并写明修订，未放宽隔离、未按能力结果更换判据。近重复与外部基座预训练曝光仍未知，不能称全部训练源已全量审计。
+- **exp86复核**：本轮CPU实际重跑repro_after.py通过：输入1–49279<49280，image token49190两端一致，图像占位64与配置64一致；PIL2历史根因是169/64不匹配，未重复失败CUDA实验。pad token警告仍在，未确认与该故障有关。
+- **下一步与倒排**：接入D3的YAML训练/加载seam，使用本缓存做最低成本冻结读出恢复pilot，先预写固定验证、更新预算及大小/位置恢复、图表/UI保持门槛；缓存只适用于冻结骨干。周日12:00路线决定、18:00训练冻结、23:00完整回归/独立校准/性能、周一08:00材料与09:00发布缓冲不变。当前尚未完成此pilot，不把准备写成训练已执行。
+- **阻断发布，提前报告**：最新既有证据仍缺正式ImageJevBench public300/正式评测接入，五用途显著收益、score适配、独立校准、完整回归与CPU部署验收。正式接受另受维护者审核队列制约，当前不能保证周一09:00达标上榜。本轮未重新访问官方网页，未提交或发布无证据候选。
+
+**文档与验证**：新增exp93预写/失败修订/结果及缓存脚本，完成语法编译、CPU像素与身份审计、CUDA256条特征/四源原生一致性、缓存重载与哈希校验；未运行全仓测试、未重装环境、未改许可。
+
+## 2026-10-25 01:05:32 +08:00：exp92恢复训练接口探针通过
+
+**当前阶段与运行状态**：小型预训练D3骨干的恢复训练接入，当前采用仍为v0.4，未发布v0.5。先核对实际RTX5070空闲、无训练评测进程，再执行16张训练图的单步读出接口探针；持久exec会话退出码0、日志完整，结束后实际GPU0%/144MiB且无任务。exp81控制权重 `runs/exp81-chart/train/model.safetensors` 实查2,073,754,784 bytes，全部失败目录保留。CC-Connect同一任务064e9c68启用，每小时整点、new_per_run、50分钟；info实查last_run=00:05:02，无last_error字段，本轮由该调度会话实际执行，未创建新任务。
+
+- **重要，训练接入路径明确（直接观察）**：原生D3 runtime冻结全骨干，image_logits在inference_mode中，不能直接用于backward。按[exp92预案](experiments/2026-10-25-exp92-d3-training-interface.md)，重用原生图像嵌入与encoder，16张训练图与原生system_one的最大概率差1.49e-7；只对readout单步AdamW，梯度范数7.6772，训练批CE .412572→.410114；safetensors导出重载并注入原生runtime，首题最大概率差1.29e-8。工程门槛通过。证据 `runs/exp92-d3-training-interface/{report.json,supervisor.log,EXIT_CODE,inputs.jsonl,diagnostic-readout.safetensors}`。耗时6.14秒、峰值显存1.85GB；零骨干梯度，无泛化/校准结论，诊断readout不是完整发布checkpoint。
+- **exp86故障复核（直接观察）**：本轮uv实际重跑repro_after.py通过：token1–49279<49280，image id49190一致，图像占位/视觉长度64一致；历史PIL2为169与64长度不匹配，不是已确认词表越界。保留原失败日志及目录，不原样重跑。pad token警告尚在，未证明它与原故障有关。
+- **重要限制**：本探针按路径/image_id排除exp81 protect及exp91图片，仅验证训练接口；未验证全源COCO/VG映射、像素/近重复隔离、全骨干backward、完整导出、CPU及HTTP一致性。正式pilot前补数据身份审计、YAML训练及加载seam，不能把单步训练批loss降低写成恢复旧能力。
+- **下一步与预算**：停止继续提示搜索；最低成本恢复对照使用冻结骨干/可训readout，加入真实ChartQA/UI回放，并固定独立大小/位置、图表/UI验证，预写训练预算和退化停止条件后由YAML执行。现有pipeline只支持项目原骨干align/train，D3训练/加载尚未接入，不能直接拿exp81 YAML开跑。周日12:00路线决定、18:00训练冻结、23:00回归/独立校准/性能、周一08:00材料、09:00发布缓冲不变。
+- **阻断发布，提前报告**：正式ImageJevBench public300尚未取得，五用途、score接口、独立校准、完整外部回归与CPU性能仍缺。此次复查[官方提交页](https://benchmarkheaven.com/submit)仍为免费排队及代码审核，维护者决定时间，无法保证周一09:00正式被接受上榜。未提交未达标候选，也未将局部UI/图表收益冒充目标完成。
+
+**文档与验证**：新增exp92预案、结果和探针脚本；实际编译检查、CUDA原生前向一致性、有限非零梯度、单步更新、safetensors重载验证完成。未运行全仓测试，未重装环境、变更许可或覆盖旧权重。
+
+## 2026-10-25 00:04:52 +08:00：exp91独立图片复验完成
+
+**当前状态**：D3候选筛选阶段，仍采用v0.4，未发布v0.5。实查GPU空闲后执行exp91，256次CUDA前向完整、逐题与汇总已核对，结束后无评测进程、GPU0%/144MiB。exp81控制权重2,073,754,784 bytes仍在；无新权重，所有失败目录保留。CC-Connect同一任务064e9c68启用，每小时整点/new_per_run/50分钟，未创建新任务。
+
+- **重要，面积语义收益复现（直接观察）**：排除既有data/v05全部JSONL图片，从旧dev固定大小/位置各64张图。大小70.31%→82.81%，+12.5pp，图片bootstrap95%区间[4.69,21.88]pp，NLL .4951→.4444，通过预写门槛。位置82.81%→79.69%，−3.125pp，区间[−9.375,3.125]pp，不采用位置后缀。证据runs/exp91-d3-semantics-independent/report.json及256条明细；方案[exp91](experiments/2026-10-25-exp91-independent-semantics.md)。仅支持面积定义的局部作用，旧开发身份、外部预训练曝光未知，不证明五用途验收。
+- **exp86复核**：实际CPU再跑repro_after.py，token范围1–49279<49280，image id49190一致，图像占位/视觉长度64一致。原PIL2失败目录保留，不重复该失败实验。pad token警告尚在，未证实与原错误有关。
+- **执行限制**：准备阶段无系统python已改uv；原监督shell未存活，实际评测timeout子进程正常完成。误补启动被STARTED保护挡在模型加载前，污染日志和EXIT_CODE；原评测退出码未知，完整产物与进程退出有直接证据。详细经过保留于exp91记录，后续改持久化监督和独占日志，勿以此EXIT_CODE判断评测结果。
+- **下一步**：检查D3原生训练/损失/导出接口，固定真实数据回放与独立验证图片隔离，预写最小恢复pilot；面积后缀可保留，位置能力仍需恢复。周日12:00路线决策、18:00训练冻结、23:00回归/校准/性能、周一08:00材料、09:00期限。
+- **阻断发布**：仍缺正式ImageJevBench public300/接入，五用途、score适配、独立校准、完整回归及部署性能未完成。无法据当前局部收益保证周一达标；不提交冒充完成的版本。
+
+**改动与验证**：新增exp91预写/结果、推理复验与复算脚本；编译检查、实际CUDA256前向和5000次图片配对复算完成；未运行全仓测试，未修改环境/许可。
+
+## 2026-10-24 23:05 +08:00：exp90语义诊断完成，大小题部分恢复
+
+**当前阶段与实际运行**：小型原生图文骨干筛选，当前采用仍v0.4，未训练新权重、未发布v0.5。启动前实查GPU0%/144MiB、无训练评测进程；exp90实际CUDA128前向、逐题完整、汇总和STATUS完成，进程退出后GPU0%/144MiB。外层启动器未留下EXIT_CODE，退出码未知；不以状态文件单独证明完成。exp81控制权重实查2,073,754,784 bytes，失败目录均保留。
+
+- **重要，语义差异仅解释部分退化（直接观察）**：生成器`scripts/data/v2_coco_spatial.py:75`使用annotation area，非bbox面积；抽查六图保留`runs/exp90-d3-semantics/error_sheet.jpg`。预写[exp90](experiments/2026-10-24-exp90-d3-semantics.md)后，只附加统一面积/坐标定义，固定原128题、原序、权重与处理器。size70.31%→79.69%，+9.375pp，图片分组95%区间[1.56,18.03]pp；position89.06%不变，区间[-4.55,4.76]pp。证据`runs/exp90-d3-semantics/report.json`及128条明细。建议在独立图片验证，完成条件为收益在预先固定独立集复现。size仍低于exp81的93.75%，位置退化仍在，不改变旧成绩、不宣称恢复验收通过。
+- **exp86故障复核（直接观察）**：本轮实际CPU运行repro_after.py通过：词表49280、输入1–49279、image token49190两端一致、占位/视觉特征64。原错误为masked_scatter长度不匹配，修复已存在且有完整CUDA评测；未重复原始失败尝试。pad token警告仍存在，未证明与原故障有关。
+- **调度核验**：CC-Connect任务064e9c68启用、proj-codex、每小时整点/new_per_run/50分钟，info实查last_run22:05:46，无last_error字段。未新建或递归创建任务。
+- **下一步与预算**：先固定独立旧开发图片，排除本轮所有诊断图片，做面积措辞复现（预计数分钟CUDA）；据此预写恢复训练pilot。周日12:00路线决策、18:00训练冻结、23:00完整回归/独立校准/CPU与CUDA性能，周一08:00材料、09:00发布期限不变。
+- **阻断发布**：正式ImageJevBench public300/正式接入未取得，五用途、score适配、独立校准、完整外部回归与部署验收未完成。当前证据不足以支持达标发布；最小外部缺失仍是合法public300归档/manifest或正式评测接入，局部图表/UI成功不能替代。
+
+**文档与验证**：新增exp90预写及结果、诊断与复算脚本；脚本编译、实际CUDA128前向及逐题配对复算通过；未运行全仓测试、未重装环境或改变许可。外层退出码缺失已披露，后续长任务须用持久化监督进程确保wait与退出码落盘。
+
+## 2026-10-24 22:05 +08:00：exp88完成，exp89排除明显候选顺序偏置
+
+**当前阶段与实际状态**：小型图文预训练骨干基线筛选，当前采用仍v0.4，无新训练权重、未正式发布。起始实查RTX5070为0%/144MiB且无训练Python；exp88已完整退出，六份逐题文件与报告齐全。随后单卡执行exp89，128条完整，完成后GPU恢复0%/144MiB且进程退出；未干预其他任务。exp81唯一控制权重实查2,073,754,784 bytes，全部失败目录保留。
+
+- **重要正结果，限路线筛选（直接观察）**：exp88图表1000题/753图85.2%，对exp81 +32.5pp [28.89,36.20]；照片587题/585图61.33%，对v0.4 +14.65pp [9.54,19.76]。真图相对错图收益分别50.8pp/22.83pp且区间下界>0。证据`runs/exp88-d3-panels-local/report.json`及六份明细，共4838前向。外部预训练曝光未知，不能归因为单一架构变量，未经独立校准。
+- **重要退化，暂缓扩大训练（直接观察）**：保护总体81.97%对80.05%，但位置64题下降9.375pp [-17.74,-1.54]、大小64题下降23.4375pp [-35.48,-11.67]，触发原预写门禁。不能用总体改善覆盖分项退化。下一步先抽查错误图像、框面积标签和指代，区分语义/标注差异与能力缺口，再决定恢复训练pilot；完成条件为有逐题视觉证据和独立验证集的预写方案，不直接扩量。
+- **已完成诊断（直接观察）**：预写[exp89](experiments/2026-10-24-exp89-d3-protect-order.md)，固定上述128题只反转候选。位置原序89.06%/倒序90.63%、答案改变1.56%；大小70.31%/67.19%、改变6.25%，均低于20%触发线。结果不支持明显顺序偏置解释，不选择较好顺序充当收益。证据`runs/exp89-d3-protect-order/report.json`、128条逐题、IDENTITY、日志；复算`scripts/v05/report_exp89.py`。外层启动器退出码未落盘，明确未知；实际逐题128条、两来源各64、完成汇总存在、进程已退出，离线复算成功。无需为补退出码重复评测。
+- **exp86复核（直接观察）**：本轮CPU重新执行`repro_after.py`成功：image token49190两端一致，输入范围1–49279<49280，image_seq_len64、占位64。原PIL2日志首错为masked_scatter_size_check的totalElements<=srcSize，既有修复和全量CUDA证据保留；不再按未修复token越界重跑。模型配置另有pad token警告，但本检查未证明它导致原故障。
+- **调度与期限**：实查CC-Connect同一任务064e9c68启用、proj-codex、整点每小时/new_per_run/50分钟，last_run21:14:16，无last_error；未创建递归或重复任务。周日12:00路线决策、18:00训练冻结、23:00回归/独立校准/性能，周一08:00材料与09:00发布缓冲继续有效。
+- **阻断发布**：正式ImageJevBench core public300与正式接入尚未取得；五用途显著收益、score适配、独立校准、CPU/CUDA性能和完整回归未完成。当前证据不支持达标发布，已提前明确报告；需要合法public300归档/manifest或正式评测接入。局部UI与图表成功不能替代上述条件。
+
+**验证范围**：本轮CPU处理器复现、CUDA128次实际前向、离线完整性与顺序复算、两个脚本py_compile；未运行全仓测试、未重装环境、未更改许可、未上传或发布。
+
+## 2026-10-24 21:13 +08:00：exp87原生决策UI筛选通过，exp88全域辅助面板进行中
+
+**阶段与实际状态**：小型图文预训练骨干基线筛选，当前采用仍v0.4；无新训练checkpoint、未正式发布。先读AGENTS/CLAUDE、目标和最新实验，并核对GPU/进程/日志/权重。起始GPU0%/144MiB，无训练；exp81唯一控制权重2,073,754,784 bytes存在。exp87完整结束并释放GPU后才启动exp88。21:13直接观察exp88实际Python PID376558、timeout PID376554，GPU45%/2317MiB；chart.real逐题已130条（日志第129题累计86.82%），正在持续写出，不能把部分分数当完整门禁。按现有吞吐预计余下约10–20分钟，2400秒内部预算/2450秒硬退出；日志`runs/exp88-d3-panels-local/supervisor.log`，退出码EXIT_CODE，成功后自动离线报告。
+
+- **exp86故障复核通过（直接观察）**：本轮重新执行`runs/exp86-smol-ui-baseline-seq64/repro_after.py`，image token49190一致、输入范围1–49279小于词表49280、占位64与视觉特征64一致；原始错误是masked_scatter长度不足，不能继续称已确认token越界。已有完整512+256题及提示诊断证据，未原样重跑失败实验，全部失败目录保留。
+- **重要正结果，限开发UI（直接观察）**：exp87固定D3-lite revision `03560c26f5199c3c04129a2ccb38960c913635e0`，原生D3.system_one概率读出，实际768条/exit0。真图256/256，轮换错图0/256，倒序255/256；语义答案改变率0.390625%。对exp81 +59.765625pp，64四元组5000次bootstrap95%区间[55.078125,64.453125]pp；P1/P2及顺序诊断通过，决定晋级其他面板。证据`runs/exp87-d3-ui-pil/native_report.json`、IDENTITY及逐题文件，复算`scripts/v05/report_exp87.py`。影响：支持转向原生多模态决策起点继续验证；外部预训练是否见过同图未知、像素预算更高，不作单因素归因或正式五用途结论。原始NLL未校准。
+- **重要兼容问题已处理**：D3下载过滤初次遗漏jinja/txt，被原manifest拒绝，保留`runs/exp87-d3-ui`。AutoProcessor还强制加载缺失torchvision的视频组件；未安装依赖，新增静态PIL适配，明确不支持视频，CPU实际图像token/网格匹配后CUDA完整768次通过。PIL与torchvision未做数值等价验证，作为适配因素披露。exp88首个目录又在新版Hub全快照local_files_only检查退出（尚未前向），改为exp87已经验证的本地revision路径，保留原D3 manifest校验，不重复无效下载。全部失败目录保留。代码与方案分别为`scripts/v05/d3_{ui_baseline,image_processor,panels}.py`和[exp87](experiments/2026-10-24-exp87-d3-baseline.md)、[exp88](experiments/2026-10-24-exp88-d3-panels.md)。
+- **进行中与下一步**：exp88固定图表1000、旧保护832、真实照片587，各真图/不同图片全局轮换，共4838前向。比较exp81同题与照片v0.4，图片分组bootstrap5000/seed88；预写“图表或照片至少+5pp且下界>0、各面板/旧来源无显著≥3pp退化、图表/照片真图收益下界>0”。通过才预写新骨干训练pilot；若失败先分析，不直接扩大训练。独立校准、完整外部与laya对比、CPU/CUDA性能及deVision接口集成均尚待执行；此轮是外部基线，不冒充完整训练轮次。
+- **阻断发布**：正式ImageJevBench public300仍未取得，score适配、五用途显著改善、独立校准与性能尚未完成。最小外部缺失仍为合法core public300归档/manifest或正式评测接入，不用8示例/UI替代。继续周日12:00路线决策、18:00训练冻结、23:00回归校准性能、周一08:00材料与09:00前发布缓冲；关键条件不满足则提前报告未达标，不伪称发布达标。
+
+**调度与验证范围**：CC-Connect原任务064e9c68已启用，project=proj-codex、每小时整点/new_per_run/50分钟，实查last_run=20:04:59且无last_error；未创建递归或重复任务。新增脚本py_compile通过、CPU映射预检与真实CUDA完整exp87通过；exp88仅确认已开始并持续推进，尚未得到完整结果。未运行全仓测试、未重装环境、未更改许可或发布权重。
+
+## 2026-10-24 20:04 +08:00：exp86独立提示诊断完成，停止该提示搜索
+
+**阶段与运行状态**：小型图文预训练骨干筛选；无合格v0.5候选，当前采用仍v0.4。实际GPU起止均0%/144MiB、无其他训练；本轮串行192前向全部完成，两个timeout子进程exit0，已释放GPU。零训练，无新checkpoint；exp81控制权重实查存在（2,073,754,784 bytes），所有失败目录保留。
+
+- **故障复核已通过（直接观察）**：重新执行`uv run --no-sync python runs/exp86-smol-ui-baseline-seq64/repro_after.py`，实际token范围1–49279、词表49280、image token49190、占位64与特征64一致。既有512题日志与倒序256题明细均存在，未重复原始失败运行。无环境重装。
+- **重要结果与决策**：预写后在exp85/calib全部32题/8组比较空前缀和固定`Answer: `，检查与ui_dev图片路径零交集。原序/倒序/组内错图准确率：空前缀25.00%/40.625%/28.125%；Answer前缀40.625%/40.625%/28.125%。两顺序平均+7.8125pp，组bootstrap95%区间[-4.6875,20.3125]pp，答案改变率均78.125%。未满足“顺序敏感性下降”的预写必要条件，停止该提示搜索，不扩大Smol微调。证据`runs/exp86-prompt-calib-report.json`及两目录192条明细；复算脚本`scripts/v05/report_exp86_prompt.py`。小样本结果不支持显著改善，校准集现已用于提示选择，后续不得仍标纯calibration_fit。
+- **调度直接核验**：CC-Connect同一任务064e9c68启用，真实project=proj-codex，每小时整点、new_per_run、50分钟；info实际last_run=2026-10-24T19:42:28+08:00且无last_error。未新建/递归创建任务。
+- **阻断与下一步**：ImageJevBench正式public300仍未取得，正式score适配、五用途显著收益、独立校准与CPU/CUDA部署验收未完成。最小外部缺失材料仍为合法core public300归档与manifest；8例及本UI不替代。下一项优先D3-lite原生决策baseline，先固定revision/审阅代码/核对现有环境兼容性，再按30分钟单卡预算同题筛选；本轮未声称已执行D3。继续按周日12:00路线决策、18:00冻结训练、23:00回归校准性能、周一08:00材料与发布缓冲倒排。若关键门槛或正式接入仍失败，不以期限代替证据正式发布。
+
+**本轮改动与验证**：评测脚本支持显式输入文件、组内轮换及assistant前缀，身份记录前缀/输入路径，汇总记录输入哈希；增加诊断复算脚本。两个脚本py_compile通过，真实CUDA192前向与离线复算通过；未运行全仓测试。方案与结果追加到[exp86记录](experiments/2026-10-24-exp86-smol-baseline.md)。
+
+## 2026-10-24 19:41 +08:00：exp86处理器修复、完整UI基线与倒序诊断
+
+**当前阶段**：小型图文预训练骨干筛选，尚无v0.5合格候选；当前采用仍为v0.4。实查GPU/进程未发现活跃训练后串行执行，未干预他人任务。CC-Connect Cron `064e9c68` 已启用，实际project为`proj-codex`，整点每小时、new_per_run、50分钟超时；本轮为19:37补触发的实际执行，旧last_error在本轮返回前仍可能显示busy，不将其冒充已成功完成调度。未创建递归任务。
+
+- **阻断故障已修复（直接观察）**：PIL2 `supervisor.log`首错为masked_scatter源长度不足。CPU检查证实tokenizer与模型image token均49190，输入范围1–49279在词表49280以内；遗漏原processor_config的image_seq_len64导致当前处理器默认169。显式读取64并增加前向前校验后，真实CUDA完整512题成功。失败/修复复现保存在`runs/exp86-smol-ui-baseline-seq64/repro_{before,after}.{py,log}`，三个原始失败目录保留。未重装依赖、未改缓存权重。验证标准为CPU映射/长度检查及原始协议全量前向，均已通过。
+- **重要结果（直接观察）**：`runs/exp86-smol-ui-baseline-seq64/report.json`：真图98/256=38.28%，错图55/256=21.48%；对exp81 40.23%差−1.95pp，64四元组5000次bootstrap区间[−9.77,+5.86]pp；真图减错图+16.80pp [8.59,25.00]。P1未过、P2通过，不能据此换骨干或扩大训练。该模型原始NLL1.626，未校准，不作跨模型概率质量结论。零训练无新checkpoint；exp81唯一控制权重`runs/exp81-chart/train/model.safetensors`保留。
+- **已完成（19:42实查退出及256条明细）**：独立目录`runs/exp86-smol-ui-reversed-seq64`，launcher timeout PID371473，600秒硬退出，日志supervisor.log、逐题ui.reversed.details.jsonl。只反转同题候选顺序，检查语义答案敏感性；若变化率>20%或提升≥5pp，先验证读出协议；否则转下一预训练候选筛选。倒序92/256=35.94%，较原序−2.34pp [−10.55,+5.47]，语义答案改变率87.5%，触发预写读出敏感规则；暂不训练，下一轮先比较独立开发上的提示/答案位置协议，不能选择更好顺序充当收益。GPU任务已退出，未占卡等待。实验预写与完整证据见[exp86](experiments/2026-10-24-exp86-smol-baseline.md)。脚本py_compile通过；未运行全仓测试或新训练。
+- **发布阻塞**：ImageJevBench core public300仍未取得，正式score题型适配、五用途显著提升、校准及部署性能均未完成。已有8示例不能替代正式验收；因此当前不能承诺2026-10-26 09:00前达标上榜。现有数据筛选后exp82v2仅564训练/84校准/361开发题，exp85四元组可用组136/74，不能把重复呈现当独立数据扩量。
+
+**倒排下一步**：周六优先完成候选读出有效性与真实数据覆盖；周日12:00前固定可训练路线与完整验收输入，18:00前结束训练并冻结候选，18:00–23:00留回归/独立校准/CPU与CUDA性能，周一00:00–08:00留模型卡/本地发布验证和正式上传缓冲。此为预算安排而非完成承诺；若正式题集或关键指标仍阻塞，明确报告未达标，不发布成达标v0.5。发布授权已收到，只有证据支持才执行正式发布。
+
 | 轮次 | 日期 | 配置 | 相对上一轮改了什么 | 状态 |
 |---|---|---|---|---|
 | v1-release-0.1 | 2026-10-01 | `configs/v1-release-0.1.yaml` | 首个完整流程（对齐 → 2a → 2b），发布为 0.1 | 被 v2 超过 |
@@ -29,6 +728,22 @@
 | r19-n2 | 2026-10-21 | `configs/r19-n2.yaml` | 从 v0.3 一遍 data-n2（742k：VQAv2 / GQA 各降到约 20 万，Visual7W 全量、场景图空间描述选择、COCO / TallyQA 计数 0–10、CLEVR、IconQA、合成磁铁 / 溶液示意图，答案能靠文字猜的选择题已去掉）；第一次运行带 MapQA，第 22,000 步止损（`runs/archive/r19-n2-stop-mapqa`） | 验收规则 1、2 通过，3、4 未通过；数据 bug 丢了 46% 的 ScienceQA |
 | r20-science | 2026-10-21 | `configs/r20-science.yaml` | 从 r19 短程一遍（123k）：修正后的数据里全部 ScienceQA / AI2D / TQA ×3、IconQA、合成磁铁题、4 万回放 | **v0.4 候选**：验收规则 1–3 通过，规则 4（校准）卡在 POPE / size / MMBench / MME；待负责人决定插值或 r21 |
 | r21-soft | 2026-10-22 | `configs/r21-soft.yaml` | 从 r20 短程一遍（104k）：存在题 4 万 + 大小题 4,331 的 gold 软化成 0.9 / 0.1，6 万回放；温度在均衡开发集上拟合 | **当前采用，发布为 v0.4**（负责人 2026-10-22 接受取舍；规则 4 未通过） |
+
+## exp83-ui-tok256（2026-10-24）
+
+从exp81折叠到256视觉token，在exp82相同数据/seed/1,024更新上复测真实UI。终点67.97%，对64token exp82的69.92%差−1.95pp，区间跨0；真图比错图−0.39pp，旧保护NLL超门槛且coco-position/gqa-v2退化。**拒绝采用**，自动进入exp84。短程结果不证明所有256token配方无效；详细局限和区间见2026-10-24-ui-cycle-results.md与runs/exp83/report.json。
+
+## exp82-ui（2026-10-24）
+
+从exp81进行真实ScreenQA派生四选一短程迁移，512道UI题各4次，混图表和旧回放，共8,192呈现/1,024更新。开发256题58.6%→69.9%，但错图67.6%，P2未过；旧保护T=1 NLL0.4951→0.5917，ai2d触发退化，P3未过。**不采用、不扩量**，保留失败权重作证据。详情2026-10-24-exp82-ui-plan.md与runs/exp82/report.json。
+
+## exp81-chart（2026-10-23）
+
+从v0.4以CE扩量24k真实ChartQA派生四选一＋24k旧回放，6,000更新。固定开发1,000题31.7%→52.7%，对pilot45.7% +7.0pp [3.8,10.1]；真图减错图8.2pp [4.9,11.4]，旧保护未报警，照片46.7%点估计持平（不等效证明）。P1/P2/P3/P4通过，**作为图表方向后续起点**；不是全域候选/正式发布。报告runs/exp81/report.json及exp81方案。
+
+## exp80-chart-r / exp80-chart-c（2026-10-23）
+
+同8k真实图表＋8k回放，各2,000更新，从v0.4对照RLCD+CE和CE。开发1,000题31.7%→43.4%/45.7%，两臂均过P1/P2/P3；C-R +2.3pp区间跨0，按预写规则优先简单CE，不宣称目标函数稳定胜负。采用CE扩量验证，未发布。完整结果和汇总脚本修复留证据见exp80方案及runs/exp80/report.json。
 
 ## r21-soft（r20 + 存在 / 大小题标签软化；准确率最好，校准换了几处地方没过）
 
@@ -714,3 +1429,35 @@ r14b 数据（r14 + v6 镜像对 + VSR）加解冻 SigLIP 最上面 4 层（5e-6
 **结果**：VQAv2 是非 0.648、GQA 0.635、COCO 出题 0.761、POPE adversarial 0.773（300 题）；ECE 拟合集 0.025–0.042，POPE 0.098。左右关系在随机水平。
 
 **产物**：checkpoint `runs/v1-release-0.1/stage2b`（发布的 0.1）；评测 `runs/v1-release-0.1/eval/`（只有汇总 JSON，没有逐题明细）；SwanLab 对齐 `or3c40kc`、2a `dftqxbzw`、2b `njwfkisb`。
+
+## 2026-10-25 18:24 +08:00：负责人纠偏，恢复训练优先
+
+最近数轮偏重诊断/接入，真实训练仅exp94读出100步、exp96末层q/v低秩64步，尚未形成性能提升。撤回自行设定的18:00冻结；下一阶段优先D3真实科学图示监督适配与旧能力回放，先核对隔离，再扩大可训层的独立对照。已实际盘点data/v4/scienceqa.jsonl为4948题4443图，science_mix为123084题，盘点不代表已通过全量隔离。证据runs/v05-prep/science_training_inventory_20261025.json。已将纠偏写入原CC-Connect任务064e9c68，无新增任务。本次尚未启动新训练，不虚报。
+
+## 2026-10-25 19:10 +08:00：exp110真实科学适配开始参数更新
+
+**当前阶段/实际状态**：按负责人18:24指令撤销旧冻结、恢复训练优先；仍采用v0.4，v0.5未发布。19:03实查RTX5070空闲无训练评测，完整核对最新实验/日志后预写[exp110](experiments/2026-10-25-exp110-d3-science-adaptation.md)，19:08启动。19:10:44实查Python435289实际更新53/256步，CE .366、梯度范数1.280，峰值显存2.92GB；训练前640条已完成，尚无after结果，不能声称能力改善。约1秒/步，预计本轮训练与复验再需5–8分钟。
+
+- **已执行，直接观察**：科学池ScienceQA4948、AI2D5855、TQA5540题；96份输入/评测文件，核对98869个路径、保留52418个评测引用，按身份排除478、额外像素排除4。1783个历史无来源图片引用不可访问，unknown来源隔离；未验证这些缺失图的像素，也未证明近重复与外部预训练曝光隔离。证据data/v05/exp110-retry2/MANIFEST.json、pixel_hashes.json；两次失败准备的脚本及日志全保留。
+- **实际训练**：固定2048题，三科学源各512，UI171/图表171/旧任务170回放；初始化D3固定03560c…，末四层MLP及全注意力q/k/v/o共16模块、秩8、532480参数，CE监督、lr1e-4/warmup16、有效batch8、save64。与失败exp96数据/可训路径均不同，不能单独归因。配置configs/exp110-d3-science.yaml；实际身份、逐步loss/梯度和checkpoint在runs/exp110-d3-science/train，外层training.log。骨干BF16，需最终部署FP32复验，不能继承旧校准。
+- **基线直接观察**：科学256题72.2656%/NLL .610308；图表128题86.7188%；UI128题100%；大小64题70.3125%、位置64题89.0625%。固定面板与原生输出首题核对通过；均为monitoring，非正式五用途。
+- **运行限制**：nohup supervisor提前退出，独立session训练子进程健康；内部2400秒预算仍逐题执行，但原外层保护已失效，不能虚报EXIT_CODE=0。保持主动核对，不为采集码重启健康任务。exp81实查2073754784 bytes、所有唯一权重/失败证据保留；原CC-Connect064e9c68唯一每小时启用、last_error空，未新建任务。
+- **发布阻断**：科学退化待after验证；正式ImageJevBench v0.3.0接入/public300与score语义尚缺（exp109证据是旧v0.1 profile228/456，不能代替目标版本），五用途、独立校准、全回归与部署验收仍未完成。发布授权有效，当前证据不支持达标发布。
+
+**下一步**：本轮完成256步及固定before/after、科学无图/倒序对照，独立按图bootstrap，科学至少+3pp且下界>0、NLL不恶化、UI/图表各退化≤2pp才晋级后续。19–21点按结果决定有效续训，21–23点回归与可行校准，23–07点正式验收/材料，07–09点发布缓冲；不能解除正式证据缺口时明确未达标，不降低标准。实际已执行py_compile及git diff --check，未重装环境、改许可或外发发布。
+
+2026-10-25 19:20:28 +08:00补充实查：exp111已新增116/1024步，CE .508239、梯度 .288819，64步patch/optimizer已保存；GPU45%/3464MiB，Python435954与supervisor435950正常，暂无after结论。日志runs/exp111-d3-science-coverage/training.log，未启动并行GPU任务；原小时Cron继续保留唯一任务。
+
+## 2026-10-25 20:07:18 +08:00：exp111未通过，exp112已实际更新参数
+
+**阶段/结果**：exp111新增1024步与640题after完整结束，GPU实查空闲后才启动exp112，未重复抢卡。exp111科学184/256，相对原D3185/256为−0.3906pp、图片配对95%[−3.125,+2.344]pp，未通过预写+3pp门槛；科学NLL .610308→.568093不能替代准确率门槛。图表111→116/128（+3.9063pp），UI128/128保持，大小45→47、位置57→56/64。停止末四层路径简单加步数，不晋级。独立验证1792条预测概率/标签/NLL、1024步与17组patch/optimizer，见runs/exp111-d3-science-coverage/train/{original_baseline_verification,integrity_verification}.json；原supervisor退出码缺失，不虚报exit0。
+
+**本轮实际训练**：预写[exp112](experiments/2026-10-25-exp112-d3-science-depth.md)，从固定原始D3初始化，唯一配方变量末四层→末十二层（三次全注意力+十二层MLP），48模块、1597440参数。2048条输入与exp110逐字节一致，100份池/评测文件SHA256未变，沿用已核对的身份/可访问RGB隔离。640题before与exp110概率最大差0.0。当前实际31/256步，CE 0.800925、梯度1.155042、峰值显存5.40GiB；预计约20:14前完成训练与固定after/control，尚无新能力改善结论。训练PID438209、supervisor438205，工具会话63344；日志runs/exp112-d3-science-depth/training.log，checkpoint与完整身份在train/，save64、内部2400秒/外部2700秒，异常即停。
+
+**重要限制/阻断**：1783张历史保留图片不可访问，不能证明其像素及近重复隔离；正式ImageJevBench v0.3.0/public300与admission、五用途、最终FP32路径校准/性能验收均未解除，当前证据不支持达标发布。exp86 CUDA问题已在历史原始复现中定位processor image_seq_len169与模型64不一致，非已确认词表越界，seq64修复及失败目录均保留，不重复运行。exp81权重实查2073754784 bytes；所有唯一权重保留。
+
+**下一步**：按exp112原科学+3pp/配对下界>0/NLL不恶化/UI图表≤2pp下降判据决定是否扩大覆盖；失败则不简单续步。20–22点有界训练、22–01点回归/必要独立校准、01–07点正式验收与材料、07–09点发布缓冲；不恢复旧冻结，不降低发布质量。原CC-Connect064e9c68每小时启用，未新建或递归调度。更新exp111/112实验记录与发布就绪文档撤销旧冻结；实际py_compile及git diff --check通过，未重装环境、改许可或发布。
+
+## 2026-10-25：负责人停止全部工作
+
+负责人明确要求全部停止、不再训练，并停止定时任务。已停用CC-Connect任务064e9c68（enabled=false），移除本项目系统小时监控/执行cron，保留PAUSE标记。实查无本项目训练、评测或独立定时执行进程；权重、数据与历史实验全部保留。v0.5目标暂停，未经负责人明确恢复不启动训练、实验或发布。

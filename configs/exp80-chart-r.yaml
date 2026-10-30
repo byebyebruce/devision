@@ -1,0 +1,37 @@
+# Prewritten paired objective diagnostic; scripts/v05/run_exp80.py runs R/C serially.
+name: exp80-chart-r
+device: cuda
+common:
+  log_every: 100
+stages:
+  - name: train
+    kind: train
+    init: runs/r21-soft/train
+    data: data/v05/exp80v2/train.jsonl
+    val: data/v05/exp80v2/calib.jsonl
+    eval:
+      chart: data/v05/exp80v2/chart_dev.jsonl
+      protect: data/v05/exp80v2/protect.jsonl
+      fit: data/v05/exp80v2/fit.jsonl
+    params:
+      epochs: 1
+      micro_batch: 8
+      eval_batch: 8
+      seed: 80
+      warmup: 100
+      lr_new: 2.0e-5
+      lr_head: 1.0e-5
+      lr_lora: 5.0e-5
+      vision_unfreeze_top: 4
+      lr_vision: 5.0e-6
+      amp: cuda
+      objective: rlcd
+      monitor_details: true
+      eval_every: 0
+      save_every: 500
+evaluate:
+  controls: true
+  sets:
+    chart: {path: data/v05/exp80v2/chart_dev.jsonl, role: monitoring}
+    protect: {path: data/v05/exp80v2/protect.jsonl, role: monitoring}
+    fit: {path: data/v05/exp80v2/fit.jsonl, role: monitoring}

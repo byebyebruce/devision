@@ -1,0 +1,12 @@
+# Board-gap dev splits (data/v05/exp137/dev_board_*, held out by image inside each family) on runs/r23-v05/train, the reference for
+# exp137 (docs/experiments/2026-10-29-exp137-board-mix.md). Results in runs/r23-v05/eval/.
+name: boarddev
+device: cuda
+stages: []
+evaluate:
+  checkpoint: runs/r23-v05/train
+  controls: true
+  sets:
+    dev_board_caption: {path: data/v05/exp137/dev_board_caption.jsonl, role: heldout}
+    dev_board_kie: {path: data/v05/exp137/dev_board_kie.jsonl, role: heldout}
+    dev_board_infographic: {path: data/v05/exp137/dev_board_infographic.jsonl, role: heldout}

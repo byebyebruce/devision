@@ -1,0 +1,71 @@
+# exp132: exp129 data and seed with v0.4 answers mixed 50/50 into the gold of the old natural-photo sources (offline distillation toward v0.4; data/v05/exp132 from scripts/data/v05/exp132_distill.py). Plan: docs/experiments/2026-10-29-exp132-v4-offline-distill.md
+name: exp132-v4-offline-distill
+device: cuda
+common:
+  log_every: 100
+stages:
+- name: train
+  kind: train
+  init: runs/r21-soft/train
+  data: data/v05/exp132/train.jsonl
+  val: data/v05/exp81/calib.jsonl
+  eval:
+    chart: data/v05/exp81/chart_dev.jsonl
+    ui: data/v05/exp82v2/ui_dev.jsonl
+    protect: data/v05/exp81/protect.jsonl
+    gui: data/v05/exp116/gui_dev_mon.jsonl
+    gui_state: data/v05/exp118/gui_dev_mon_state.jsonl
+    gui_shop: data/v05/exp119/gui_shop_dev_state.jsonl
+    ego: data/v05/exp116/ego_dev_mon.jsonl
+  params:
+    epochs: 1
+    micro_batch: 8
+    eval_batch: 8
+    seed: 23
+    warmup: 300
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06
+    amp: cuda
+    objective: ce
+    monitor_details: true
+    eval_every: 0
+    save_every: 500
+evaluate:
+  image_identity: data/v5/image_identity.json
+  controls: true
+  sets:
+    test_gui_state: {path: data/v05/exp118/gui_test_state.jsonl, role: heldout}
+    test_gui_shop_state: {path: data/v05/exp119/gui_shop_test_state.jsonl, role: heldout}
+    test_gui: {path: data/v05/exp116/gui_test.jsonl, role: heldout}
+    test_ego: {path: data/v05/exp116/ego_test.jsonl, role: heldout}
+    bench_egothink: {path: data/v05/exp116/egothink.jsonl, role: heldout}
+    bench_lv_scienceqa: data/lv_bench/scienceqa.jsonl
+    dev_sqa: data/n2/dev_sqa.jsonl
+    bench_realworld: {path: data/v05/external/realworld_native.jsonl, role: heldout}
+    bench_mmbench: {path: data/n2/bench/mmbench.jsonl, role: heldout}
+    bench_mme: {path: data/n2/bench/mme.jsonl, role: heldout}
+    bench_cvbench: {path: data/n2/bench/cvbench.jsonl, role: heldout}
+    bench_naturalbench: {path: data/n2/bench/naturalbench.jsonl, role: heldout}
+    bench_countbench: {path: data/r13/bench/countbench.jsonl, role: heldout}
+    bench_whatsup: {path: data/r13/bench/whatsup.jsonl, role: heldout}
+    bench_pope: data/v2/bench_pope.jsonl
+    bench_lv_vqav2_yesno: data/lv_bench/vqav2_yesno.jsonl
+    bench_lv_aokvqa: data/lv_bench/aokvqa.jsonl
+    bench_lv_pope: data/lv_bench/pope.jsonl
+    dev_mix: data/v5/dev_mix.jsonl
+    test_vsr: data/v5/test_vsr.jsonl
+    test_v7w: data/v5/test_v7w.jsonl
+    test_vqa_yesno: data/v2/test_vqa_yesno.jsonl
+    test_vqa_choice: data/v2/test_vqa_choice.jsonl
+    test_gqa: data/v2/test_gqa.jsonl
+    test_exist: data/v2/test_exist.jsonl
+    test_position: data/v2/test_position.jsonl
+    test_relation: data/v2/test_relation.jsonl
+    test_size: data/v2/test_size.jsonl
+    test_position_flip: data/v6/test_position_flip.jsonl
+    test_relation_flip: data/v6/test_relation_flip.jsonl
+    bench_cogent_b: {path: data/r13/bench/cogent_b.jsonl, role: heldout}
+    test_count_coco: {path: data/n2/test_count_coco.jsonl, role: heldout}

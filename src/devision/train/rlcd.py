@@ -13,7 +13,9 @@ scheduler, step, epoch order, RNG, metrics so far) is written to <out>/resume.pt
 one. Training the same out directory again picks up from there (the model must be built the same way,
 i.e. the same --init); the file is removed when training finishes.
 """
+import copy
 import json
+from concurrent.futures import ThreadPoolExecutor
 import math
 import os
 import random
@@ -39,7 +41,7 @@ from ..model import ModelConfig, option_bucket, pick_temperature, question_mask,
 from ..infer import best_device
 
 LORA_TARGETS = ["Wqkv", "Wo", "Wi"]  # ModernBERT attention + MLP projections
-MIN_TYPE_ITEMS = 10      # fewer val questions of a type: its temperature is not fitted
+MIN_TYPE_ITEMS = 50      # fewer val questions of a type: its temperature is not fitted (exp137: 11 noul rows fitted 0.5)
 MIN_BUCKET_ITEMS = 50    # fewer val questions in a bucket: no bucket temperature, decide() uses the type's
 
 
@@ -92,6 +94,13 @@ class TrainConfig:
     # tower's top N encoder layers and its final layer norm, at lr_vision; 0: the tower stays frozen
     vision_unfreeze_top: int = 0
     lr_vision: float = 5e-6
+    # exp136 (docs/experiments/2026-10-29-exp136-vision-anchor.md): vision_anchor_weight > 0 adds, for the questions
+    # whose sample "source" is in vision_anchor_sources (comma-separated), vision_anchor_weight x the relative squared
+    # distance ||f(x) - f0(x)||^2 / ||f0(x)||^2 between the unfrozen tower's SigLIP patches and those of a frozen copy of
+    # the tower as loaded (the init checkpoint); the sum over those questions is divided by the micro batch size.
+    # Needs vision_unfreeze_top; the questions and their gold are unchanged.
+    vision_anchor_weight: float = 0.0
+    vision_anchor_sources: str = ""
     # exp42 (docs/experiments/2026-10-18-exp42-objective-plan.md): "rlcd" = the RLCD policy term + gold CE (every run
     # before it); "ce" = gold CE only. The RLCD noise is drawn either way, so both use the same random stream.
     objective: str = "rlcd"
@@ -151,6 +160,16 @@ class TrainConfig:
     number_file: str = ""
     number_weight: float = 0.0
     lr_reader: float = 5e-4
+    # native-resolution tiles (spec "实验性、可选：原生分辨率切块"): tiles = n >= 2 gives the model n x n tiles of every
+    # picture whose shorter side is at least tile_min_side (ModelConfig.tiles / tile_min_side, saved with the
+    # checkpoint); the view position vectors start at zero and train with the projector (lr_new). Enabled before the
+    # seeds below, so the LoRA init, batch order and noise are those of the run without it. 0: off.
+    tiles: int = 0
+    tile_min_side: int = 512
+    # micro batches whose pictures (decode + letterbox) and token tensors are prepared ahead by background threads
+    # while the model trains on the current one; 0: prepared in the loop as before. The order, the RNG use and so the
+    # trained model are the same whatever the value.
+    prefetch: int = 4
 
 
 GRID = 8   # visual tokens per side of the released model (16x16 patches, 2x2 merged), row-major as Projector orders them
@@ -298,6 +317,24 @@ class _Images:
             return image_tensor(img, self.decider.cfg)
 
 
+def _prepared(order: Sequence[Any], start: int, prepare, ahead: int):
+    """(b, prepare(order[b])) for b = start.. in order; with `ahead` > 0 the next `ahead` micro batches are prepared by
+    as many background threads while the caller works on the current one (`prepare` must not use any RNG)."""
+    if ahead <= 0:
+        for b in range(start, len(order)):
+            yield b, prepare(order[b])
+        return
+    pool = ThreadPoolExecutor(max_workers=ahead, thread_name_prefix="devision-prefetch")
+    try:
+        pending = [pool.submit(prepare, order[b]) for b in range(start, min(start + ahead, len(order)))]
+        for b in range(start, len(order)):
+            if b + ahead < len(order):
+                pending.append(pool.submit(prepare, order[b + ahead]))
+            yield b, pending.pop(0).result()
+    finally:    # also when the loop stops early (an exception, or the generator closed): drop what is not started
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _vision_params(vision, top: int) -> List[nn.Parameter]:
     """The original weights of the SigLIP tower's top `top` encoder layers and its final layer norm."""
     n = int(vision.config.num_hidden_layers)
@@ -314,7 +351,7 @@ def _forward(model, batch, pixels, device, return_hidden: bool = False, index: O
         return model(*(batch[k].to(device) for k in ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")),
                      return_hidden=return_hidden)
     trains_vision = torch.is_grad_enabled() and any(p.requires_grad for p in model.vision.parameters())
-    patches, visual, geom = model.visual_inputs(pixels.to(device), grad_vision=trains_vision)
+    patches, visual, geom = model.visual_inputs(pixels.to(device, non_blocking=True), grad_vision=trains_vision)
     if index is not None:
         index = index.to(device)
         patches, visual = patches.index_select(0, index), visual.index_select(0, index)
@@ -775,9 +812,10 @@ RESUME = "resume.pt"
 _RESUME_KEYS = ("epochs", "micro_batch", "group_size", "sigma_start", "sigma_end", "lr_new", "lr_head", "lr_lora",
                 "warmup", "lora_r", "lora_alpha", "unfreeze_top", "lr_encoder", "calib_fraction", "seed",
                 "grounding_weight", "question_conditioning", "lr_cond", "distill_weight", "distill_teacher",
-                "distill_blocks", "vision_unfreeze_top", "lr_vision", "objective", "aux_weight", "aux_slots",
+                "distill_blocks", "vision_unfreeze_top", "lr_vision", "vision_anchor_weight", "vision_anchor_sources", "objective", "aux_weight", "aux_slots",
                 "aux_head", "region_file", "region_weight", "interaction_file", "interaction_weight", "local_views",
-                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file", "mixed_input")
+                "local_overlap", "local_source", "number_reader", "number_file", "number_weight", "lr_reader", "text_only", "question_weight_file", "mixed_input",
+                "tiles", "tile_min_side")
 
 
 def _rng_state() -> Dict[str, Any]:
@@ -835,6 +873,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                         or c.distill_weight > 0 or c.vision_unfreeze_top or c.unfreeze_top or c.interaction_file or c.question_conditioning):
         raise ValueError("text_only / mixed_input train LoRA and the decision head only: no local views / reader / region / grounding / "
                          "number / distillation / interaction loss, no vision or encoder unfreezing, no new conditioning")
+    anchor_sources = {x for x in c.vision_anchor_sources.split(",") if x}
+    if c.vision_anchor_weight > 0 and not (c.vision_unfreeze_top and anchor_sources):
+        raise ValueError("vision_anchor_weight > 0 needs vision_unfreeze_top and vision_anchor_sources")
+    if c.vision_anchor_weight > 0 and (c.local_views or c.tiles):
+        raise ValueError("vision_anchor_weight compares one tower call per question: no local views or tiles")
     teacher = None
     if c.distill_weight > 0:
         if not c.distill_teacher or not distill_blocks:
@@ -873,6 +916,17 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             cfg.question_conditioning = True
         decider.model.enable_local_views(c.local_views)
         cfg.local_views, cfg.local_overlap, cfg.local_source = c.local_views, c.local_overlap, c.local_source
+    if c.tiles or decider.cfg.tiles:
+        cfg = decider.cfg
+        if c.local_views or c.question_conditioning or c.number_reader or c.grounding_weight > 0 or c.aux_weight > 0 \
+                or c.distill_weight > 0 or c.region_file:
+            raise ValueError("tiles do not combine with local views, question conditioning, the number reader or the "
+                             "grounding / number / distillation / region losses")
+        if cfg.tiles and (cfg.tiles, cfg.tile_min_side) != (c.tiles, c.tile_min_side):
+            raise ValueError("the checkpoint reads %dx%d tiles from pictures of shorter side >= %d: pass --tiles %d "
+                             "--tile-min-side %d" % (cfg.tiles, cfg.tiles, cfg.tile_min_side, cfg.tiles, cfg.tile_min_side))
+        decider.model.enable_tiles(c.tiles)
+        cfg.tiles, cfg.tile_min_side = c.tiles, c.tile_min_side
     aux, aux_ident, aux_inputs = None, None, {}
     if c.aux_weight > 0:   # built and loaded before the seeds below: the LoRA init, batch order and noise are unchanged
         if c.aux_slots < 1:
@@ -917,6 +971,12 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     if aux is not None:
         aux.to(device).eval()
 
+    anchor = None
+    seen: Dict[str, torch.Tensor] = {}
+    if c.vision_anchor_weight > 0:   # the tower as loaded, frozen; the trained tower's last call is kept by a hook
+        anchor = copy.deepcopy(model.vision).eval().requires_grad_(False)
+        model.vision.register_forward_hook(lambda mod, args, kw_out: seen.__setitem__("patches", kw_out.last_hidden_state))
+
     images = _Images(data_root, decider)
     items = _items(decider, samples)
     if val_samples:
@@ -925,6 +985,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         calib, train_items = holdout_by_image(items, min(400, int(len(items) * c.calib_fraction)))
 
     sets = {"val": calib, **{name: _items(decider, ss) for name, ss in (eval_sets or {}).items()}}
+    if anchor is not None and not anchor_sources <= {it["source"] for it in train_items}:
+        raise ValueError("vision_anchor_sources %s not in the training data"
+                         % sorted(anchor_sources - {it["source"] for it in train_items}))
     if teacher is not None:
         found = {it.get("block") for it in train_items}
         if not distill_blocks <= found:
@@ -935,8 +998,11 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
         for mod in (model.projector, getattr(model, "condition", None), getattr(model, "reader", None)):
             if mod is not None:
                 mod.requires_grad_(False)
+        if model.tile_pos is not None:
+            model.tile_pos.requires_grad_(False)
     groups = [
-        {"params": [] if c.text_only or c.mixed_input else list(model.projector.parameters()), "lr": c.lr_new},
+        {"params": [] if c.text_only or c.mixed_input else list(model.projector.parameters())
+                   + ([model.tile_pos] if model.tile_pos is not None else []), "lr": c.lr_new},
         {"params": [p for n, p in model.decision.named_parameters()
                     if not n.startswith("encoder.") and p.requires_grad], "lr": c.lr_head},
         {"params": [p for n, p in peft_encoder.named_parameters() if "lora_" in n], "lr": c.lr_lora},
@@ -1030,6 +1096,27 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
             with open(os.path.join(str(out_dir), "start_check.json"), "w") as f:
                 json.dump(dict(check, baseline=c.start_check), f, indent=1)
             print("step 0 matches %s (largest difference %.2g)" % (c.start_check, check["largest"]), flush=True)
+    pin = device.type == "cuda"
+
+    def prepare(indices: List[int]):
+        """A micro batch's items, collated tokens, pictures (and exp50's picture index): no RNG, so it may run ahead
+        in a background thread (TrainConfig.prefetch). On CUDA the pictures are pinned for an asynchronous copy."""
+        chunk = [train_items[i] for i in indices]
+        batch = collate_items([chunk], tok.pad_token_id)
+        assert batch is not None
+        index = None
+        if c.text_only or (c.mixed_input and chunk[0]["input"] == "text"):      # exp57 / PROTECT text rows: no picture at all
+            pixels = None
+        elif c.local_views:   # exp50: each distinct picture of the micro batch encoded once
+            names = sorted({it["image"] for it in chunk})
+            pixels = torch.stack([images(n) for n in names])
+            index = torch.tensor([names.index(it["image"]) for it in chunk])
+        else:
+            pixels = torch.stack([images(it["image"]) for it in chunk])
+        if pin and pixels is not None:
+            pixels = pixels.pin_memory()
+        return chunk, batch, pixels, index
+
     log = TrainLog(tracker, device, steps, c.log_every)
     for epoch in range(start_epoch, c.epochs):
         if not (resumed and epoch == start_epoch):
@@ -1039,20 +1126,9 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 flat = [i for bt in order for i in bt] or list(range(len(train_items)))
                 random.shuffle(flat)
                 order = [flat[j:j + c.micro_batch] for j in range(0, len(flat), c.micro_batch)]
-        for b in range(start_b if resumed and epoch == start_epoch else 0, len(order)):
+        start = start_b if resumed and epoch == start_epoch else 0
+        for b, (chunk, batch, pixels, index) in _prepared(order, start, prepare, c.prefetch):
             sigma = c.sigma_start + (c.sigma_end - c.sigma_start) * len(losses) / max(1, steps - 1)
-            chunk = [train_items[i] for i in order[b]]
-            batch = collate_items([chunk], tok.pad_token_id)
-            assert batch is not None
-            index = None
-            if c.text_only or (c.mixed_input and chunk[0]["input"] == "text"):      # exp57 / PROTECT text rows: no picture at all
-                pixels = None
-            elif c.local_views:   # exp50: each distinct picture of the micro batch encoded once
-                names = sorted({it["image"] for it in chunk})
-                pixels = torch.stack([images(n) for n in names])
-                index = torch.tensor([names.index(it["image"]) for it in chunk])
-            else:
-                pixels = torch.stack([images(it["image"]) for it in chunk])
             grounded = [i for i, it in enumerate(chunk) if "grid" in it] if c.grounding_weight > 0 else []
             with torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
                 if grounded:
@@ -1106,6 +1182,18 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 loss = loss + c.distill_weight * kl.sum() / len(chunk)
                 distill = (kl.mean().item(), (t_logits.masked_fill(~mask, -1e4).argmax(-1)
                                               == batch["target"].to(device)[idx].argmax(-1)).float().mean().item())
+            drift = None
+            kept = [i for i, it in enumerate(chunk) if it["source"] in anchor_sources] if anchor is not None and pixels is not None else []
+            if kept and anchor is not None and pixels is not None:
+                idx = torch.tensor(kept, device=device)
+                cur = seen.pop("patches").index_select(0, idx).float()
+                with torch.no_grad(), torch.autocast(device.type if use_amp else "cpu", dtype=torch.bfloat16, enabled=use_amp):
+                    ref = anchor(pixel_values=pixels[kept].to(device),
+                                 **({"interpolate_pos_encoding": True} if model.interpolate else {})).last_hidden_state.float()
+                rel = ((cur - ref) ** 2).sum((1, 2)) / (ref ** 2).sum((1, 2))
+                loss = loss + c.vision_anchor_weight * rel.sum() / len(chunk)
+                drift = rel.mean().item()
+            seen.clear()
             hit = (logits.masked_fill(~batch["marker_mask"].to(device), -1e4).argmax(-1)
                    == batch["target"].to(device).argmax(-1)).float().mean()
             if not math.isfinite(loss.item()) or (loss.item() == 0.0 and nll.item() == 0.0 and hit.item() < 1.0):
@@ -1135,6 +1223,7 @@ def train(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                     grad_norm=grad_norm.item(), sigma=sigma,
                     **({"grounding_kl": ground.item()} if ground is not None else {}),
                     **({"distill_kl": distill[0], "teacher_accuracy": distill[1]} if distill is not None else {}),
+                    **({"vision_drift": drift} if drift is not None else {}),
                     **({"number_loss": aux_stats[0], "number_accuracy": aux_stats[1]} if aux_stats is not None else {}),
                     **({"region_kl": region[0], "region_mass": region[1]} if region is not None else {}),
                     **({"interaction_loss": interaction[0], "interaction_j": interaction[1]} if interaction is not None else {}),

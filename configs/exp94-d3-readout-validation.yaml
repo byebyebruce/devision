@@ -1,0 +1,9 @@
+name: exp94-d3-readout
+cache: runs/exp93-d3-cache-audit-64
+out: runs/exp94-d3-readout-validation
+seed: 94
+lr: 0.00001
+steps: 100
+save_every: 20
+budget_seconds: 540
+trained_patch: runs/exp94-d3-readout/readout-step100.safetensors

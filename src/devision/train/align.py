@@ -43,7 +43,7 @@ from transformers.models.modernbert.modeling_modernbert import ModernBertPredict
 
 from laya.common import collate_items
 
-from .rlcd import _device, _forward, _Images, _items
+from .rlcd import _device, _forward, _Images, _items, _prepared
 from .samples import Sample, read_decision_jsonl
 from .tracking import Tracker, TrainLog
 from ..infer import Decider
@@ -74,6 +74,7 @@ class AlignConfig:
     number_mask_sources: str = ""  # comma-separated caption sources supervised only on their numbers (exp36)
     track_sources: str = ""        # comma-separated sources whose supervised tokens / loss share are logged
     micro_batch: int = 0           # > 0: run each batch of `batch` rows in forward passes of this many rows (exp39)
+    prefetch: int = 4              # batches whose caption pictures are decoded ahead by background threads; 0: in the loop
 
 
 class _MLMHead(nn.Module):
@@ -232,13 +233,12 @@ def _gold_ce(logits: torch.Tensor, mask: torch.Tensor, target: torch.Tensor) -> 
     return -(target * torch.log_softmax(logits.masked_fill(~mask, -1e4), -1)).sum(-1).mean()
 
 
-def _micro_step(model, head, input_ids, attention, target, chunk, images, device, c: AlignConfig, tracked, optimizer,
+def _micro_step(model, head, input_ids, attention, target, chunk, pixels, device, c: AlignConfig, tracked, optimizer,
                 params, step: int):
     """One optimizer step over a whole batch run in parts of c.micro_batch rows (see the module docstring); returns
     (mean masked-token loss, accuracy, tracked-source stats, grad norm)."""
     y_all = target[:, 1:]
     n_tok = int((y_all != -100).sum().item())
-    pixels = torch.stack([images(s["image"]) for s in chunk])
     optimizer.zero_grad(set_to_none=True)
     loss_sum, hits = 0.0, 0
     src_tok: Dict[str, float] = {}
@@ -282,6 +282,8 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     Returns {"losses": per-step masked-token loss, "val": one metrics dict per evaluation}.
     """
     c = config or AlignConfig()
+    if decider.cfg.tiles:
+        raise ValueError("caption alignment does not support native-resolution tiles (spec: 原生分辨率切块)")
     device = _device(c.device)
     rng = random.Random(c.seed)
     torch.manual_seed(c.seed)
@@ -361,8 +363,10 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
     for epoch in range(c.epochs):
         order = list(train_samples)
         rng.shuffle(order)
-        for b in range(0, len(order) - c.batch + 1, c.batch):
-            chunk = order[b:b + c.batch]
+        chunks = [order[b:b + c.batch] for b in range(0, len(order) - c.batch + 1, c.batch)]
+        # the pictures only (no RNG) are prepared ahead; masks and decision batches draw from rng / dec_rng here, in order
+        for _, (chunk, pixels) in _prepared(chunks, 0, lambda ch: (ch, torch.stack([images(s["image"]) for s in ch])),
+                                            c.prefetch):
             caps = [rng.choice(s["captions"]) for s in chunk]
             input_ids, attention, target = _masked_batch(tok, caps, c, rng)
             if number_sources:   # after the random draw, so the random stream is the same as without it
@@ -370,7 +374,7 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                              input_ids, target, c)
             if c.micro_batch:
                 mlm_value, acc_value, extra, grad_norm = _micro_step(model, head, input_ids, attention, target, chunk,
-                                                                     images, device, c, tracked, optimizer,
+                                                                     pixels, device, c, tracked, optimizer,
                                                                      params + lora_params, len(losses))
                 scheduler.step()
                 losses.append(mlm_value)
@@ -384,8 +388,7 @@ def align(decider: Decider, samples: Sequence[Sample], data_root, out_dir,
                 if c.eval_every and len(losses) % c.eval_every == 0:
                     run_eval()
                 continue
-            logits = _mlm_logits(model, head, input_ids, attention,
-                                    torch.stack([images(s["image"]) for s in chunk]), device)
+            logits = _mlm_logits(model, head, input_ids, attention, pixels, device)
             y = target[:, 1:].to(device)
             m = y != -100
             loss = mlm = F.cross_entropy(logits[m], y[m])

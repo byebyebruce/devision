@@ -1,0 +1,31 @@
+name: exp85-cf-ui
+device: cuda
+common:
+  log_every: 100
+stages:
+- name: train
+  kind: train
+  init: runs/exp81-chart/train
+  data: data/v05/exp85/train.jsonl
+  val: data/v05/exp85/calib.jsonl
+  eval:
+    ui: data/v05/exp85/ui_dev.jsonl
+    fit: data/v05/exp85/fit.jsonl
+    chart: data/v05/exp80v2/chart_dev.jsonl
+    protect: data/v05/exp80v2/protect.jsonl
+  params:
+    epochs: 1
+    micro_batch: 8
+    eval_batch: 8
+    seed: 85
+    warmup: 50
+    lr_new: 2.0e-05
+    lr_head: 1.0e-05
+    lr_lora: 5.0e-05
+    vision_unfreeze_top: 4
+    lr_vision: 5.0e-06
+    amp: cuda
+    objective: ce
+    monitor_details: true
+    eval_every: 0
+    save_every: 500
